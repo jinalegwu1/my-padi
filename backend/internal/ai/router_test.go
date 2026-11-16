@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,16 +12,65 @@ import (
 )
 
 type fakeProvider struct {
-	mu       sync.Mutex
-	calls    int
-	response Response
-	err      error
+	mu          sync.Mutex
+	calls       int
+	response    Response
+	err         error
+	lastRequest Request
 }
 
-func (provider *fakeProvider) Generate(context.Context, ModelConfig, Request) (Response, error) {
+func TestRouterRequiresValidStructuredOutput(t *testing.T) {
+	fast := &fakeProvider{response: Response{Content: `{"intent":"question"}`}}
+	router := testRouter(t, []ModelConfig{
+		{ID: "fast", Provider: "fast", Model: "fast-model"},
+	}, map[string]Provider{"fast": fast},
+		RoutingConfig{PrimaryModel: "fast", FastModel: "fast"}, nil)
+
+	response, err := router.Generate(context.Background(), Request{
+		Messages:         []Message{{Role: RoleUser, Content: "What time is it?"}},
+		Task:             TaskClassification,
+		Complexity:       ComplexitySimple,
+		StructuredOutput: true,
+	})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if !json.Valid([]byte(response.Content)) {
+		t.Errorf("response content = %q, want valid JSON", response.Content)
+	}
+}
+
+func TestRouterRetriesInvalidStructuredOutputWithFallback(t *testing.T) {
+	fast := &fakeProvider{response: Response{Content: "not JSON"}}
+	primary := &fakeProvider{response: Response{Content: `{"summary":"done"}`}}
+	router := testRouter(t, []ModelConfig{
+		{ID: "fast", Provider: "fast", Model: "fast-model"},
+		{ID: "primary", Provider: "primary", Model: "primary-model"},
+	}, map[string]Provider{"fast": fast, "primary": primary},
+		RoutingConfig{PrimaryModel: "primary", FastModel: "fast"}, nil)
+
+	response, err := router.Generate(context.Background(), Request{
+		Messages:         []Message{{Role: RoleUser, Content: "Summarize this discussion."}},
+		Task:             TaskSummarization,
+		Complexity:       ComplexityNormal,
+		StructuredOutput: true,
+	})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if response.Provider != "primary" || !json.Valid([]byte(response.Content)) {
+		t.Errorf("response = %+v, want valid JSON from configured primary fallback", response)
+	}
+	if fast.callCount() != 1 || primary.callCount() != 1 {
+		t.Errorf("calls = fast:%d primary:%d, want one fast attempt and one fallback", fast.callCount(), primary.callCount())
+	}
+}
+
+func (provider *fakeProvider) Generate(_ context.Context, _ ModelConfig, request Request) (Response, error) {
 	provider.mu.Lock()
 	defer provider.mu.Unlock()
 	provider.calls++
+	provider.lastRequest = request
 	return provider.response, provider.err
 }
 
@@ -28,6 +78,31 @@ func (provider *fakeProvider) callCount() int {
 	provider.mu.Lock()
 	defer provider.mu.Unlock()
 	return provider.calls
+}
+
+func TestRouterInjectsOneSharedPADIInstructionForAllProviders(t *testing.T) {
+	provider := &fakeProvider{response: Response{Content: "Hello"}}
+	router := testRouter(t,
+		[]ModelConfig{{ID: "main", Provider: "test", Model: "test-model"}},
+		map[string]Provider{"test": provider},
+		RoutingConfig{PrimaryModel: "main"}, nil)
+
+	if _, err := router.Generate(context.Background(), Request{Messages: []Message{
+		{Role: RoleSystem, Content: "Respond in the user's selected language."},
+		{Role: RoleUser, Content: "Hello"},
+	}}); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	messages := provider.lastRequest.Messages
+	if len(messages) != 2 || messages[0].Role != RoleSystem ||
+		!strings.Contains(messages[0].Content, "one consistent AI companion") ||
+		!strings.Contains(messages[0].Content, "selected language") ||
+		messages[1].Role != RoleUser {
+		t.Fatalf("provider request messages = %+v, want shared PADI instructions and user message", messages)
+	}
 }
 
 func TestRouterRoutesByTaskAndComplexity(t *testing.T) {
@@ -52,8 +127,58 @@ func TestRouterRoutesByTaskAndComplexity(t *testing.T) {
 			wantContent: "fast",
 		},
 		{
+			name:        "classification uses fast model",
+			request:     testRequest(TaskClassification, ComplexityNormal),
+			wantContent: "fast",
+		},
+		{
+			name:        "summarization uses fast model",
+			request:     testRequest(TaskSummarization, ComplexityComplex),
+			wantContent: "fast",
+		},
+		{
+			name:        "text processing uses fast model",
+			request:     testRequest(TaskTextProcessing, ComplexityNormal),
+			wantContent: "fast",
+		},
+		{
+			name:        "simple conversation uses fast model",
+			request:     testRequest(TaskConversation, ComplexitySimple),
+			wantContent: "fast",
+		},
+		{
 			name:        "complex task uses reasoning model",
 			request:     testRequest(TaskConversation, ComplexityComplex),
+			wantContent: "reasoning",
+		},
+		{
+			name:        "planning uses reasoning model",
+			request:     testRequest(TaskPlanning, ComplexityNormal),
+			wantContent: "reasoning",
+		},
+		{
+			name:        "technical assistance uses reasoning model",
+			request:     testRequest(TaskTechnical, ComplexitySimple),
+			wantContent: "reasoning",
+		},
+		{
+			name:        "decision support uses reasoning model",
+			request:     testRequest(TaskDecision, ComplexityNormal),
+			wantContent: "reasoning",
+		},
+		{
+			name:        "complex analysis uses reasoning model",
+			request:     testRequest(TaskAnalysis, ComplexityNormal),
+			wantContent: "reasoning",
+		},
+		{
+			name:        "learning uses reasoning model",
+			request:     testRequest(TaskLearning, ComplexityNormal),
+			wantContent: "reasoning",
+		},
+		{
+			name:        "quality review uses reasoning model",
+			request:     testRequest(TaskQualityReview, ComplexityNormal),
 			wantContent: "reasoning",
 		},
 		{
@@ -105,6 +230,77 @@ func TestRouterFallsBackOnRetryableFailureAndObservesUsage(t *testing.T) {
 	}
 	if events[1].EstimatedCost != 0.00036 {
 		t.Errorf("EstimatedCost = %f, want 0.00036", events[1].EstimatedCost)
+	}
+}
+
+func TestRouterFallsBackWhenOpenRouterModelIsUnavailable(t *testing.T) {
+	openRouter := &fakeProvider{err: &ProviderError{Provider: ProviderOpenRouter, Status: 404, Retryable: true}}
+	gemini := &fakeProvider{response: Response{Content: "Gemini fallback"}}
+	router := testRouter(t, []ModelConfig{
+		{ID: "openrouter-backup", Provider: ProviderOpenRouter, Model: "vendor/unavailable-free-model", Retries: 2},
+		{ID: "gemini", Provider: ProviderGemini, Model: "configured-gemini"},
+	}, map[string]Provider{ProviderOpenRouter: openRouter, ProviderGemini: gemini},
+		RoutingConfig{
+			PrimaryModel:       "openrouter-backup",
+			BackupModel:        "gemini",
+			ApprovedFreeModels: []string{"openrouter:vendor/unavailable-free-model", "gemini:configured-gemini"},
+		}, nil)
+
+	response, err := router.Generate(context.Background(), testRequest(TaskConversation, ComplexityNormal))
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if response.Content != "Gemini fallback" || openRouter.callCount() != 1 || gemini.callCount() != 1 {
+		t.Errorf("response = %+v, calls OpenRouter:%d Gemini:%d; want unavailable model then Gemini fallback",
+			response, openRouter.callCount(), gemini.callCount())
+	}
+}
+
+func TestRouterFallsBackOnRateLimitWithoutRepeatingLimitedProvider(t *testing.T) {
+	groq := &fakeProvider{err: &ProviderError{Provider: ProviderGroq, Status: 429, Retryable: true}}
+	gemini := &fakeProvider{response: Response{Content: "Gemini answer"}}
+	router := testRouter(t, []ModelConfig{
+		{ID: "groq-fast", Provider: ProviderGroq, Model: "fast-model", Retries: 2},
+		{ID: "gemini-main", Provider: ProviderGemini, Model: "main-model"},
+	}, map[string]Provider{ProviderGroq: groq, ProviderGemini: gemini},
+		RoutingConfig{PrimaryModel: "gemini-main", FastModel: "groq-fast", BackupModel: "gemini-main"}, nil)
+
+	response, err := router.Generate(context.Background(), testRequest(TaskClassification, ComplexitySimple))
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if response.Provider != ProviderGemini || groq.callCount() != 1 || gemini.callCount() != 1 {
+		t.Errorf("response = %+v, calls Groq:%d Gemini:%d; want one rate-limited Groq attempt then Gemini",
+			response, groq.callCount(), gemini.callCount())
+	}
+}
+
+func TestRouterFallsBackAcrossConfiguredRoles(t *testing.T) {
+	primary := &fakeProvider{err: &ProviderError{Provider: "primary", Status: 503, Retryable: true}}
+	backup := &fakeProvider{err: &ProviderError{Provider: "backup", Status: 503, Retryable: true}}
+	fast := &fakeProvider{err: &ProviderError{Provider: "fast", Status: 503, Retryable: true}}
+	reasoning := &fakeProvider{response: Response{Content: "Reasoning fallback"}}
+	router := testRouter(t, []ModelConfig{
+		{ID: "primary", Provider: "primary", Model: "primary-model"},
+		{ID: "backup", Provider: "backup", Model: "backup-model"},
+		{ID: "fast", Provider: "fast", Model: "fast-model"},
+		{ID: "reasoning", Provider: "reasoning", Model: "reasoning-model"},
+	}, map[string]Provider{
+		"primary": primary, "backup": backup, "fast": fast, "reasoning": reasoning,
+	}, RoutingConfig{
+		PrimaryModel: "primary", BackupModel: "backup", FastModel: "fast", ReasoningModel: "reasoning",
+	}, nil)
+
+	response, err := router.Generate(context.Background(), testRequest(TaskConversation, ComplexityNormal))
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if response.Content != "Reasoning fallback" {
+		t.Errorf("response = %+v, want final configured role as fallback", response)
+	}
+	if primary.callCount() != 1 || backup.callCount() != 1 || fast.callCount() != 1 || reasoning.callCount() != 1 {
+		t.Errorf("provider calls = primary:%d backup:%d fast:%d reasoning:%d; want one call each",
+			primary.callCount(), backup.callCount(), fast.callCount(), reasoning.callCount())
 	}
 }
 
@@ -195,11 +391,50 @@ func TestInferTaskAndComplexity(t *testing.T) {
 
 func testRouter(t *testing.T, models []ModelConfig, providers map[string]Provider, routing RoutingConfig, observer Observer) *Router {
 	t.Helper()
-	router, err := NewRouter(models, providers, routing, observer)
+	for _, model := range models {
+		identity := model.Provider + ":" + model.Model
+		if !containsModel(routing.ApprovedFreeModels, identity) {
+			routing.ApprovedFreeModels = append(routing.ApprovedFreeModels, identity)
+		}
+	}
+	router, err := NewRouterWithUsageLimiter(models, providers, routing, observer, newMemoryUsageLimiter())
 	if err != nil {
 		t.Fatalf("NewRouter() error = %v", err)
 	}
 	return router
+}
+
+func TestRouterFallsBackWhenProviderUsageCapIsReached(t *testing.T) {
+	limiter := newMemoryUsageLimiter()
+	limits := FreeUsageLimits()
+	for i := 0; i < limits.RequestsPerDay; i++ {
+		if err := limiter.Reserve(context.Background(), ProviderGroq, 1, limits, time.Now()); err != nil {
+			t.Fatalf("pre-fill Groq usage #%d: %v", i+1, err)
+		}
+	}
+
+	groq := &fakeProvider{response: Response{Content: "should not be called"}}
+	gemini := &fakeProvider{response: Response{Content: "Gemini fallback"}}
+	router, err := NewRouterWithUsageLimiter([]ModelConfig{
+		{ID: "groq-fast", Provider: ProviderGroq, Model: "fast-model"},
+		{ID: "gemini-main", Provider: ProviderGemini, Model: "main-model"},
+	}, map[string]Provider{ProviderGroq: groq, ProviderGemini: gemini},
+		RoutingConfig{
+			PrimaryModel:       "gemini-main",
+			FastModel:          "groq-fast",
+			ApprovedFreeModels: []string{"groq:fast-model", "gemini:main-model"},
+		}, nil, limiter)
+	if err != nil {
+		t.Fatalf("NewRouterWithUsageLimiter() error = %v", err)
+	}
+	response, err := router.Generate(context.Background(), testRequest(TaskClassification, ComplexitySimple))
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if response.Provider != ProviderGemini || groq.callCount() != 0 || gemini.callCount() != 1 {
+		t.Errorf("response = %+v, calls Groq:%d Gemini:%d; want exhausted Groq skipped for Gemini",
+			response, groq.callCount(), gemini.callCount())
+	}
 }
 
 func testRequest(task Task, complexity Complexity) Request {
@@ -207,6 +442,84 @@ func testRequest(task Task, complexity Complexity) Request {
 		Messages:   []Message{{Role: RoleUser, Content: "Help me with this."}},
 		Task:       task,
 		Complexity: complexity,
+	}
+}
+
+type timestampUsageLimiter struct {
+	reservedAt time.Time
+	recordedAt time.Time
+}
+
+func (limiter *timestampUsageLimiter) Reserve(_ context.Context, _ string, _ int, _ UsageLimits, at time.Time) error {
+	limiter.reservedAt = at
+	return nil
+}
+
+func (limiter *timestampUsageLimiter) RecordUsage(_ context.Context, _ string, _ Usage, at time.Time) error {
+	limiter.recordedAt = at
+	return nil
+}
+
+func TestRouterRecordsUsageInReservationPeriod(t *testing.T) {
+	limiter := &timestampUsageLimiter{}
+	provider := &fakeProvider{response: Response{Content: "answer", Usage: Usage{InputTokens: 10, OutputTokens: 5}}}
+	router, err := NewRouterWithUsageLimiter(
+		[]ModelConfig{{ID: "main", Provider: "test", Model: "test-model"}},
+		map[string]Provider{"test": provider},
+		RoutingConfig{
+			PrimaryModel:       "main",
+			ApprovedFreeModels: []string{"test:test-model"},
+		},
+		nil,
+		limiter,
+	)
+	if err != nil {
+		t.Fatalf("NewRouterWithUsageLimiter() error = %v", err)
+	}
+
+	times := []time.Time{
+		time.Date(2026, time.December, 31, 23, 59, 58, 0, time.UTC),
+		time.Date(2026, time.December, 31, 23, 59, 59, 0, time.UTC),
+		time.Date(2027, time.January, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(2027, time.January, 1, 0, 0, 1, 0, time.UTC),
+	}
+	router.now = func() time.Time {
+		if len(times) == 0 {
+			t.Fatal("router requested unexpected additional clock time")
+		}
+		at := times[0]
+		times = times[1:]
+		return at
+	}
+
+	if _, err := router.Generate(context.Background(), testRequest(TaskConversation, ComplexityNormal)); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if !limiter.reservedAt.Equal(limiter.recordedAt) {
+		t.Errorf("reservation time = %s, usage recording time = %s; want identical period timestamps",
+			limiter.reservedAt, limiter.recordedAt)
+	}
+	if limiter.reservedAt.Month() != time.December || limiter.recordedAt.Month() != time.December {
+		t.Errorf("reservation month = %s, recorded month = %s; want usage recorded in reserved month",
+			limiter.reservedAt.Month(), limiter.recordedAt.Month())
+	}
+}
+
+func TestRouterRejectsNegativeProviderUsage(t *testing.T) {
+	provider := &fakeProvider{response: Response{
+		Content: "answer",
+		Usage:   Usage{InputTokens: -1, OutputTokens: 5},
+	}}
+	router := testRouter(t,
+		[]ModelConfig{{ID: "main", Provider: "test", Model: "test-model"}},
+		map[string]Provider{"test": provider},
+		RoutingConfig{PrimaryModel: "main"},
+		nil,
+	)
+
+	_, err := router.Generate(context.Background(), testRequest(TaskConversation, ComplexityNormal))
+	if !errors.Is(err, ErrInvalidProviderUsage) {
+		t.Fatalf("Generate() error = %v, want invalid provider usage error", err)
 	}
 }
 
@@ -240,6 +553,25 @@ func TestNewRouterRejectsBadConfiguration(t *testing.T) {
 			}},
 			routing:  RoutingConfig{PrimaryModel: "main"},
 			provider: map[string]Provider{"provider": &fakeProvider{}},
+		},
+		{
+			name: "OpenRouter model missing free-model approval",
+			models: []ModelConfig{
+				{ID: "main", Provider: ProviderOpenRouter, Model: "vendor/model-free"},
+			},
+			provider: map[string]Provider{ProviderOpenRouter: &fakeProvider{}},
+			routing:  RoutingConfig{PrimaryModel: "main"},
+		},
+		{
+			name: "OpenRouter allowlist references unconfigured model",
+			models: []ModelConfig{
+				{ID: "main", Provider: "primary", Model: "primary-model"},
+			},
+			provider: map[string]Provider{"primary": &fakeProvider{}},
+			routing: RoutingConfig{
+				PrimaryModel:       "main",
+				ApprovedFreeModels: []string{"openrouter:vendor/unconfigured"},
+			},
 		},
 	}
 	for _, test := range tests {

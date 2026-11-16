@@ -45,10 +45,16 @@ func validE164(phoneNumber string) bool {
 	if len(phoneNumber) < 9 || len(phoneNumber) > 16 || phoneNumber[0] != '+' || phoneNumber[1] < '1' || phoneNumber[1] > '9' {
 		return false
 	}
+
 	for _, digit := range phoneNumber[1:] {
 		if digit < '0' || digit > '9' {
 			return false
 		}
 	}
 	return true
+}
+
+// ValidPhoneNumber reports whether phoneNumber is in canonical E.164 format.
+func ValidPhoneNumber(phoneNumber string) bool {
+	return validE164(phoneNumber)
 }

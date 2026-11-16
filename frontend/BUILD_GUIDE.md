@@ -45,8 +45,10 @@ see https://expo.dev/pricing).
 ## Settings you may need to fill in
 
 - `.env.example` → copy to `.env` and fill in `EXPO_PUBLIC_API_URL` if the app talks to a
-  server. Values in `.env` are bundled into the app and readable by anyone who has it:
-  never put passwords or secret keys there.
+  server. For a phone on your Wi-Fi, use your computer's LAN IP instead of
+  `localhost`. Values in `.env` are bundled into the app and readable by anyone who has
+  it: never put passwords, SMS credentials, AI keys, or other secret keys there.
+  Production API URLs must use HTTPS.
 - `app.json` → `name` (shown under the icon), `version`, and the icon files in
   `assets/images/`.
 

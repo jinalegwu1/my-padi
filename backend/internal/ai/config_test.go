@@ -7,6 +7,7 @@ import (
 
 func TestLoadEnvironmentWithoutModels(t *testing.T) {
 	t.Setenv("PADI_AI_MODELS", "")
+	t.Setenv("PADI_AI_APPROVED_FREE_MODELS", "")
 	configuration, err := LoadEnvironment()
 	if err != nil {
 		t.Fatalf("LoadEnvironment() error = %v", err)
@@ -17,28 +18,30 @@ func TestLoadEnvironmentWithoutModels(t *testing.T) {
 }
 
 func TestLoadEnvironmentRequiresAPIKeyAndRouting(t *testing.T) {
-	t.Setenv("PADI_AI_MODELS", `[{"id":"main","provider":"openai","model":"configured-model","api_key_env":"PADI_TEST_AI_KEY"}]`)
+	t.Setenv("PADI_AI_APPROVED_FREE_MODELS", "gemini:configured-model")
+	t.Setenv("PADI_AI_MODELS", `[{"id":"main","provider":"gemini","model":"configured-model","api_key_env":"PADI_TEST_AI_KEY"}]`)
 	t.Setenv("PADI_TEST_AI_KEY", "")
 	if _, err := LoadEnvironment(); err == nil || !strings.Contains(err.Error(), "PADI_TEST_AI_KEY") {
 		t.Fatalf("LoadEnvironment() error = %v, want missing key environment error", err)
 	}
 
 	t.Setenv("PADI_TEST_AI_KEY", "secret-value")
-	if _, err := NewConfiguredRouter(nil); err == nil {
+	if _, err := NewConfiguredRouterWithUsageLimiter(nil, newMemoryUsageLimiter()); err == nil {
 		t.Fatal("NewConfiguredRouter() error = nil, want missing primary model error")
 	}
 }
 
 func TestNewConfiguredRouterBuildsRegistryWithoutExposingSecrets(t *testing.T) {
 	t.Setenv("PADI_AI_MODELS", `[
-		{"id":"main","provider":"openai","model":"selected-by-config","api_key_env":"PADI_TEST_AI_KEY"},
-		{"id":"backup","provider":"openai-compatible","model":"backup-selected-by-config","endpoint":"https://example.test/v1/chat/completions","api_key_env":"PADI_TEST_AI_KEY"}
+		{"id":"main","provider":"gemini","model":"selected-by-config","api_key_env":"PADI_TEST_AI_KEY"},
+		{"id":"backup","provider":"groq","model":"backup-selected-by-config","api_key_env":"PADI_TEST_AI_KEY"}
 	]`)
 	t.Setenv("PADI_TEST_AI_KEY", "secret-value")
 	t.Setenv("PADI_AI_PRIMARY_MODEL", "main")
 	t.Setenv("PADI_AI_BACKUP_MODEL", "backup")
+	t.Setenv("PADI_AI_APPROVED_FREE_MODELS", "gemini:selected-by-config,groq:backup-selected-by-config")
 
-	router, err := NewConfiguredRouter(nil)
+	router, err := NewConfiguredRouterWithUsageLimiter(nil, newMemoryUsageLimiter())
 	if err != nil {
 		t.Fatalf("NewConfiguredRouter() error = %v", err)
 	}
@@ -50,14 +53,49 @@ func TestNewConfiguredRouterBuildsRegistryWithoutExposingSecrets(t *testing.T) {
 	}
 }
 
+func TestNewConfiguredRouterRequiresApprovedFreeModels(t *testing.T) {
+	t.Setenv("PADI_AI_MODELS", `[{"id":"backup","provider":"openrouter","model":"vendor/model-free","api_key_env":"PADI_TEST_AI_KEY"}]`)
+	t.Setenv("PADI_TEST_AI_KEY", "secret-value")
+	t.Setenv("PADI_AI_PRIMARY_MODEL", "backup")
+	t.Setenv("PADI_AI_APPROVED_FREE_MODELS", "")
+	if _, err := NewConfiguredRouterWithUsageLimiter(nil, newMemoryUsageLimiter()); err == nil || !strings.Contains(err.Error(), "PADI_AI_APPROVED_FREE_MODELS") {
+		t.Fatalf("NewConfiguredRouter() error = %v, want explicit approved free-model allowlist error", err)
+	}
+
+	t.Setenv("PADI_AI_APPROVED_FREE_MODELS", "openrouter:vendor/model-free")
+	router, err := NewConfiguredRouterWithUsageLimiter(nil, newMemoryUsageLimiter())
+	if err != nil {
+		t.Fatalf("NewConfiguredRouter() with allowlist error = %v", err)
+	}
+	if router.ModelCount() != 1 {
+		t.Errorf("ModelCount() = %d, want 1", router.ModelCount())
+	}
+}
+
 func TestLoadEnvironmentRejectsMalformedConfiguration(t *testing.T) {
 	t.Setenv("PADI_AI_MODELS", `[`)
 	if _, err := LoadEnvironment(); err == nil {
 		t.Fatal("LoadEnvironment() error = nil, want invalid JSON error")
 	}
 
-	t.Setenv("PADI_AI_MODELS", `[{"id":"main","provider":"openai","model":"configured-model"}]`)
+	t.Setenv("PADI_AI_MODELS", `[{"id":"main","provider":"openai","model":"configured-model","api_key_env":"PADI_TEST_AI_KEY"}]`)
+	if _, err := LoadEnvironment(); err == nil || !strings.Contains(err.Error(), "unsupported provider") {
+		t.Fatalf("LoadEnvironment() error = %v, want unsupported-provider error", err)
+	}
+
+	t.Setenv("PADI_AI_MODELS", `[{"id":"main","provider":"gemini","model":"configured-model"}]`)
+	t.Setenv("PADI_AI_APPROVED_FREE_MODELS", "")
 	if _, err := LoadEnvironment(); err == nil {
 		t.Fatal("LoadEnvironment() error = nil, want missing api_key_env error")
+	}
+
+	t.Setenv("PADI_AI_MODELS", "")
+	t.Setenv("PADI_AI_APPROVED_FREE_MODELS", "gemini:model-a,,gemini:model-b")
+	if _, err := LoadEnvironment(); err == nil || !strings.Contains(err.Error(), "empty provider/model") {
+		t.Fatalf("LoadEnvironment() error = %v, want invalid allowlist error", err)
+	}
+	t.Setenv("PADI_AI_APPROVED_FREE_MODELS", "gemini:model-a, gemini:model-a")
+	if _, err := LoadEnvironment(); err == nil || !strings.Contains(err.Error(), "duplicate entry") {
+		t.Fatalf("LoadEnvironment() error = %v, want duplicate allowlist error", err)
 	}
 }

@@ -70,6 +70,8 @@ export type Message = {
   visual?: VisualBlock;
   /** Marks a message that was produced by the simulated voice session. */
   viaVoice?: boolean;
+  /** Only messages from successful authenticated backend chat are sent as context. */
+  backendChat?: boolean;
   /** True while PADI's reply is still being "composed". */
   pending?: boolean;
 };

@@ -18,9 +18,18 @@ const (
 type Task string
 
 const (
-	TaskConversation Task = "conversation"
-	TaskReasoning    Task = "reasoning"
-	TaskExtraction   Task = "extraction"
+	TaskConversation   Task = "conversation"
+	TaskReasoning      Task = "reasoning"
+	TaskExtraction     Task = "extraction"
+	TaskClassification Task = "classification"
+	TaskSummarization  Task = "summarization"
+	TaskTextProcessing Task = "text_processing"
+	TaskPlanning       Task = "planning"
+	TaskTechnical      Task = "technical"
+	TaskDecision       Task = "decision_support"
+	TaskAnalysis       Task = "complex_analysis"
+	TaskLearning       Task = "learning"
+	TaskQualityReview  Task = "quality_review"
 )
 
 type Complexity string
@@ -38,9 +47,11 @@ type Message struct {
 
 // Request is provider-neutral. Task and Complexity may be omitted and inferred.
 type Request struct {
-	Messages   []Message  `json:"messages"`
-	Task       Task       `json:"task,omitempty"`
-	Complexity Complexity `json:"complexity,omitempty"`
+	Messages         []Message  `json:"messages"`
+	Task             Task       `json:"task,omitempty"`
+	Complexity       Complexity `json:"complexity,omitempty"`
+	StructuredOutput bool       `json:"structured_output,omitempty"`
+	MaxOutputTokens  int        `json:"max_output_tokens,omitempty"`
 }
 
 type Usage struct {
@@ -68,10 +79,34 @@ type ModelConfig struct {
 }
 
 type RoutingConfig struct {
-	PrimaryModel   string
-	FastModel      string
-	ReasoningModel string
-	BackupModel    string
+	PrimaryModel       string
+	FastModel          string
+	ReasoningModel     string
+	BackupModel        string
+	ApprovedFreeModels []string
+}
+
+type UsageLimits struct {
+	RequestsPerDay     int
+	RequestsPerMonth   int
+	TokenUnitsPerDay   int
+	TokenUnitsPerMonth int
+}
+
+var defaultFreeUsageLimits = UsageLimits{
+	RequestsPerDay:     20,
+	RequestsPerMonth:   300,
+	TokenUnitsPerDay:   25_000,
+	TokenUnitsPerMonth: 250_000,
+}
+
+func FreeUsageLimits() UsageLimits {
+	return defaultFreeUsageLimits
+}
+
+type UsageLimiter interface {
+	Reserve(context.Context, string, int, UsageLimits, time.Time) error
+	RecordUsage(context.Context, string, Usage, time.Time) error
 }
 
 type Provider interface {
@@ -99,6 +134,22 @@ func (observer ObserverFunc) ObserveAI(event Event) {
 }
 
 var ErrCircuitOpen = errors.New("AI provider circuit is open")
+var ErrUsageLimiterUnavailable = errors.New("persistent AI usage limiter is unavailable")
+var ErrUsageLimitReached = errors.New("AI provider usage limit reached")
+var ErrInvalidProviderUsage = errors.New("AI provider returned invalid token usage")
+
+type UsageLimitError struct {
+	Provider string
+	Window   string
+}
+
+func (err *UsageLimitError) Error() string {
+	return fmt.Sprintf("%s provider %s usage limit reached", err.Provider, err.Window)
+}
+
+func (err *UsageLimitError) Is(target error) bool {
+	return target == ErrUsageLimitReached
+}
 
 type ProviderError struct {
 	Provider  string

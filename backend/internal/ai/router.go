@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -14,10 +15,12 @@ import (
 )
 
 const (
-	defaultModelTimeout = 20 * time.Second
-	maxModelTimeout     = 2 * time.Minute
-	circuitFailureLimit = 3
-	circuitOpenDuration = 30 * time.Second
+	defaultModelTimeout    = 20 * time.Second
+	maxModelTimeout        = 2 * time.Minute
+	defaultMaxOutputTokens = 1024
+	maxOutputTokens        = 4096
+	circuitFailureLimit    = 3
+	circuitOpenDuration    = 30 * time.Second
 )
 
 type Router struct {
@@ -25,12 +28,33 @@ type Router struct {
 	providers map[string]Provider
 	routing   RoutingConfig
 	observer  Observer
+	limiter   UsageLimiter
 	breakers  map[string]*circuitBreaker
 	breakerMu sync.Mutex
 	now       func() time.Time
 }
 
+func containsModel(models []string, model string) bool {
+	for _, candidate := range models {
+		if candidate == model {
+			return true
+		}
+	}
+	return false
+}
+
 func NewRouter(models []ModelConfig, providers map[string]Provider, routing RoutingConfig, observer Observer) (*Router, error) {
+	return newRouter(models, providers, routing, observer, nil)
+}
+
+func NewRouterWithUsageLimiter(models []ModelConfig, providers map[string]Provider, routing RoutingConfig, observer Observer, limiter UsageLimiter) (*Router, error) {
+	if limiter == nil {
+		return nil, errors.New("persistent AI usage limiter is required")
+	}
+	return newRouter(models, providers, routing, observer, limiter)
+}
+
+func newRouter(models []ModelConfig, providers map[string]Provider, routing RoutingConfig, observer Observer, limiter UsageLimiter) (*Router, error) {
 	if routing.PrimaryModel == "" {
 		return nil, errors.New("primary AI model is required")
 	}
@@ -45,6 +69,10 @@ func NewRouter(models []ModelConfig, providers map[string]Provider, routing Rout
 		}
 		if providers[model.Provider] == nil {
 			return nil, fmt.Errorf("no AI provider adapter registered for %q", model.Provider)
+		}
+		approvedIdentity := model.Provider + ":" + model.Model
+		if !containsModel(routing.ApprovedFreeModels, approvedIdentity) {
+			return nil, fmt.Errorf("AI model %q (%s) is not in PADI_AI_APPROVED_FREE_MODELS", model.ID, approvedIdentity)
 		}
 		if model.TimeoutMillis < 0 || time.Duration(model.TimeoutMillis)*time.Millisecond > maxModelTimeout {
 			return nil, fmt.Errorf("AI model %q timeout must be between 0 and %s", model.ID, maxModelTimeout)
@@ -70,6 +98,16 @@ func NewRouter(models []ModelConfig, providers map[string]Provider, routing Rout
 		registered[model.ID] = model
 	}
 
+	configuredModels := make(map[string]struct{}, len(registered))
+	for _, model := range registered {
+		configuredModels[model.Provider+":"+model.Model] = struct{}{}
+	}
+	for _, identity := range routing.ApprovedFreeModels {
+		if _, exists := configuredModels[identity]; !exists {
+			return nil, fmt.Errorf("approved free-model entry %q is not configured", identity)
+		}
+	}
+
 	for _, modelID := range []string{
 		routing.PrimaryModel,
 		routing.FastModel,
@@ -88,6 +126,7 @@ func NewRouter(models []ModelConfig, providers map[string]Provider, routing Rout
 		providers: providers,
 		routing:   routing,
 		observer:  observer,
+		limiter:   limiter,
 		breakers:  make(map[string]*circuitBreaker),
 		now:       time.Now,
 	}, nil
@@ -114,6 +153,10 @@ func (router *Router) Generate(ctx context.Context, request Request) (Response, 
 			request.Complexity = inferredComplexity
 		}
 	}
+	request = withPADIInstructions(request)
+	if request.MaxOutputTokens == 0 {
+		request.MaxOutputTokens = defaultMaxOutputTokens
+	}
 
 	candidates := router.candidates(request)
 	var lastErr error
@@ -123,7 +166,7 @@ func (router *Router) Generate(ctx context.Context, request Request) (Response, 
 			return result, nil
 		}
 		lastErr = err
-		if !retryable(err) && !errors.Is(err, ErrCircuitOpen) {
+		if !retryable(err) && !errors.Is(err, ErrCircuitOpen) && !errors.Is(err, ErrUsageLimitReached) {
 			return Response{}, err
 		}
 	}
@@ -148,6 +191,10 @@ func (router *Router) GenerateWithModel(ctx context.Context, modelID string, req
 			request.Complexity = inferredComplexity
 		}
 	}
+	request = withPADIInstructions(request)
+	if request.MaxOutputTokens == 0 {
+		request.MaxOutputTokens = defaultMaxOutputTokens
+	}
 	if _, exists := router.models[modelID]; !exists {
 		return Response{}, fmt.Errorf("unknown AI model %q", modelID)
 	}
@@ -156,11 +203,19 @@ func (router *Router) GenerateWithModel(ctx context.Context, modelID string, req
 
 func (router *Router) generateWithModel(ctx context.Context, modelID string, request Request) (Response, error) {
 	model := router.models[modelID]
+	if router.limiter == nil {
+		return Response{}, ErrUsageLimiterUnavailable
+	}
+	reservedTokens := estimateTokenUnits(request) + request.MaxOutputTokens
 	breaker := router.breaker(modelID)
 	var lastErr error
 	for attempt := 0; attempt <= model.Retries; attempt++ {
 		if !breaker.allow(router.now()) {
 			return Response{}, ErrCircuitOpen
+		}
+		reservedAt := router.now()
+		if err := router.limiter.Reserve(ctx, model.Provider, reservedTokens, FreeUsageLimits(), reservedAt); err != nil {
+			return Response{}, err
 		}
 
 		timeout := defaultModelTimeout
@@ -172,18 +227,32 @@ func (router *Router) generateWithModel(ctx context.Context, modelID string, req
 		result, err := router.providers[model.Provider].Generate(modelContext, model, request)
 		cancel()
 		duration := router.now().Sub(started)
+		if err == nil && (result.Usage.InputTokens < 0 || result.Usage.OutputTokens < 0) {
+			err = &ProviderError{Provider: model.Provider, Err: ErrInvalidProviderUsage}
+		}
+		if err == nil && request.StructuredOutput && !json.Valid([]byte(result.Content)) {
+			err = &ProviderError{
+				Provider:  model.Provider,
+				Retryable: true,
+				Err:       errors.New("provider returned invalid structured output"),
+			}
+		}
 
 		if err != nil {
 			breaker.recordFailure(router.now(), retryable(err))
 			router.observe(model, duration, false, classifyError(err), Usage{})
 			lastErr = err
-			if retryable(err) {
+			if retryable(err) && !shouldFallbackImmediately(err) {
 				continue
 			}
 			return Response{}, err
 		}
 
 		breaker.recordSuccess()
+		if err := router.limiter.RecordUsage(ctx, model.Provider, result.Usage, reservedAt); err != nil {
+			router.observe(model, duration, false, "usage_ledger_error", result.Usage)
+			return Response{}, fmt.Errorf("record AI provider usage: %w", err)
+		}
 		result.Provider = model.Provider
 		result.Model = model.Model
 		router.observe(model, duration, true, "", result.Usage)
@@ -192,16 +261,59 @@ func (router *Router) generateWithModel(ctx context.Context, modelID string, req
 	return Response{}, lastErr
 }
 
+func shouldFallbackImmediately(err error) bool {
+	var providerErr *ProviderError
+	return errors.As(err, &providerErr) &&
+		(providerErr.Status == 404 || providerErr.Status == 429)
+}
+
+func estimateTokenUnits(request Request) int {
+	total := 0
+	for _, message := range request.Messages {
+		total += len(message.Content)
+	}
+	return total
+}
+
+func isReasoningTask(task Task) bool {
+	switch task {
+	case TaskReasoning, TaskPlanning, TaskTechnical, TaskDecision, TaskAnalysis, TaskLearning, TaskQualityReview:
+		return true
+	default:
+		return false
+	}
+}
+
+func isFastTask(task Task) bool {
+	switch task {
+	case TaskExtraction, TaskClassification, TaskSummarization, TaskTextProcessing:
+		return true
+	default:
+		return false
+	}
+}
+
 func (router *Router) candidates(request Request) []string {
 	preferred := router.routing.PrimaryModel
 	switch {
-	case request.Task == TaskExtraction && router.routing.FastModel != "":
-		preferred = router.routing.FastModel
-	case (request.Task == TaskReasoning || request.Complexity == ComplexityComplex) && router.routing.ReasoningModel != "":
+	case isReasoningTask(request.Task) && router.routing.ReasoningModel != "":
 		preferred = router.routing.ReasoningModel
+	case isFastTask(request.Task) && router.routing.FastModel != "":
+		preferred = router.routing.FastModel
+	case request.Complexity == ComplexityComplex && router.routing.ReasoningModel != "":
+		preferred = router.routing.ReasoningModel
+	case request.Task == TaskConversation && request.Complexity == ComplexitySimple &&
+		router.routing.FastModel != "":
+		preferred = router.routing.FastModel
 	}
 
-	candidates := []string{preferred, router.routing.PrimaryModel, router.routing.BackupModel}
+	candidates := []string{
+		preferred,
+		router.routing.PrimaryModel,
+		router.routing.BackupModel,
+		router.routing.FastModel,
+		router.routing.ReasoningModel,
+	}
 	seen := make(map[string]bool, len(candidates))
 	unique := candidates[:0]
 	for _, modelID := range candidates {
@@ -244,6 +356,8 @@ func classifyError(err error) string {
 	var providerErr *ProviderError
 	if errors.As(err, &providerErr) {
 		switch {
+		case providerErr.Status == 404:
+			return "model_unavailable"
 		case providerErr.Status == 429:
 			return "rate_limited"
 		case providerErr.Status >= 500:
@@ -280,11 +394,19 @@ func validateRequest(request Request) error {
 			return errors.New("AI request exceeds the content size limit")
 		}
 	}
-	if request.Task != "" && request.Task != TaskConversation && request.Task != TaskReasoning && request.Task != TaskExtraction {
+	if request.Task != "" && request.Task != TaskConversation && request.Task != TaskReasoning &&
+		request.Task != TaskExtraction && request.Task != TaskClassification &&
+		request.Task != TaskSummarization && request.Task != TaskTextProcessing &&
+		request.Task != TaskPlanning && request.Task != TaskTechnical &&
+		request.Task != TaskDecision && request.Task != TaskAnalysis &&
+		request.Task != TaskLearning && request.Task != TaskQualityReview {
 		return fmt.Errorf("unsupported AI task %q", request.Task)
 	}
 	if request.Complexity != "" && request.Complexity != ComplexitySimple && request.Complexity != ComplexityNormal && request.Complexity != ComplexityComplex {
 		return fmt.Errorf("unsupported AI complexity %q", request.Complexity)
+	}
+	if request.MaxOutputTokens < 0 || request.MaxOutputTokens > maxOutputTokens {
+		return fmt.Errorf("max_output_tokens must be between 0 and %d", maxOutputTokens)
 	}
 	return nil
 }

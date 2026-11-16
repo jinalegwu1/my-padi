@@ -1,5 +1,5 @@
-import { useRouter } from 'expo-router';
-import { useCallback, useRef } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -21,14 +21,17 @@ import { SUGGESTIONS } from '@/data/mock-conversations';
 import { useChat } from '@/hooks/use-chat';
 import { usePreferences } from '@/hooks/use-preferences';
 import { useTranslation } from '@/hooks/use-translation';
+import { revokeSession } from '@/lib/api';
+import { hasBackend } from '@/lib/config';
+import { clearSession, readSession, type AppSession } from '@/lib/session';
 import type { Message } from '@/types';
 
 /**
  * The main conversation screen — the centre of the application.
  *
  * PADI's animated Orb is deliberately NOT here: it belongs to the voice screen
- * and only appears once the user activates voice. Text messages always get text
- * replies; voice is never played automatically.
+ * and only appears once the user activates voice. Chat replies come from the
+ * authenticated Go API; voice is still a separate simulated feature.
  */
 export default function ConversationScreen() {
   const router = useRouter();
@@ -36,20 +39,80 @@ export default function ConversationScreen() {
   const type = useType();
   const { t } = useTranslation();
   const { preferences } = usePreferences();
-  const { messages, status, isThinking, send, reset } = useChat();
+  const { messages, status, isThinking, sendError, send, reset } = useChat();
   const listRef = useRef<FlatList<Message>>(null);
+  const [session, setSession] = useState<AppSession | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [signOutNotice, setSignOutNotice] = useState<string | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+    let active = true;
+    setSessionLoading(true);
+    readSession()
+      .then((current) => {
+        if (active) {
+          setSession(current);
+          setSessionError(null);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setSession(null);
+          setSessionError('Session storage could not be read. Please reopen the app or sign in again.');
+        }
+      })
+      .finally(() => {
+        if (active) setSessionLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+    }, []),
+  );
 
   const scrollToEnd = useCallback(() => {
     requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
   }, []);
 
   const handleSend = useCallback(
-    (text: string) => {
-      send(text);
-      scrollToEnd();
+    async (text: string): Promise<boolean> => {
+      const result = await send(text);
+      if (result === 'unauthorized') {
+        setSession(null);
+        router.push('/auth');
+      }
+      if (result === 'sent') scrollToEnd();
+      return result === 'sent';
     },
-    [scrollToEnd, send],
+    [router, scrollToEnd, send],
   );
+
+  const handleSignOut = useCallback(async () => {
+    const current = session;
+    let revokeFailed = false;
+    try {
+      await clearSession();
+    } catch {
+      setSessionError('The saved session could not be cleared. Restart the app before signing in again.');
+      setSession(null);
+      reset();
+      return;
+    }
+    setSession(null);
+    reset();
+    if (current) {
+      try {
+        await revokeSession(current.token);
+      } catch {
+        revokeFailed = true;
+      }
+    }
+    if (revokeFailed) {
+      setSignOutNotice('You are signed out on this device, but the server could not confirm session revocation. The session will expire automatically.');
+    }
+  }, [reset, session]);
 
   const greeting = preferences.displayName
     ? `Hey ${preferences.displayName}! 😊 Good to see you. What are we talking about today?`
@@ -82,6 +145,36 @@ export default function ConversationScreen() {
     );
   }
 
+  if (sessionLoading) {
+    return (
+      <SafeAreaView style={[styles.root, { backgroundColor: colors.background }]}>
+        <View style={styles.center}>
+          <ActivityIndicator color={colors.primary} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!session) {
+    return (
+      <SafeAreaView style={[styles.root, { backgroundColor: colors.background }]}>
+        <EmptyState
+          icon="lock-closed-outline"
+          title="Sign in to chat with PADI"
+          message={
+            sessionError ??
+            signOutNotice ??
+            (hasBackend
+              ? 'Create an account or sign in with your phone number. We will verify it with a one-time SMS code.'
+              : 'Real chat needs a backend URL configured for this app. Set EXPO_PUBLIC_API_URL, then sign in.')
+          }
+          actionTitle="Continue with phone"
+          onAction={() => router.push('/auth')}
+        />
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView
       style={[styles.root, { backgroundColor: colors.background }]}
@@ -95,6 +188,8 @@ export default function ConversationScreen() {
         newChatLabel={t('chat.newChat')}
         onOpenWeather={() => router.push('/weather')}
         weatherLabel="Check local weather"
+        onSignOut={handleSignOut}
+        signOutLabel="Sign out"
       />
 
       <KeyboardAvoidingView
@@ -136,6 +231,12 @@ export default function ConversationScreen() {
           />
         ) : null}
 
+        {sendError ? (
+          <Text accessibilityRole="alert" style={[styles.error, { color: colors.danger }]}>
+            {sendError}
+          </Text>
+        ) : null}
+
         <Composer
           onSend={handleSend}
           onOpenVoice={() => router.push('/voice')}
@@ -156,4 +257,5 @@ const styles = StyleSheet.create({
   list: { padding: spacing.base, gap: spacing.base, paddingBottom: spacing.sm },
   footer: { paddingTop: spacing.md, alignItems: 'center' },
   notice: { fontFamily: fonts.regular, textAlign: 'center' },
+  error: { paddingHorizontal: spacing.base, paddingVertical: spacing.xs, fontFamily: fonts.medium, textAlign: 'center' },
 });

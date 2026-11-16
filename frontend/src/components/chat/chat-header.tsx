@@ -13,6 +13,8 @@ type Props = {
   newChatLabel: string;
   onOpenWeather: () => void;
   weatherLabel: string;
+  onSignOut: () => void;
+  signOutLabel: string;
 };
 
 /**
@@ -28,6 +30,8 @@ export function ChatHeader({
   newChatLabel,
   onOpenWeather,
   weatherLabel,
+  onSignOut,
+  signOutLabel,
 }: Props) {
   const colors = useColors();
   const type = useType();
@@ -86,6 +90,18 @@ export function ChatHeader({
             pressed && { opacity: 0.7 },
           ]}>
           <Ionicons name="settings-outline" size={19} color={colors.textSecondary} />
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={signOutLabel}
+          onPress={onSignOut}
+          hitSlop={8}
+          style={({ pressed }) => [
+            styles.iconButton,
+            { backgroundColor: colors.cardMuted },
+            pressed && { opacity: 0.7 },
+          ]}>
+          <Ionicons name="log-out-outline" size={19} color={colors.textSecondary} />
         </Pressable>
       </View>
     </View>

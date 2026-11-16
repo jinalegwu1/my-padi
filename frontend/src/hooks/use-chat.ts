@@ -1,18 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import { WELCOME_MESSAGE, nextId } from '@/data/mock-conversations';
-import { buildPendingMessage, buildReply, buildReplyMessage } from '@/data/mock-replies';
 import { usePersistentState } from '@/hooks/use-persistent-state';
+import { APIError, sendChat } from '@/lib/api';
+import { hasBackend } from '@/lib/config';
+import { clearSession, readSession, type AppSession } from '@/lib/session';
 import type { Message } from '@/types';
-
-const THINKING_MS = 1100;
 
 /**
  * Conversation state for the main chat screen.
  *
- * Replies come from a local rule-based mock (`@/data/mock-replies`) — no AI
- * service is called and nothing leaves the phone. Text messages always get a
- * text reply; voice is never played automatically.
+ * User messages and successful replies are sent to the authenticated Go chat API.
+ * Old simulated exchanges and local greetings are deliberately excluded from AI
+ * context when the app is upgraded.
  */
 export function useChat() {
   const [messages, setMessages, status] = usePersistentState<Message[]>(
@@ -20,39 +20,102 @@ export function useChat() {
     [],
   );
   const [isThinking, setIsThinking] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(
-    () => () => {
-      if (timer.current) clearTimeout(timer.current);
-    },
-    [],
-  );
+  const [sendError, setSendError] = useState<string | null>(null);
+  const sending = useRef(false);
 
   const send = useCallback(
-    (rawText: string) => {
+    async (rawText: string): Promise<'sent' | 'unauthorized' | 'failed' | 'ignored'> => {
       const text = rawText.trim();
-      if (!text || isThinking) return;
+      if (!text || sending.current) return 'ignored';
+      if (!hasBackend) {
+        setSendError('Real chat is not configured in this app build. Set EXPO_PUBLIC_API_URL and try again.');
+        return 'failed';
+      }
+
+      sending.current = true;
+      setIsThinking(true);
+      setSendError(null);
+      let session: AppSession | null;
+      try {
+        session = await readSession();
+      } catch {
+        sending.current = false;
+        setIsThinking(false);
+        setSendError('Session storage could not be read. Please sign in again.');
+        return 'failed';
+      }
+      if (!session) {
+        sending.current = false;
+        setIsThinking(false);
+        return 'unauthorized';
+      }
 
       const userMessage: Message = {
         id: nextId('user'),
         role: 'user',
         text,
         createdAt: Date.now(),
+        backendChat: true,
       };
-      const pending = buildPendingMessage();
+      const pending: Message = {
+        id: nextId('pending'),
+        role: 'padi',
+        text: '',
+        createdAt: Date.now(),
+        pending: true,
+      };
 
       setMessages((prev) => [...prev, userMessage, pending]);
-      setIsThinking(true);
-
-      timer.current = setTimeout(() => {
-        const reply = buildReply(text);
-        const replyMessage = buildReplyMessage(reply);
-        setMessages((prev) => prev.map((m) => (m.id === pending.id ? replyMessage : m)));
+      try {
+        const history = messages
+          .filter((message) => message.backendChat && !message.pending)
+          .slice(-19)
+          .map((message) => ({
+            role: message.role === 'padi' ? ('assistant' as const) : ('user' as const),
+            content: message.text,
+          }));
+        const response = await sendChat(session.token, [
+          ...history,
+          { role: 'user', content: text },
+        ]);
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.id === pending.id
+              ? {
+                  ...message,
+                  id: nextId('padi'),
+                  text: response.reply,
+                  createdAt: Date.now(),
+                  pending: false,
+                  backendChat: true,
+                }
+              : message,
+          ),
+        );
+        return 'sent';
+      } catch (error) {
+        setMessages((prev) =>
+          prev.filter((message) => message.id !== pending.id && message.id !== userMessage.id),
+        );
+        if (error instanceof APIError && error.status === 401) {
+          try {
+            await clearSession();
+          } catch {
+            setSendError('Your session expired, but its saved credential could not be cleared. Please sign in again.');
+          }
+          setMessages((prev) =>
+            prev.map((message) => ({ ...message, backendChat: false })),
+          );
+          return 'unauthorized';
+        }
+        setSendError(error instanceof Error ? error.message : 'PADI could not respond. Please try again.');
+        return 'failed';
+      } finally {
+        sending.current = false;
         setIsThinking(false);
-      }, THINKING_MS);
+      }
     },
-    [isThinking, setMessages],
+    [messages, setMessages],
   );
 
   /** Adds a message produced by the simulated voice session. */
@@ -79,10 +142,11 @@ export function useChat() {
   );
 
   const reset = useCallback(() => {
+    setSendError(null);
     setMessages([
       { id: nextId('padi'), role: 'padi', text: WELCOME_MESSAGE, createdAt: Date.now() },
     ]);
   }, [setMessages]);
 
-  return { messages, status, isThinking, send, addVoiceExchange, addGreeting, reset };
+  return { messages, status, isThinking, sendError, send, addVoiceExchange, addGreeting, reset };
 }

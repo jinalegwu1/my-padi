@@ -10,10 +10,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/jinalegwu1/my-padi/backend/internal/ai"
+	"github.com/jinalegwu1/my-padi/backend/internal/auth"
 	"github.com/jinalegwu1/my-padi/backend/internal/config"
 	"github.com/jinalegwu1/my-padi/backend/internal/database"
 	"github.com/jinalegwu1/my-padi/backend/internal/httpapi"
@@ -31,27 +33,14 @@ func main() {
 
 func run(logger *slog.Logger) error {
 	cfg := config.Load()
-	aiRouter, err := ai.NewConfiguredRouter(ai.ObserverFunc(func(event ai.Event) {
-		logger.Info("AI provider request",
-			"model_id", event.ModelID,
-			"provider", event.Provider,
-			"duration_ms", event.Duration.Milliseconds(),
-			"success", event.Success,
-			"error_class", event.ErrorClass,
-			"input_tokens", event.Usage.InputTokens,
-			"output_tokens", event.Usage.OutputTokens,
-			"estimated_cost", event.EstimatedCost,
-		)
-	}))
+	aiConfiguration, err := ai.LoadEnvironment()
 	if err != nil {
-		return fmt.Errorf("configure AI providers: %w", err)
-	}
-	if aiRouter != nil {
-		logger.Info("AI model registry loaded", "model_count", aiRouter.ModelCount())
+		return fmt.Errorf("load AI provider configuration: %w", err)
 	}
 
 	var db *sql.DB
 	var readiness httpapi.ReadinessChecker
+	var authService *auth.Service
 	if cfg.DatabaseURL != "" {
 		openContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		openedDB, err := database.Open(openContext, cfg.DatabaseURL)
@@ -67,19 +56,60 @@ func run(logger *slog.Logger) error {
 		}()
 		readiness = db
 		logger.Info("PostgreSQL connection established")
+		authService, err = configureAuthentication(db)
+		if err != nil {
+			return fmt.Errorf("configure authentication: %w", err)
+		}
 	} else {
 		logger.Warn("DATABASE_URL is not set; API will not be ready for data-backed requests")
+		if hasAuthenticationConfiguration() {
+			return errors.New("DATABASE_URL is required when phone authentication is configured")
+		}
+	}
+
+	var aiRouter *ai.Router
+	if len(aiConfiguration.Models) > 0 {
+		if db == nil {
+			return errors.New("DATABASE_URL is required when AI models are configured so usage limits can be enforced")
+		}
+		usageContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		usageLimiter, err := database.NewAIUsageLimiter(usageContext, db)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("configure persistent AI usage limits: %w", err)
+		}
+		aiRouter, err = ai.NewRouterFromEnvironment(aiConfiguration, ai.ObserverFunc(func(event ai.Event) {
+			logger.Info("AI provider request",
+				"model_id", event.ModelID,
+				"provider", event.Provider,
+				"duration_ms", event.Duration.Milliseconds(),
+				"success", event.Success,
+				"error_class", event.ErrorClass,
+				"input_tokens", event.Usage.InputTokens,
+				"output_tokens", event.Usage.OutputTokens,
+				"estimated_cost", event.EstimatedCost,
+			)
+		}), usageLimiter)
+		if err != nil {
+			return fmt.Errorf("configure AI providers: %w", err)
+		}
+		logger.Info("AI model registry loaded", "model_count", aiRouter.ModelCount())
 	}
 
 	signalContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	server := &http.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           httpapi.NewRouter(readiness),
+		Addr: cfg.HTTPAddr,
+		Handler: httpapi.NewRouter(readiness, httpapi.Dependencies{
+			Auth:           authService,
+			Chat:           aiRouter,
+			AllowedOrigins: corsOrigins(),
+			Logger:         logger,
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      2*time.Minute + 45*time.Second,
 		IdleTimeout:       60 * time.Second,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
@@ -131,4 +161,62 @@ func run(logger *slog.Logger) error {
 
 	logger.Info("HTTP server stopped")
 	return nil
+}
+
+func configureAuthentication(db *sql.DB) (*auth.Service, error) {
+	apiKey := os.Getenv("TERMI_API_KEY")
+	senderID := os.Getenv("TERMI_SENDER_ID")
+	baseURL := os.Getenv("TERMI_API_BASE_URL")
+	pepper := os.Getenv("PADI_AUTH_PEPPER")
+	configured := 0
+	for _, value := range []string{apiKey, senderID, baseURL, pepper} {
+		if value != "" {
+			configured++
+		}
+	}
+	if configured == 0 {
+		slog.Warn("phone authentication is not configured")
+		return nil, nil
+	}
+	if configured != 4 {
+		return nil, errors.New("TERMI_API_KEY, TERMI_SENDER_ID, TERMI_API_BASE_URL, and PADI_AUTH_PEPPER must all be configured")
+	}
+	if len(pepper) < 32 {
+		return nil, errors.New("PADI_AUTH_PEPPER must contain at least 32 bytes")
+	}
+	storeContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	store, err := database.NewAuthStore(storeContext, db)
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+	sender, err := auth.NewTermiiSender(apiKey, senderID, baseURL)
+	if err != nil {
+		return nil, err
+	}
+	service, err := auth.NewService(store, sender, []byte(pepper))
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("phone authentication configured", "sms_provider", "termii")
+	return service, nil
+}
+
+func hasAuthenticationConfiguration() bool {
+	return os.Getenv("TERMI_API_KEY") != "" ||
+		os.Getenv("TERMI_SENDER_ID") != "" ||
+		os.Getenv("TERMI_API_BASE_URL") != "" ||
+		os.Getenv("PADI_AUTH_PEPPER") != ""
+}
+
+func corsOrigins() []string {
+	raw := strings.TrimSpace(os.Getenv("PADI_CORS_ORIGINS"))
+	if raw == "" {
+		return nil
+	}
+	origins := strings.Split(raw, ",")
+	for i := range origins {
+		origins[i] = strings.TrimSpace(origins[i])
+	}
+	return origins
 }

@@ -37,7 +37,8 @@
         {
           "locationWhenInUsePermission": "Allow My PADI to use your location while open to identify your area and tailor local weather greetings."
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true

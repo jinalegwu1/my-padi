@@ -5,7 +5,7 @@ import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { fonts, radius, shadow, spacing, useColors, useType } from '@/constants/theme';
 
 type Props = {
-  onSend: (text: string) => void;
+  onSend: (text: string) => void | boolean | Promise<void | boolean>;
   onOpenVoice: () => void;
   placeholder: string;
   sendLabel: string;
@@ -30,10 +30,10 @@ export function Composer({
   const [text, setText] = useState('');
   const canSend = text.trim().length > 0 && !disabled;
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!canSend) return;
-    onSend(text);
-    setText('');
+    const accepted = await onSend(text);
+    if (accepted !== false) setText('');
   };
 
   return (
