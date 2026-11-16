@@ -12,7 +12,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   textScale: 1,
   reduceMotion: false,
   highContrast: false,
-  voiceId: 'ada',
+  voiceId: 'baby',
   voiceRate: 1,
   memoryEnabled: true,
   notificationsEnabled: true,

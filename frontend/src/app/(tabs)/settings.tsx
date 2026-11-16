@@ -84,6 +84,19 @@ export default function SettingsScreen() {
           />
         </SettingsGroup>
 
+        <SectionHeader
+          title="Weather and local context"
+          subtitle="PADI uses your location while open for local greetings and weather."
+        />
+        <SettingsGroup>
+          <SettingRow
+            icon="partly-sunny-outline"
+            title="Check local weather"
+            subtitle="View current conditions for your area."
+            onPress={() => router.push('/weather')}
+          />
+        </SettingsGroup>
+
         {/* Voice */}
         <SectionHeader title={t('settings.voice')} subtitle={t('settings.voice.hint')} />
         <SettingsGroup>
@@ -339,7 +352,7 @@ export default function SettingsScreen() {
             preview: t('settings.voice.preview'),
             stop: t('settings.voice.stop'),
             speed: t('settings.voice.speed'),
-            simulated: 'Voice previews are simulated in the app — no speech service is connected.',
+            simulated: 'Uses your device’s speech voice with a pitch and speed adjustment.',
           }}
         />
       </Sheet>
@@ -397,7 +410,7 @@ export default function SettingsScreen() {
         onConfirm={() => {
           reset();
           setResetOpen(false);
-          router.replace('/onboarding/country');
+          router.replace('/onboarding/welcome');
         }}
       />
     </SafeAreaView>

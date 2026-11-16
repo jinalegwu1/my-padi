@@ -23,14 +23,14 @@ export default function LanguageStep() {
 
   const confirm = () => {
     update({ languageCode: currentCode });
-    router.push('/onboarding/welcome');
+    router.push('/onboarding/location');
   };
 
   return (
     <OnboardingShell
       step={2}
-      totalSteps={4}
-      stepLabel={t('onboarding.step', { current: 2, total: 4 })}
+      totalSteps={3}
+      stepLabel={t('onboarding.step', { current: 2, total: 3 })}
       title={t('onboarding.language.title')}
       subtitle={t('onboarding.language.subtitle')}
       onBack={() => router.back()}

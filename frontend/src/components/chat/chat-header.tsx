@@ -11,6 +11,8 @@ type Props = {
   settingsLabel: string;
   onNewChat: () => void;
   newChatLabel: string;
+  onOpenWeather: () => void;
+  weatherLabel: string;
 };
 
 /**
@@ -24,6 +26,8 @@ export function ChatHeader({
   settingsLabel,
   onNewChat,
   newChatLabel,
+  onOpenWeather,
+  weatherLabel,
 }: Props) {
   const colors = useColors();
   const type = useType();
@@ -47,6 +51,18 @@ export function ChatHeader({
       </View>
 
       <View style={styles.actions}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={weatherLabel}
+          onPress={onOpenWeather}
+          hitSlop={8}
+          style={({ pressed }) => [
+            styles.iconButton,
+            { backgroundColor: colors.cardMuted },
+            pressed && { opacity: 0.7 },
+          ]}>
+          <Ionicons name="partly-sunny-outline" size={19} color={colors.textSecondary} />
+        </Pressable>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={newChatLabel}

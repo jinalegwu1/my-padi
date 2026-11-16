@@ -93,6 +93,8 @@ export default function ConversationScreen() {
         settingsLabel={t('chat.settings')}
         onNewChat={reset}
         newChatLabel={t('chat.newChat')}
+        onOpenWeather={() => router.push('/weather')}
+        weatherLabel="Check local weather"
       />
 
       <KeyboardAvoidingView

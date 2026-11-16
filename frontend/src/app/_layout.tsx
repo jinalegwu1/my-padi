@@ -60,6 +60,7 @@ function ThemedStack() {
           options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
         />
         <Stack.Screen name="memory" options={{ animation: 'slide_from_right' }} />
+        <Stack.Screen name="weather" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="+not-found" options={{ headerShown: true, title: 'Not found' }} />
       </Stack>
       <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />

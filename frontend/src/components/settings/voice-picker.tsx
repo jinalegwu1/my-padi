@@ -1,4 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import * as Speech from 'expo-speech';
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -6,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { fonts, radius, spacing, useColors, useType } from '@/constants/theme';
 import { VOICES } from '@/data/languages';
 import { usePreferences } from '@/hooks/use-preferences';
+import { padiSpeechLanguage, padiVoiceOptions, stopPadiSpeech } from '@/lib/speech';
 import type { VoiceOption } from '@/types';
 
 type Props = {
@@ -20,31 +22,40 @@ type Props = {
 };
 
 /**
- * Voice selection with male and female options and a preview player.
- * The preview is simulated in the UI only — no speech service is connected.
+ * Voice styles with native speech previews. The selected style adjusts pitch
+ * and uses the preferred language; the device supplies the actual TTS voice.
  */
 export function VoicePicker({ labels }: Props) {
   const colors = useColors();
   const type = useType();
   const { preferences, update } = usePreferences();
   const [previewing, setPreviewing] = useState<string | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [previewError, setPreviewError] = useState('');
 
   useEffect(
     () => () => {
-      if (timer.current) clearTimeout(timer.current);
+      void stopPadiSpeech();
     },
     [],
   );
 
   const startPreview = (voice: VoiceOption) => {
-    if (timer.current) clearTimeout(timer.current);
+    setPreviewError('');
     setPreviewing(voice.id);
-    timer.current = setTimeout(() => setPreviewing(null), 3200);
+    void stopPadiSpeech();
+    Speech.speak(voice.sample, {
+      language: padiSpeechLanguage(preferences.languageCode),
+      ...padiVoiceOptions(voice.id, preferences.voiceRate),
+      onDone: () => setPreviewing(null),
+      onError: (error) => {
+        setPreviewing(null);
+        setPreviewError(error.message);
+      },
+    });
   };
 
   const stopPreview = () => {
-    if (timer.current) clearTimeout(timer.current);
+    void stopPadiSpeech();
     setPreviewing(null);
   };
 
@@ -195,6 +206,11 @@ export function VoicePicker({ labels }: Props) {
         </View>
       </View>
 
+      {previewError ? (
+        <Text accessibilityRole="alert" style={[styles.noticeText, { color: colors.danger }]}>
+          {previewError}
+        </Text>
+      ) : null}
       <View style={styles.notice}>
         <Ionicons name="information-circle-outline" size={14} color={colors.muted} />
         <Text style={[styles.noticeText, { color: colors.muted, fontSize: type.micro }]}>

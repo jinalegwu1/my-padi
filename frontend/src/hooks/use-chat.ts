@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { SEED_MESSAGES, WELCOME_MESSAGE, nextId } from '@/data/mock-conversations';
+import { WELCOME_MESSAGE, nextId } from '@/data/mock-conversations';
 import { buildPendingMessage, buildReply, buildReplyMessage } from '@/data/mock-replies';
 import { usePersistentState } from '@/hooks/use-persistent-state';
 import type { Message } from '@/types';
@@ -17,7 +17,7 @@ const THINKING_MS = 1100;
 export function useChat() {
   const [messages, setMessages, status] = usePersistentState<Message[]>(
     'chat-messages',
-    SEED_MESSAGES,
+    [],
   );
   const [isThinking, setIsThinking] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -68,11 +68,21 @@ export function useChat() {
     [setMessages],
   );
 
+  const addGreeting = useCallback(
+    (text: string) => {
+      setMessages((prev) => [
+        ...prev,
+        { id: nextId('padi'), role: 'padi', text, createdAt: Date.now() },
+      ]);
+    },
+    [setMessages],
+  );
+
   const reset = useCallback(() => {
     setMessages([
       { id: nextId('padi'), role: 'padi', text: WELCOME_MESSAGE, createdAt: Date.now() },
     ]);
   }, [setMessages]);
 
-  return { messages, status, isThinking, send, addVoiceExchange, reset };
+  return { messages, status, isThinking, send, addVoiceExchange, addGreeting, reset };
 }

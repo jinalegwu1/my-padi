@@ -49,10 +49,18 @@ export function languageLabel(code: string): string {
 }
 
 /**
- * Voice options for Settings → Voice. Male and female choices are both offered;
- * previews are simulated in the UI only.
+ * Voice styles for Settings → Voice. Speech uses the device's installed TTS voice
+ * with a pitch adjustment; named styles are not separate recorded voices.
  */
 export const VOICES: VoiceOption[] = [
+  {
+    id: 'baby',
+    name: 'Baby',
+    gender: 'female',
+    accent: 'Device language',
+    description: 'Childlike, bright and playful',
+    sample: "Hello! I'm PADI. I'm happy to be here with you.",
+  },
   {
     id: 'ada',
     name: 'Ada',

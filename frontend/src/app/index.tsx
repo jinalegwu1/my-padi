@@ -3,10 +3,14 @@ import { Redirect } from 'expo-router';
 import { usePreferences } from '@/hooks/use-preferences';
 
 /**
- * Entry route. Sends first-time users through onboarding and everyone else
- * straight to the conversation.
+ * Entry route. First-time users meet PADI; returning users get a local greeting
+ * before entering the conversation.
  */
 export default function Index() {
   const { preferences } = usePreferences();
-  return <Redirect href={preferences.onboarded ? '/(tabs)/chat' : '/onboarding/country'} />;
+  return (
+    <Redirect
+      href={preferences.onboarded ? '/onboarding/location' : '/onboarding/welcome'}
+    />
+  );
 }

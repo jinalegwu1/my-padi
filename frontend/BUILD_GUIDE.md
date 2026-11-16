@@ -50,6 +50,22 @@ see https://expo.dev/pricing).
 - `app.json` → `name` (shown under the icon), `version`, and the icon files in
   `assets/images/`.
 
+## Location, weather, and spoken greetings
+
+First-time setup introduces PADI, asks for a preferred language, then requires
+foreground location permission before entering the app. On each later app open,
+PADI looks up the current area and weather and speaks a time- and weather-aware
+greeting. Location is not tracked in the background or saved; weather
+coordinates are rounded to about 1 km for area lookup and 11 km before they
+are sent to Open-Meteo. Browser area names use OpenStreetMap Nominatim; native
+builds use the device geocoder. The default spoken voice uses a higher pitch and
+slower pace; the available voice quality depends on the voices installed on the
+device. Browsers require a tap before speech can play, so they show a play
+button. Greeting text is localized for English, Nigerian Pidgin, and French;
+other language selections currently fall back to English. Native builds include
+the foreground location usage message from `app.json`; rebuild after changing
+native permissions.
+
 ## What was and was not checked
 
 Checked before delivery: the code type-checks and the Android JavaScript bundle compiles.
