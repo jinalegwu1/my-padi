@@ -51,7 +51,7 @@ npm run dev
 `npm run migrate` loads `backend/.env` and applies the existing migrations to
 its configured database. PostgreSQL must be running. `npm run dev` loads the
 environment files and starts both servers. If the My PADI backend is already
-running, the launcher reuses it. Restart that backend to apply backend `.env`
+running and database-ready when required, the launcher reuses it. Restart that backend to apply backend `.env`
 changes. Ctrl+C stops the processes started by the launcher.
 
 | Service | Local address | Configuration |

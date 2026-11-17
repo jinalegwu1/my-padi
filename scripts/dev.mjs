@@ -24,15 +24,29 @@ function port(value, name) {
   return Number(value);
 }
 
-async function runningBackend(backendPort) {
+async function runningBackend(backendPort, needsDatabase) {
+  let matches = false;
   try {
     const response = await fetch(`http://127.0.0.1:${backendPort}/health`, {
       signal: AbortSignal.timeout(1500), redirect: 'error',
     });
-    return response.ok && (await response.json()).service === 'padi-api';
+    matches = response.ok && (await response.json()).service === 'padi-api';
   } catch {
     return false;
   }
+  if (matches && needsDatabase) {
+    let ready = false;
+    try {
+      const response = await fetch(`http://127.0.0.1:${backendPort}/readyz`, {
+        signal: AbortSignal.timeout(2500), redirect: 'error',
+      });
+      ready = response.ok && (await response.json()).status === 'ready';
+    } catch { /* The existing server must be restarted if PostgreSQL is unavailable. */ }
+    if (!ready) {
+      throw new Error(`The My PADI backend on port ${backendPort} is not database-ready. Stop that backend and run npm run dev to load backend/.env.`);
+    }
+  }
+  return matches;
 }
 
 function signal(child, name) {
@@ -127,7 +141,8 @@ try {
     if (!existsSync(expo)) throw new Error('Install frontend dependencies first: npm ci --prefix frontend');
     console.log(`Backend: http://127.0.0.1:${backendPort}`);
     console.log(`Frontend: http://localhost:${frontendPort}`);
-    const backendRunning = await runningBackend(backendPort);
+    const needsDatabase = Boolean(backendEnv.DATABASE_URL || backendEnv.PADI_DATABASE_URL || backendEnv.PADI_AI_MODELS);
+    const backendRunning = await runningBackend(backendPort, needsDatabase);
     if (!stopping) {
       if (backendRunning) console.log('Using the My PADI backend already running on this port.');
       else launch('Go backend', 'go', ['run', './cmd/api'], 'backend', backendEnv);
