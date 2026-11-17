@@ -18,7 +18,7 @@ An AI provider does not independently own or control those features.
 | --- | --- | --- |
 | Google Gemini | Primary | Main intelligence for general conversation and supported multimodal interactions. |
 | Groq | Fast | Preferred path for eligible lightweight tasks when a configured model is suitable. |
-| Mistral AI | Reasoning | Preferred path for eligible complex reasoning and multi-step tasks when a configured model is suitable. |
+| Z.ai | Reasoning | Preferred path for eligible complex reasoning and multi-step tasks when a configured model is suitable. |
 | OpenRouter | Backup | Fallback path using a specifically configured model when a preferred provider is temporarily unavailable. |
 
 These are routing responsibilities, not fixed model selections. Model IDs,
@@ -180,7 +180,7 @@ Go's separate PADI-side usage caps are documented below.
 - Respect provider rate limits and bounded retries. A free tier is limited and
   must not be treated as unlimited processing.
 
-## Mistral AI — advanced reasoning, planning, and technical assistance
+## Z.ai (GLM-4.7-Flash) — reasoning, planning, and technical assistance
 
 **Position:** Specialist reasoning provider  
 **Main responsibility:** Handle selected tasks that benefit from deeper
@@ -232,13 +232,20 @@ analysis and structured thinking.
   appropriate validation, and no response should be described as verified
   solely because another model reviewed it.
 
-Mistral can be selected as the reasoning route through
+Z.ai can be selected as the reasoning route through
 `PADI_AI_REASONING_MODEL`. Go routes explicit `reasoning`, `planning`,
 `technical`, `decision_support`, `complex_analysis`, `learning`, and
 `quality_review` tasks to that configured model. Complex requests also prefer
-the reasoning route. A free/evaluation plan is limited; verify the selected
-model and account limits before depending on it. PADI does not currently
-discover or verify Mistral plan limits automatically.
+the reasoning route. The selected model is **GLM-4.7-Flash**, API ID
+`glm-4.7-flash`, using `ZAI_API_KEY` and the standard endpoint
+`https://api.z.ai/api/paas/v4/chat/completions`. Z.ai
+[lists this model as free](https://docs.z.ai/guides/overview/pricing).
+PADI currently accepts only this Z.ai model in runtime configuration.
+The adapter disables thinking for short conversations and structured JSON,
+and enables it for the existing reasoning tasks and complex requests.
+Live account availability still requires a successful generation test.
+The verifier records published pricing separately from account availability;
+PADI does not automatically discover Z.ai account rate limits.
 
 ## Provider coordination and one PADI personality
 
@@ -251,12 +258,12 @@ select arbitrary models.
 | Normal conversation and personal-assistant questions | Gemini primary |
 | Image understanding | Gemini only when the model and input integration support it |
 | Quick/simple questions, classification, and conversation summaries | Groq fast route |
-| Complex reasoning, technical analysis, and complex planning | Mistral reasoning route |
+| Complex reasoning, technical analysis, and complex planning | Z.ai reasoning route |
 | Alternative model | Exact model configured through OpenRouter |
 | Provider failure | Go tries other configured and approved role models |
 
 For example, Go may choose Gemini for an ordinary daily-planning conversation,
-or Mistral for an explicitly classified complex business decision. Groq can
+or Z.ai for an explicitly classified complex business decision. Groq can
 classify a request when a trusted service specifically asks it to do so, but
 classification is not currently run automatically on every chat message.
 Provider fallback does not change PADI's identity or freely discover models.
@@ -303,7 +310,7 @@ Every configured provider/model pair must exactly match an entry in
 `provider:model-id` entries. For example:
 
 ```sh
-export PADI_AI_APPROVED_FREE_MODELS='gemini:verified-model,groq:verified-model,mistral:verified-model,openrouter:provider/verified-model'
+export PADI_AI_APPROVED_FREE_MODELS='gemini:verified-model,groq:verified-model,zai:verified-model,openrouter:provider/verified-model'
 ```
 
 This is an operator-maintained approval list, not a live price or quota
@@ -342,8 +349,8 @@ configured AI provider. Provider data-retention policies still require review.
 | Feature | Responsibility |
 | --- | --- |
 | Daily conversation, check-ins, emotional awareness, personal assistance | Gemini, when connected and configured |
-| Learning and explanations | Gemini or Mistral, selected by task |
-| Complex planning and technical explanations | Mistral |
+| Learning and explanations | Gemini or Z.ai, selected by task |
+| Complex planning and technical explanations | Z.ai |
 | Fast classification and conversation summaries | Groq, when explicitly requested by Go |
 | Image understanding | Gemini only after multimodal request support is implemented |
 | Alternative models and AI fallback | Go router with approved configured models |
@@ -365,7 +372,7 @@ AI model should interpret it, not invent it.
   logic, reminders, notifications, integrations, and security.
 - **Python:** Specialist AI engineering services coordinated by Go.
 - **PostgreSQL:** Persistent application source of truth.
-- **Gemini, OpenRouter, Groq, and Mistral AI:** Configured AI intelligence
+- **Gemini, OpenRouter, Groq, and Z.ai:** Configured AI intelligence
   providers behind one PADI experience.
 - **React Native and TypeScript:** Android/iOS application and user interface.
 
@@ -384,7 +391,7 @@ AI model should interpret it, not invent it.
 
 ## Current implementation status
 
-- Separate Go adapters exist for Gemini, Groq, Mistral AI, and OpenRouter.
+- Separate Go adapters exist for Gemini, Groq, Z.ai, and OpenRouter.
 - The Go router supports configurable primary, fast, reasoning, and backup
   model IDs. Provider roles and model IDs are supplied through environment
   configuration; this document does not select live models.
@@ -396,13 +403,14 @@ AI model should interpret it, not invent it.
   requests/month, 25,000 reserved token units/day, and 250,000/month per
   provider. Provider usage is reserved before each network call, and actual
   token counts are recorded after a successful response.
-- A disposable-PostgreSQL integration test covers the auth/session and usage
-  ledger paths, but it was not run without `PADI_TEST_DATABASE_URL`.
+- Real disposable-PostgreSQL integration tests passed for migrations,
+  auth/session and usage ledger paths, transaction rollback, all four budget
+  caps, and concurrent requests. See [the quota verification results](postgresql-quota-verification.md).
 - Groq is selected by the fast routing role for explicitly classified
   lightweight tasks and simple requests when configured. Structured JSON mode
   is available for supported models; the router rejects invalid JSON before
   returning a response.
-- Mistral is selected through the reasoning role for explicit reasoning,
+- Z.ai is selected through the reasoning role for explicit reasoning,
   planning, technical, decision-support, complex-analysis, learning, and
   quality-review tasks, as well as requests marked complex.
 - The Go router injects shared PADI system instructions for each provider
@@ -411,7 +419,7 @@ AI model should interpret it, not invent it.
 - These task labels are routing metadata, not automatic model classification.
   The application must assign them deliberately. There is no project/task
   manager, code execution or patching workflow, multi-document upload
-  pipeline, or automatic response-review flow connected to Mistral.
+  pipeline, or automatic response-review flow connected to Z.ai.
 - There is no production conversation classifier, reminder/planning workflow,
   or persisted conversation summarisation service connected to the router.
   Callers must explicitly label task requests; model-provided classifications
@@ -421,16 +429,21 @@ AI model should interpret it, not invent it.
 - The mobile chat calls a protected Go `/v1/chat` endpoint and displays real
   provider replies when authenticated and configured. Phone OTP, Termii SMS,
   PostgreSQL sessions, revocation, and rate-limited challenge issuance are
-  implemented. Live Termii delivery and provider responses still require
-  operator credentials and have not been verified here.
+  implemented. Live Termii delivery still needs operator credentials and
+  device/account verification. Three AI providers returned real replies in
+  the [free-provider verification](provider-verification.md); Z.ai's live
+  check remains pending its account key.
 - Chat history stays on the device. Only successfully completed backend-chat
   exchanges are sent as follow-up context; old simulated exchanges, greetings,
   preferences, and unrelated personal data are excluded. Server-side
   PostgreSQL conversation persistence is not implemented.
-- No live provider request or free-tier quota has been verified.
-- Live upstream pricing/availability verification, Python specialist services,
-  PostgreSQL conversation storage, and production reminder/notification
-  integrations are not implemented. Chat payloads are bounded and minimized
+- Live Gemini, Groq, and OpenRouter replies and a controlled primary-to-backup
+  fallback were verified. The selected free Z.ai model's pricing and adapter
+  are checked; its real account response remains pending `ZAI_API_KEY`.
+  Vendor account rate limits were not deliberately exhausted.
+- The application does not automatically monitor future provider pricing.
+  Python specialist services, PostgreSQL conversation storage, and production
+  reminder/notification integrations are not implemented. Chat payloads are bounded and minimized
   to the current conversation; the app tells users that submitted messages are
   forwarded to the configured AI provider and displays quota/provider errors.
 

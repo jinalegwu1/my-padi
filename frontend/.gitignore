@@ -7,3 +7,8 @@ node_modules/
 dist/
 .expo/
 # @end expo-cli
+
+# Local environment settings; committed examples contain public configuration only.
+.env
+.env.*
+!.env.example

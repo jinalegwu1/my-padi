@@ -25,6 +25,7 @@ func NewProviderAdapters(client *http.Client) map[string]Provider {
 		ProviderOpenAICompatible: openAICompatibleProvider{client: client},
 		ProviderOpenRouter:       openRouterProvider{client: client},
 		ProviderGroq:             groqProvider{client: client},
+		ProviderZAI:              zaiProvider{client: client},
 		ProviderMistral:          mistralProvider{client: client},
 	}
 }
@@ -135,8 +136,8 @@ func generateOpenAICompatible(
 			Type string `json:"type"`
 		} `json:"response_format,omitempty"`
 	}{
-		Model:    model.Model,
-		Messages: request.Messages,
+		Model:     model.Model,
+		Messages:  request.Messages,
 		MaxTokens: configuredMaxOutputTokens(request),
 	}
 	if request.StructuredOutput {

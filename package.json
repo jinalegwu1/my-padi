@@ -1,0 +1,13 @@
+{
+  "name": "my-padi",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "start": "node scripts/dev.mjs",
+    "migrate": "node scripts/dev.mjs --migrate",
+    "typecheck": "npm --prefix frontend run typecheck"
+  },
+  "engines": {
+    "node": "^20.19.4 || ^22.13.0 || ^24.3.0 || >=25.0.0"
+  }
+}

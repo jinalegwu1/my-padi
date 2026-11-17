@@ -41,6 +41,12 @@ func (limiter *AIUsageLimiter) Reserve(
 		limits.TokenUnitsPerDay <= 0 || limits.TokenUnitsPerMonth <= 0 {
 		return errors.New("AI usage limits and reservation must be positive")
 	}
+	if tokenUnits > limits.TokenUnitsPerDay {
+		return &ai.UsageLimitError{Provider: provider, Window: "daily"}
+	}
+	if tokenUnits > limits.TokenUnitsPerMonth {
+		return &ai.UsageLimitError{Provider: provider, Window: "monthly"}
+	}
 
 	now := at.UTC()
 	tx, err := limiter.db.BeginTx(ctx, nil)

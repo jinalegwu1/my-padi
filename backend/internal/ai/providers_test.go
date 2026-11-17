@@ -161,6 +161,7 @@ func TestProviderDefaultEndpoints(t *testing.T) {
 		{provider: ProviderGemini, model: "test-model", endpoint: "https://generativelanguage.googleapis.com/v1beta/models/test-model:generateContent"},
 		{provider: ProviderOpenRouter, model: "test-model", endpoint: "https://openrouter.ai/api/v1/chat/completions"},
 		{provider: ProviderGroq, model: "test-model", endpoint: "https://api.groq.com/openai/v1/chat/completions"},
+		{provider: ProviderZAI, model: ZAIFlashModel, endpoint: "https://api.z.ai/api/paas/v4/chat/completions"},
 		{provider: ProviderMistral, model: "test-model", endpoint: "https://api.mistral.ai/v1/chat/completions"},
 	}
 	for _, test := range tests {

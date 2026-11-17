@@ -4,6 +4,17 @@ The Go backend for My PADI uses the standard `net/http` package and PostgreSQL f
 
 ## Run locally
 
+To start the frontend and backend together, run `npm run dev` from the
+repository root. The launcher reads `backend/.env` as data and passes its
+settings only to Go. A My PADI backend already running on the selected port is
+reused; restart it to load changed backend environment settings.
+`PADI_HTTP_ADDR` chooses the backend address;
+`PADI_FRONTEND_PORT` chooses Expo's port. `npm run migrate` loads the same
+backend environment and applies migrations explicitly before startup.
+
+The direct Go command below reads settings from the current process
+environment; it does not load `.env` on its own.
+
 From the repository root:
 
 ```sh
@@ -32,7 +43,13 @@ DATABASE_URL='postgres://localhost:5432/padi?sslmode=disable' go run ./cmd/migra
 
 ## Multi-model AI foundation
 
-The Go backend provides a provider-neutral generation interface, configurable model registry and routing roles, bounded timeouts/retries, fallback, circuit breaking, and usage/cost telemetry. Runtime configuration supports the four selected providers: Gemini, OpenRouter, Groq, and Mistral AI. PADI's agreed provider responsibilities and the difference between planned and implemented capabilities are documented in [the AI provider responsibilities agreement](../docs/ai-provider-responsibilities.md). Runtime model IDs and provider assignments remain environment-configured; no model is selected by default.
+For the focused real-account check of all four providers, use the
+[free-provider verification workflow](../docs/provider-verification.md).
+`go run ./cmd/verifyproviders --env-file .env --catalog-only` checks catalogues
+without generating responses. Full verification requires the account keys,
+confirmed free access, approved models, and the PostgreSQL usage ledger.
+
+The Go backend provides a provider-neutral generation interface, configurable model registry and routing roles, bounded timeouts/retries, fallback, circuit breaking, and usage/cost telemetry. Runtime configuration supports the four selected providers: Gemini, OpenRouter, Groq, and Z.ai. PADI's agreed provider responsibilities and the difference between planned and implemented capabilities are documented in [the AI provider responsibilities agreement](../docs/ai-provider-responsibilities.md). Runtime model IDs and provider assignments remain environment-configured; no model is selected by default.
 
 Configure approved free model IDs and API-key environment variable names without putting credentials in the JSON:
 
@@ -43,7 +60,7 @@ export PADI_AI_MODELS='[{"id":"main","provider":"gemini","model":"your-evaluated
 export PADI_AI_PRIMARY_MODEL='main'
 ```
 
-Use `provider` values `gemini`, `openrouter`, `groq`, or `mistral` for the four selected providers; startup rejects other provider names. These providers use their standard API endpoint when `endpoint` is omitted; model IDs remain configurable and must match the vendor's current catalog. Set `api_key_env` to the environment variable containing that provider's credential. Every configured model must be exactly listed in `PADI_AI_APPROVED_FREE_MODELS` using comma-separated `provider:model-id` entries. This operator-maintained list blocks unapproved model IDs but is not a live price feed; verify free pricing, quotas, and terms with each provider and recheck regularly. Configure routing roles with `PADI_AI_PRIMARY_MODEL`, `PADI_AI_FAST_MODEL`, `PADI_AI_REASONING_MODEL`, and `PADI_AI_BACKUP_MODEL`. Groq is used for classification, summarisation, extraction, text-processing tasks and simple requests when configured as `PADI_AI_FAST_MODEL`. Mistral is preferred for `reasoning`, `planning`, `technical`, `decision_support`, `complex_analysis`, `learning`, and `quality_review` tasks and complex requests when configured as `PADI_AI_REASONING_MODEL`. The router applies shared PADI system instructions to all providers and tries other configured roles after failure; HTTP 429 skips retries against the limited model and moves to fallback. Callers should assign task labels through trusted Go logic, not accept model output as authorization. Requests can opt into JSON with `structured_output: true`; the router rejects non-JSON responses, but callers must still validate task-specific fields. The selected model must support JSON mode. Optional fields include `timeout_ms`, `retries` (0–2), and input/output cost per million tokens. Secrets are loaded only from the named environment variables and are not logged.
+Use `provider` values `gemini`, `openrouter`, `groq`, or `zai` for the four selected providers; startup rejects other provider names. These providers use their standard API endpoint when `endpoint` is omitted. Z.ai currently accepts only the free `glm-4.7-flash` model with `ZAI_API_KEY`, using `https://api.z.ai/api/paas/v4/chat/completions`. Other provider model IDs remain configurable and must match the current catalog and approved free-account configuration. Set `api_key_env` to the environment variable containing that provider's credential. Every configured model must be exactly listed in `PADI_AI_APPROVED_FREE_MODELS` using comma-separated `provider:model-id` entries. This operator-maintained list blocks unapproved model IDs but is not a live price feed; verify free pricing, quotas, and terms with each provider and recheck regularly. Configure routing roles with `PADI_AI_PRIMARY_MODEL`, `PADI_AI_FAST_MODEL`, `PADI_AI_REASONING_MODEL`, and `PADI_AI_BACKUP_MODEL`. Groq is used for classification, summarisation, extraction, text-processing tasks and simple requests when configured as `PADI_AI_FAST_MODEL`. Z.ai is preferred for `reasoning`, `planning`, `technical`, `decision_support`, `complex_analysis`, `learning`, and `quality_review` tasks and complex requests when configured as `PADI_AI_REASONING_MODEL`. The router applies shared PADI system instructions to all providers and tries other configured roles after failure; HTTP 429 skips retries against the limited model and moves to fallback. Callers should assign task labels through trusted Go logic, not accept model output as authorization. Requests can opt into JSON with `structured_output: true`; the router rejects non-JSON responses, but callers must still validate task-specific fields. The selected model must support JSON mode. Optional fields include `timeout_ms`, `retries` (0–2), and input/output cost per million tokens. Secrets are loaded only from the named environment variables and are not logged.
 
 For example, configure approved provider/model pairs and an OpenRouter backup only with an operator-verified free model:
 
@@ -60,7 +77,7 @@ Replace example model IDs with exact IDs you have verified as free. The applicat
 
 The registry is loaded and validated at startup. The generation service is exposed to mobile chat only through the authenticated `/v1/chat` endpoint; the provider adapters are contract-tested with local HTTP test servers, but live provider quality, outage behavior against each vendor, and provider/model assignments still require evaluation with configured credentials.
 
-When `PADI_AI_MODELS` is configured, API startup requires `DATABASE_URL` and the persistent PostgreSQL usage ledger; otherwise it exits with an error. PADI applies per-provider caps of 20 requests/day, 300 requests/month, 25,000 reserved token units/day, and 250,000/month. Reserved units are the UTF-8 prompt byte count plus the output-token ceiling; actual provider input/output token usage is recorded separately. These are conservative PADI-side caps, not vendor free-tier guarantees. The protected chat API returns quota exhaustion explicitly and the app displays the error. A PostgreSQL integration test is available but was not run without an explicitly disposable `PADI_TEST_DATABASE_URL`.
+When `PADI_AI_MODELS` is configured, API startup requires `DATABASE_URL` and the persistent PostgreSQL usage ledger; otherwise it exits with an error. PADI applies per-provider caps of 20 requests/day, 300 requests/month, 25,000 reserved token units/day, and 250,000/month. Reserved units are the UTF-8 prompt byte count plus the output-token ceiling; actual provider input/output token usage is recorded separately. These are conservative PADI-side caps, not vendor free-tier guarantees. The protected chat API returns quota exhaustion explicitly and the app displays the error. Real PostgreSQL integration tests passed against a disposable database, including migrations, rollback, all four caps, and concurrent requests. See [the quota verification results](../docs/postgresql-quota-verification.md).
 
 Keep database credentials out of source control. For local UI/API work without PostgreSQL, the server can still start without `DATABASE_URL`; `/health` remains available, while `/readyz` returns HTTP 503 until the database is configured and reachable. If a database URL is configured but the connection fails, startup exits with an error.
 

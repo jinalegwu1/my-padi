@@ -99,3 +99,23 @@ func TestLoadEnvironmentRejectsMalformedConfiguration(t *testing.T) {
 		t.Fatalf("LoadEnvironment() error = %v, want duplicate allowlist error", err)
 	}
 }
+
+func TestLoadEnvironmentSelectsFreeZAIInsteadOfMistral(t *testing.T) {
+	t.Setenv("PADI_TEST_AI_KEY", "synthetic-key")
+	t.Setenv("PADI_AI_MODELS", `[{"id":"reasoning","provider":"zai","model":"glm-4.7-flash","api_key_env":"PADI_TEST_AI_KEY"}]`)
+	t.Setenv("PADI_AI_APPROVED_FREE_MODELS", "zai:glm-4.7-flash")
+	configuration, err := LoadEnvironment()
+	if err != nil || len(configuration.Models) != 1 || configuration.Models[0].Provider != ProviderZAI {
+		t.Fatalf("free Z.ai model configuration failed: %v", err)
+	}
+	for _, model := range []string{"glm-4.7-flashx", "glm-4.7", "glm-5"} {
+		t.Setenv("PADI_AI_MODELS", `[{"id":"reasoning","provider":"zai","model":"`+model+`","api_key_env":"PADI_TEST_AI_KEY"}]`)
+		if _, err := LoadEnvironment(); err == nil {
+			t.Fatalf("paid/unselected Z.ai model %s was accepted", model)
+		}
+	}
+	t.Setenv("PADI_AI_MODELS", `[{"id":"reasoning","provider":"mistral","model":"old-model","api_key_env":"PADI_TEST_AI_KEY"}]`)
+	if _, err := LoadEnvironment(); err == nil || !strings.Contains(err.Error(), "unsupported provider") {
+		t.Fatalf("replaced Mistral configuration was accepted: %v", err)
+	}
+}
