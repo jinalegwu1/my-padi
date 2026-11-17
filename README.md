@@ -51,8 +51,9 @@ npm run dev
 `npm run migrate` loads `backend/.env` and applies the existing migrations to
 its configured database. PostgreSQL must be running. `npm run dev` loads the
 environment files and starts both servers. If the My PADI backend is already
-running and database-ready when required, the launcher reuses it. Restart that backend to apply backend `.env`
-changes. Ctrl+C stops the processes started by the launcher.
+running and database-ready when required, the launcher reuses it. Restart that
+backend to apply backend `.env` changes. Ctrl+C stops the processes started by
+the launcher.
 
 | Service | Local address | Configuration |
 | --- | --- | --- |
@@ -66,10 +67,10 @@ in native development, a loopback API URL uses Expo's LAN host while keeping
 the backend port. Connect the phone to the computer's network. Explicit remote
 API addresses and production builds keep the configured address.
 
-The current workspace has a separate `my_padi_dev` database on its private
-local PostgreSQL instance. The instance must stay running for this development
-configuration. Phone sign-in still requires the Termii settings described in
-the backend README.
+Set `DATABASE_URL` in `backend/.env` to your PostgreSQL service, including Neon
+if that is your chosen host. Apply migrations to that database before starting
+the API. Phone sign-in still requires the Termii settings described in the
+backend README.
 
 See the [backend README](./backend/README.md) for Go setup and tests. The
 development goal is **one feature at a time: implement, test, and verify before
