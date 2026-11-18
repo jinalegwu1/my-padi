@@ -83,6 +83,49 @@ Keep database credentials out of source control. For local UI/API work without P
 
 ## Phone authentication and real chat
 
+### Temporary development usage-cap bypass
+
+To test extended conversations without PADI's daily/monthly request and token
+caps, set these values in `backend/.env` and restart the backend:
+
+```sh
+PADI_ENV='development'
+PADI_DEV_BYPASS_AI_USAGE_LIMITS='true'
+```
+
+The API and provider verifier continue reserving and recording usage in
+PostgreSQL. Existing counters are preserved; no provider allowance is reset.
+Provider rate limits, approved free-model checks, authentication, and request
+timeouts still apply. Provider throttling has a distinct `provider_rate_limited`
+API error, separate from PADI's `usage_limit_reached` error.
+
+The switch defaults to false and is rejected outside `development`. Set it to
+`false` and restart to restore PADI's normal caps against the preserved usage.
+The proposed three-hour work/rest schedule is not implemented.
+
+### Temporary development OTP bypass
+
+For local testing, set these values in `backend/.env`, then restart the backend:
+
+```sh
+PADI_ENV='development'
+PADI_DEV_BYPASS_OTP='true'
+```
+
+Registration and login return a real PostgreSQL session immediately, without
+sending an SMS or asking for a code. The app reads `GET /v1/auth/config` and
+labels this mode explicitly. Existing account eligibility, profile validation,
+rate limits, session expiry/revocation, and chat authorization still apply.
+No Termii credentials or auth pepper are needed in this mode. PostgreSQL and
+the existing migrations are still required.
+
+Phone ownership is not verified: use this only with development test accounts.
+The backend rejects bypass unless `PADI_ENV` is exactly `development`; the
+switch defaults to false. To restore OTP, set `PADI_DEV_BYPASS_OTP='false'`,
+configure the Termii credentials and auth pepper below, and restart the backend.
+
+### OTP-enabled sign-in
+
 The mobile chat uses the authenticated Go endpoints below. Registration requires a full name, date of birth, and E.164 phone number. Login and registration send a six-digit code through Termii; verification issues a 30-day bearer session. On iOS/Android, the session is stored with Expo SecureStore. Browser preview uses per-tab `sessionStorage`.
 
 Apply migrations before starting the API:
@@ -117,7 +160,7 @@ Codes expire after five minutes, allow at most five guesses, and are stored only
 
 The chat endpoint validates roles and payload size, rejects unauthenticated requests, and calls the Go AI router with provider-neutral PADI instructions, approved-model checks, fallback, and PostgreSQL usage limits. Only successful authenticated chat exchanges are sent as follow-up context; old simulated local messages, local greetings, user preferences, and unrelated personal data are not included. Conversation history remains on the phone and is not yet stored in PostgreSQL. Chat content is forwarded to the configured AI provider, as disclosed in the app.
 
-SMS delivery and provider requests may incur charges. PADI-side model quotas do not guarantee a provider's free tier. Live Termii delivery and live AI responses require valid operator credentials and an approved model configuration; they have not been verified from this development environment. Authentication and chat endpoints return service-unavailable errors when their required database, SMS, or AI configuration is missing.
+SMS delivery and provider requests may incur charges. PADI-side model quotas do not guarantee a provider's free tier. Live greetings from all four configured free providers and controlled fallback passed the [provider verification](../docs/provider-verification.md). Live Termii delivery and complete mobile sign-in/chat still need verification. Authentication and chat endpoints return service-unavailable errors when their required database, SMS, or AI configuration is missing.
 
 Startup, shutdown, and server errors are logged. Ctrl+C (`SIGINT`) or `SIGTERM` starts a graceful shutdown with up to 10 seconds for active requests to finish. The server uses a 5-second header read timeout, 10-second read and write timeouts, and a 60-second idle timeout.
 
@@ -176,4 +219,4 @@ The test skips when this dedicated variable is absent; it never uses `DATABASE_U
 - `internal/httpapi/`: health/readiness, phone-authentication, protected chat, CORS allowlist, and handler tests.
 - `go.mod`: standalone backend module.
 
-Phone OTP, Termii delivery, revocable PostgreSQL sessions, and authenticated AI chat endpoints are implemented. They are inactive until database migrations, Termii credentials and the account-specific HTTPS base URL, the auth pepper, an exact web-origin allowlist where needed, and AI provider configuration are supplied. Live SMS delivery, real provider responses, provider model suitability, and provider free-tier status have not been verified. Chat history remains local to the app; PostgreSQL conversation persistence and Python specialist services remain future work.
+Phone OTP, Termii delivery, revocable PostgreSQL sessions, and authenticated AI chat endpoints are implemented. OTP-enabled sign-in requires database migrations, Termii credentials and the account-specific HTTPS base URL, the auth pepper, an exact web-origin allowlist where needed, and AI provider configuration. Development OTP bypass skips the SMS requirements. All four providers returned live greetings with checked free-model configuration; complex-task suitability and ongoing vendor pricing still need evaluation. Live SMS delivery and complete mobile sign-in/chat remain unverified. Chat history remains local to the app; PostgreSQL conversation persistence and Python specialist services remain future work.

@@ -12,12 +12,14 @@ export class APIError extends Error {
   }
 }
 
-type ChallengeResponse = { challenge_id: string; message: string };
+type ChallengeResponse =
+  | { challenge_id: string; message: string; session?: never }
+  | { session: AppSession; message: string; challenge_id?: never };
 
-async function postJSON<T>(
+async function requestJSON<T>(
   path: string,
   body: unknown,
-  options: { token?: string; timeoutMs?: number } = {},
+  options: { token?: string; timeoutMs?: number; method?: 'GET' | 'POST' } = {},
 ): Promise<T> {
   if (!API_URL) {
     throw new Error('The PADI backend address is not configured in this app build.');
@@ -26,7 +28,7 @@ async function postJSON<T>(
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 20_000);
   try {
     const response = await fetch(`${API_URL}${path}`, {
-      method: 'POST',
+      method: options.method ?? 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
@@ -65,29 +67,37 @@ async function postJSON<T>(
   }
 }
 
+export async function getAuthConfiguration(): Promise<{ otp_required: boolean }> {
+  const config = await requestJSON<{ otp_required: unknown }>('/v1/auth/config', undefined, { method: 'GET' });
+  if (typeof config?.otp_required !== 'boolean') {
+    throw new Error('PADI could not load the sign-in settings. Please try again.');
+  }
+  return { otp_required: config.otp_required };
+}
+
 export function requestRegistration(input: {
   full_name: string;
   date_of_birth: string;
   phone_number: string;
 }): Promise<ChallengeResponse> {
-  return postJSON('/v1/auth/register', input);
+  return requestJSON('/v1/auth/register', input);
 }
 
 export function requestLogin(phone_number: string): Promise<ChallengeResponse> {
-  return postJSON('/v1/auth/login', { phone_number });
+  return requestJSON('/v1/auth/login', { phone_number });
 }
 
 export function verifyCode(challenge_id: string, code: string): Promise<AppSession> {
-  return postJSON('/v1/auth/verify', { challenge_id, code });
+  return requestJSON('/v1/auth/verify', { challenge_id, code });
 }
 
 export function revokeSession(token: string): Promise<void> {
-  return postJSON('/v1/auth/logout', {}, { token }).then(() => undefined);
+  return requestJSON('/v1/auth/logout', {}, { token }).then(() => undefined);
 }
 
 export function sendChat(
   token: string,
   messages: { role: 'user' | 'assistant'; content: string }[],
 ): Promise<{ reply: string }> {
-  return postJSON('/v1/chat', { messages }, { token, timeoutMs: 155_000 });
+  return requestJSON('/v1/chat', { messages }, { token, timeoutMs: 155_000 });
 }

@@ -216,7 +216,17 @@ func verify(ctx context.Context, client *http.Client, catalogOnly bool) report {
 		return result
 	}
 	defer db.Close()
-	limiter, err := database.NewAIUsageLimiter(ctx, db)
+	bypassUsageCaps, err := config.DevelopmentAIUsageBypass()
+	if err != nil {
+		result.Pending = append(result.Pending, "correct development AI usage-limit settings")
+		return result
+	}
+	var limiter *database.AIUsageLimiter
+	if bypassUsageCaps {
+		limiter, err = database.NewDevelopmentAIUsageLimiter(ctx, db)
+	} else {
+		limiter, err = database.NewAIUsageLimiter(ctx, db)
+	}
 	if err != nil {
 		result.Pending = append(result.Pending, "apply migrations and make the persistent usage ledger available")
 		return result

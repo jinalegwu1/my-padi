@@ -230,6 +230,9 @@ func (router *Router) generateWithModel(ctx context.Context, modelID string, req
 		if err == nil && (result.Usage.InputTokens < 0 || result.Usage.OutputTokens < 0) {
 			err = &ProviderError{Provider: model.Provider, Err: ErrInvalidProviderUsage}
 		}
+		if err == nil && strings.TrimSpace(result.Content) == "" {
+			err = &ProviderError{Provider: model.Provider, Retryable: true, Err: ErrEmptyProviderResponse}
+		}
 		if err == nil && request.StructuredOutput && !json.Valid([]byte(result.Content)) {
 			err = &ProviderError{
 				Provider:  model.Provider,
@@ -262,6 +265,9 @@ func (router *Router) generateWithModel(ctx context.Context, modelID string, req
 }
 
 func shouldFallbackImmediately(err error) bool {
+	if errors.Is(err, ErrEmptyProviderResponse) {
+		return true
+	}
 	var providerErr *ProviderError
 	return errors.As(err, &providerErr) &&
 		(providerErr.Status == 404 || providerErr.Status == 429)
@@ -353,6 +359,9 @@ func (router *Router) observe(model ModelConfig, duration time.Duration, success
 }
 
 func classifyError(err error) string {
+	if errors.Is(err, ErrEmptyProviderResponse) {
+		return "empty_provider_response"
+	}
 	var providerErr *ProviderError
 	if errors.As(err, &providerErr) {
 		switch {

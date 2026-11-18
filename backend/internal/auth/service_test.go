@@ -3,6 +3,7 @@ package auth
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
 	"io"
@@ -97,6 +98,9 @@ func TestRegistrationAndSessionVerification(t *testing.T) {
 	if challenge.ID == "" || sender.phone != "+2348012345678" || !ValidVerificationCode(sender.code) {
 		t.Fatalf("challenge = %+v, sender phone/code = %q/%q", challenge, sender.phone, sender.code)
 	}
+	if challenge.Session != nil {
+		t.Fatal("OTP-enabled registration issued a session before code verification")
+	}
 	if challenge.Message == sender.code {
 		t.Fatal("verification code was returned to the caller")
 	}
@@ -118,6 +122,106 @@ func TestRegistrationAndSessionVerification(t *testing.T) {
 	}
 	if _, err := service.Verify(context.Background(), challenge.ID, sender.code); !errors.Is(err, ErrInvalidChallenge) {
 		t.Fatalf("replayed Verify() error = %v, want invalid challenge", err)
+	}
+}
+
+func TestDevelopmentRegistrationCreatesRevocableSessionWithoutSMS(t *testing.T) {
+	store := newMemoryAuthStore()
+	service, err := NewDevelopmentService(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.RequestRegistration(context.Background(), Profile{
+		FullName: "Development Test", DateOfBirth: "1990-01-01", PhoneNumber: "+2348012345678",
+	}, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Session == nil || result.ID != "" || result.Session.User.FullName != "Development Test" {
+		t.Fatal("development registration did not return a session without a public challenge")
+	}
+	if len(store.challenges) != 0 {
+		t.Fatal("development registration left a reusable challenge")
+	}
+	hash := sha256.Sum256([]byte(result.Session.Token))
+	if !bytes.Equal(hash[:], store.session.TokenHash) {
+		t.Fatal("session token was not stored as a hash")
+	}
+	if _, err := service.Authenticate(context.Background(), result.Session.Token); err != nil {
+		t.Fatalf("development session could not authenticate: %v", err)
+	}
+	if _, err := service.Verify(context.Background(), "anything", "000000"); !errors.Is(err, ErrInvalidChallenge) {
+		t.Fatal("public OTP verification was accepted while disabled")
+	}
+	if err := service.Logout(context.Background(), result.Session.Token); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Authenticate(context.Background(), result.Session.Token); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatal("logged-out development session still authenticated")
+	}
+}
+
+type developmentFailureStore struct {
+	*memoryAuthStore
+	eligible    bool
+	createError error
+	verifyError error
+}
+
+func (store developmentFailureStore) CreateChallenge(ctx context.Context, challenge Challenge) (bool, error) {
+	if !store.eligible || store.createError != nil {
+		return false, store.createError
+	}
+	return store.memoryAuthStore.CreateChallenge(ctx, challenge)
+}
+
+func (store developmentFailureStore) VerifyChallenge(ctx context.Context, id string, hash []byte, record SessionRecord, now time.Time) (User, error) {
+	if store.verifyError != nil {
+		return User{}, store.verifyError
+	}
+	return store.memoryAuthStore.VerifyChallenge(ctx, id, hash, record, now)
+}
+
+func TestDevelopmentLoginRetainsEligibilityAndFailureChecks(t *testing.T) {
+	storeError := errors.New("database unavailable")
+	for _, test := range []struct {
+		name                                string
+		eligible                            bool
+		createError, verifyError, wantError error
+	}{
+		{name: "eligible account", eligible: true},
+		{name: "unknown account", wantError: ErrInvalidProfile},
+		{name: "rate limited", createError: ErrRateLimited, wantError: ErrRateLimited},
+		{name: "database unavailable", createError: storeError, wantError: storeError},
+		{name: "session failure", eligible: true, verifyError: storeError, wantError: storeError},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := developmentFailureStore{newMemoryAuthStore(), test.eligible, test.createError, test.verifyError}
+			service, err := NewDevelopmentService(store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := service.RequestLogin(context.Background(), "+2348012345678", "127.0.0.1")
+			if !errors.Is(err, test.wantError) {
+				t.Fatalf("RequestLogin() error = %v, want %v", err, test.wantError)
+			}
+			if (result.Session != nil) != (test.wantError == nil) {
+				t.Fatal("session returned for failed login or missing from successful login")
+			}
+			if len(store.challenges) != 0 {
+				t.Fatal("login left an unconsumed challenge")
+			}
+		})
+	}
+	service, err := NewDevelopmentService(newMemoryAuthStore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.RequestLogin(context.Background(), "invalid", ""); !errors.Is(err, ErrInvalidProfile) {
+		t.Fatal("development login skipped phone validation")
+	}
+	if _, err := service.RequestRegistration(context.Background(), Profile{}, ""); !errors.Is(err, ErrInvalidProfile) {
+		t.Fatal("development registration skipped profile validation")
 	}
 }
 

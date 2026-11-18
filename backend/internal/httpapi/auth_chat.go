@@ -39,10 +39,11 @@ type ChatGenerator interface {
 }
 
 type Dependencies struct {
-	Auth           AuthAPI
-	Chat           ChatGenerator
-	AllowedOrigins []string
-	Logger         *slog.Logger
+	Auth                 AuthAPI
+	Chat                 ChatGenerator
+	AllowedOrigins       []string
+	Logger               *slog.Logger
+	DevelopmentOTPBypass bool
 }
 
 type authHandlers struct {
@@ -82,10 +83,7 @@ func (handlers authHandlers) register(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, err, handlers.logger)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]string{
-		"challenge_id": result.ID,
-		"message":      result.Message,
-	})
+	writeChallengeResult(w, result)
 }
 
 func (handlers authHandlers) login(w http.ResponseWriter, r *http.Request) {
@@ -108,10 +106,15 @@ func (handlers authHandlers) login(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, err, handlers.logger)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]string{
-		"challenge_id": result.ID,
-		"message":      result.Message,
-	})
+	writeChallengeResult(w, result)
+}
+
+func writeChallengeResult(w http.ResponseWriter, result auth.ChallengeResult) {
+	status := http.StatusAccepted
+	if result.Session != nil {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, result)
 }
 
 func (handlers authHandlers) verify(w http.ResponseWriter, r *http.Request) {
@@ -252,6 +255,7 @@ func validateChatMessages(input []struct {
 }
 
 func classifyChatError(err error) (int, string, string) {
+	var providerError *ai.ProviderError
 	switch {
 	case errors.Is(err, ai.ErrUsageLimitReached):
 		return http.StatusTooManyRequests, "usage_limit_reached", "PADI has reached its current AI usage limit. Please try again later."
@@ -259,6 +263,8 @@ func classifyChatError(err error) (int, string, string) {
 		return http.StatusServiceUnavailable, "usage_unavailable", "PADI chat is temporarily unavailable."
 	case errors.Is(err, context.DeadlineExceeded):
 		return http.StatusGatewayTimeout, "provider_timeout", "PADI took too long to respond. Please try again."
+	case errors.As(err, &providerError) && providerError.Status == http.StatusTooManyRequests:
+		return http.StatusTooManyRequests, "provider_rate_limited", "PADI's AI service is temporarily rate-limited. Please try again later."
 	default:
 		return http.StatusBadGateway, "provider_unavailable", "PADI could not get a response right now. Please try again."
 	}

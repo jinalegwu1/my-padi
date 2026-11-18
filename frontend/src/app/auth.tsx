@@ -1,12 +1,12 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/ui/button';
 import { TextField } from '@/components/ui/text-field';
 import { fonts, spacing, useColors, useType } from '@/constants/theme';
-import { APIError, requestLogin, requestRegistration, verifyCode } from '@/lib/api';
+import { APIError, getAuthConfiguration, requestLogin, requestRegistration, verifyCode } from '@/lib/api';
 import { hasBackend } from '@/lib/config';
 import { saveSession } from '@/lib/session';
 
@@ -26,6 +26,28 @@ export default function AuthScreen() {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [otpRequired, setOTPRequired] = useState<boolean | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [configAttempt, setConfigAttempt] = useState(0);
+
+  useEffect(() => {
+    if (!hasBackend) return;
+    let active = true;
+    setConfigError(null);
+    getAuthConfiguration().then(
+      (config) => {
+        if (active) setOTPRequired(config.otp_required);
+      },
+      () => {
+        if (active) {
+          setConfigError('Could not load sign-in settings. Check your connection and try again.');
+        }
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [configAttempt]);
 
   const requestCode = async () => {
     setError(null);
@@ -40,6 +62,11 @@ export default function AuthScreen() {
               phone_number: phoneNumber.trim(),
             })
           : await requestLogin(phoneNumber.trim());
+      if (challenge.session) {
+        await saveSession(challenge.session);
+        router.replace('/(tabs)/chat');
+        return;
+      }
       setChallengeID(challenge.challenge_id);
       setNotice(challenge.message);
       setStage('code');
@@ -94,7 +121,9 @@ export default function AuthScreen() {
           <Text style={[styles.subtitle, { color: colors.muted, fontSize: type.bodySmall }]}>
             {stage === 'code'
               ? 'Enter the six-digit code sent by SMS. It expires after five minutes.'
-              : 'Use your phone number to securely sign in and chat with PADI.'}
+              : otpRequired === false
+                ? 'OTP verification is temporarily disabled for development. No SMS will be sent.'
+                : 'Use your phone number to securely sign in and chat with PADI.'}
           </Text>
 
           {!hasBackend ? (
@@ -158,23 +187,41 @@ export default function AuthScreen() {
             </View>
           )}
 
-          {error ? (
+          {error || configError ? (
             <Text accessibilityRole="alert" style={[styles.error, { color: colors.danger }]}>
-              {error}
+              {error ?? configError}
             </Text>
           ) : null}
 
           <View style={styles.actions}>
             <Button
-              title={stage === 'code' ? 'Verify and continue' : 'Send verification code'}
+              title={
+                stage === 'code'
+                  ? 'Verify and continue'
+                  : otpRequired === null
+                    ? 'Loading sign-in…'
+                    : otpRequired
+                      ? 'Send verification code'
+                      : mode === 'register'
+                        ? 'Create account and continue'
+                        : 'Sign in and continue'
+              }
               onPress={stage === 'code' ? verify : requestCode}
               loading={busy}
-              disabled={!hasBackend || busy}
+              disabled={!hasBackend || busy || otpRequired === null}
             />
+            {configError ? (
+              <Button
+                title="Retry connection"
+                variant="secondary"
+                onPress={() => setConfigAttempt((attempt) => attempt + 1)}
+              />
+            ) : null}
             {stage === 'code' ? (
               <Button
                 title="Use a different phone number"
                 variant="ghost"
+                disabled={busy}
                 onPress={() => {
                   setStage('details');
                   setCode('');
@@ -186,14 +233,16 @@ export default function AuthScreen() {
                 title={mode === 'login' ? 'New to PADI? Create an account' : 'Already have an account? Sign in'}
                 variant="ghost"
                 onPress={switchMode}
+                disabled={busy}
               />
             )}
             <Button title="Back to chat" variant="secondary" onPress={() => router.back()} />
           </View>
 
           <Text style={[styles.privacy, { color: colors.muted, fontSize: type.micro }]}>
-            Your account profile is stored by PADI. Verification codes are sent through
-            Termii and may incur SMS charges based on the configured account and destination.
+            {otpRequired === false
+              ? 'Your account profile is stored by PADI. Phone ownership is not verified while OTP is disabled. Use test accounts only.'
+              : 'Your account profile is stored by PADI. Verification codes are sent through Termii and may incur SMS charges based on the configured account and destination.'}
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>

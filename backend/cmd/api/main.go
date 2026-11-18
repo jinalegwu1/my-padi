@@ -33,6 +33,14 @@ func main() {
 
 func run(logger *slog.Logger) error {
 	cfg := config.Load()
+	bypassOTP, err := config.DevelopmentOTPBypass()
+	if err != nil {
+		return fmt.Errorf("configure OTP verification: %w", err)
+	}
+	bypassUsageCaps, err := config.DevelopmentAIUsageBypass()
+	if err != nil {
+		return fmt.Errorf("configure AI usage limits: %w", err)
+	}
 	aiConfiguration, err := ai.LoadEnvironment()
 	if err != nil {
 		return fmt.Errorf("load AI provider configuration: %w", err)
@@ -56,13 +64,13 @@ func run(logger *slog.Logger) error {
 		}()
 		readiness = db
 		logger.Info("PostgreSQL connection established")
-		authService, err = configureAuthentication(db)
+		authService, err = configureAuthentication(db, bypassOTP)
 		if err != nil {
 			return fmt.Errorf("configure authentication: %w", err)
 		}
 	} else {
 		logger.Warn("DATABASE_URL is not set; API will not be ready for data-backed requests")
-		if hasAuthenticationConfiguration() {
+		if bypassOTP || hasAuthenticationConfiguration() {
 			return errors.New("DATABASE_URL is required when phone authentication is configured")
 		}
 	}
@@ -73,10 +81,18 @@ func run(logger *slog.Logger) error {
 			return errors.New("DATABASE_URL is required when AI models are configured so usage limits can be enforced")
 		}
 		usageContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		usageLimiter, err := database.NewAIUsageLimiter(usageContext, db)
+		var usageLimiter *database.AIUsageLimiter
+		if bypassUsageCaps {
+			usageLimiter, err = database.NewDevelopmentAIUsageLimiter(usageContext, db)
+		} else {
+			usageLimiter, err = database.NewAIUsageLimiter(usageContext, db)
+		}
 		cancel()
 		if err != nil {
 			return fmt.Errorf("configure persistent AI usage limits: %w", err)
+		}
+		if bypassUsageCaps {
+			logger.Warn("PADI AI usage caps disabled for development; usage is still recorded")
 		}
 		aiRouter, err = ai.NewRouterFromEnvironment(aiConfiguration, ai.ObserverFunc(func(event ai.Event) {
 			logger.Info("AI provider request",
@@ -102,10 +118,11 @@ func run(logger *slog.Logger) error {
 	server := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.NewRouter(readiness, httpapi.Dependencies{
-			Auth:           authService,
-			Chat:           aiRouter,
-			AllowedOrigins: corsOrigins(),
-			Logger:         logger,
+			Auth:                 authService,
+			Chat:                 aiRouter,
+			AllowedOrigins:       corsOrigins(),
+			Logger:               logger,
+			DevelopmentOTPBypass: bypassOTP,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -163,7 +180,17 @@ func run(logger *slog.Logger) error {
 	return nil
 }
 
-func configureAuthentication(db *sql.DB) (*auth.Service, error) {
+func configureAuthentication(db *sql.DB, bypassOTP bool) (*auth.Service, error) {
+	if bypassOTP {
+		storeContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		store, err := database.NewAuthStore(storeContext, db)
+		if err != nil {
+			return nil, err
+		}
+		slog.Warn("OTP verification is disabled for development; phone ownership is not verified")
+		return auth.NewDevelopmentService(store)
+	}
 	apiKey := os.Getenv("TERMI_API_KEY")
 	senderID := os.Getenv("TERMI_SENDER_ID")
 	baseURL := os.Getenv("TERMI_API_BASE_URL")

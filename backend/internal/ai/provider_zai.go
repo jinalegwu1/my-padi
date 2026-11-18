@@ -2,7 +2,6 @@ package ai
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strings"
 )
@@ -56,7 +55,7 @@ func (provider zaiProvider) Generate(ctx context.Context, model ModelConfig, req
 		return Response{}, err
 	}
 	if len(result.Choices) == 0 || strings.TrimSpace(result.Choices[0].Message.Content) == "" {
-		return Response{}, &ProviderError{Provider: model.Provider, Err: errors.New("response contained no message")}
+		return Response{}, &ProviderError{Provider: model.Provider, Retryable: true, Err: ErrEmptyProviderResponse}
 	}
 	return Response{
 		Content: result.Choices[0].Message.Content,

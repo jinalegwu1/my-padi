@@ -275,6 +275,34 @@ func TestRouterFallsBackOnRateLimitWithoutRepeatingLimitedProvider(t *testing.T)
 	}
 }
 
+func TestRouterFallsBackWhenAdapterReturnsBlankSuccess(t *testing.T) {
+	primary := &fakeProvider{response: Response{Content: " \n\t"}}
+	backup := &fakeProvider{response: Response{Content: "Backup answer"}}
+	router := testRouter(t, []ModelConfig{
+		{ID: "primary", Provider: "primary", Model: "primary-model", Retries: 2},
+		{ID: "backup", Provider: "backup", Model: "backup-model"},
+	}, map[string]Provider{"primary": primary, "backup": backup},
+		RoutingConfig{PrimaryModel: "primary", BackupModel: "backup"}, nil)
+	response, err := router.Generate(context.Background(), testRequest(TaskConversation, ComplexityNormal))
+	if err != nil || response.Content != "Backup answer" || primary.callCount() != 1 || backup.callCount() != 1 {
+		t.Fatal("blank success must fall back without repeating the empty provider")
+	}
+}
+
+func TestRouterReportsAllEmptyProvidersAsFailure(t *testing.T) {
+	primary := &fakeProvider{response: Response{}}
+	backup := &fakeProvider{response: Response{}}
+	router := testRouter(t, []ModelConfig{
+		{ID: "primary", Provider: "primary", Model: "primary-model"},
+		{ID: "backup", Provider: "backup", Model: "backup-model"},
+	}, map[string]Provider{"primary": primary, "backup": backup},
+		RoutingConfig{PrimaryModel: "primary", BackupModel: "backup"}, nil)
+	response, err := router.Generate(context.Background(), testRequest(TaskConversation, ComplexityNormal))
+	if !errors.Is(err, ErrEmptyProviderResponse) || response.Content != "" || primary.callCount() != 1 || backup.callCount() != 1 {
+		t.Fatal("all empty providers must return an error, never a fabricated answer")
+	}
+}
+
 func TestRouterFallsBackAcrossConfiguredRoles(t *testing.T) {
 	primary := &fakeProvider{err: &ProviderError{Provider: "primary", Status: 503, Retryable: true}}
 	backup := &fakeProvider{err: &ProviderError{Provider: "backup", Status: 503, Retryable: true}}

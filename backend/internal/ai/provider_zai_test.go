@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -90,5 +91,36 @@ func TestZAIRejectsReasoningOnlyResponse(t *testing.T) {
 	}, Request{Messages: []Message{{Role: RoleUser, Content: "Hello"}}})
 	if err == nil || strings.Contains(err.Error(), "private reasoning") {
 		t.Fatal("reasoning-only response must fail without exposing reasoning")
+	}
+	if !errors.Is(err, ErrEmptyProviderResponse) || !retryable(err) || !shouldFallbackImmediately(err) {
+		t.Fatal("reasoning-only response must trigger immediate provider fallback")
+	}
+}
+
+func TestReasoningOnlyZAIResponseFallsBackToPrimary(t *testing.T) {
+	t.Setenv("PADI_TEST_ZAI_KEY", "synthetic-key")
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"","reasoning_content":"private reasoning"}}]}`))
+	}))
+	defer server.Close()
+	primary := &fakeProvider{response: Response{Content: "Primary fallback answer"}}
+	var events []Event
+	router := testRouter(t, []ModelConfig{
+		{ID: "reasoning", Provider: ProviderZAI, Model: ZAIFlashModel, Endpoint: server.URL, APIKeyEnv: "PADI_TEST_ZAI_KEY", Retries: 2},
+		{ID: "primary", Provider: "primary", Model: "primary-model"},
+	}, map[string]Provider{ProviderZAI: NewProviderAdapters(server.Client())[ProviderZAI], "primary": primary},
+		RoutingConfig{PrimaryModel: "primary", ReasoningModel: "reasoning"},
+		ObserverFunc(func(event Event) { events = append(events, event) }))
+	response, err := router.Generate(context.Background(), testRequest(TaskReasoning, ComplexityComplex))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || primary.callCount() != 1 || response.Content != "Primary fallback answer" || response.Provider != "primary" {
+		t.Fatal("reasoning-only reply did not fall back immediately to the primary")
+	}
+	if len(events) != 2 || events[0].ErrorClass != "empty_provider_response" || !events[1].Success {
+		t.Fatal("missing sanitized empty-response and successful-fallback events")
 	}
 }

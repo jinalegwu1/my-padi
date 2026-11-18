@@ -2,7 +2,6 @@ package ai
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -45,7 +44,7 @@ func (provider geminiProvider) Generate(ctx context.Context, model ModelConfig, 
 		SystemInstruction *geminiParts    `json:"systemInstruction,omitempty"`
 		Contents          []geminiContent `json:"contents"`
 		GenerationConfig  *struct {
-			MaxOutputTokens int    `json:"maxOutputTokens"`
+			MaxOutputTokens  int    `json:"maxOutputTokens"`
 			ResponseMIMEType string `json:"responseMimeType"`
 		} `json:"generationConfig,omitempty"`
 	}{Contents: contents}
@@ -53,12 +52,12 @@ func (provider geminiProvider) Generate(ctx context.Context, model ModelConfig, 
 		payload.SystemInstruction = &geminiParts{Parts: []geminiPart{{Text: system}}}
 	}
 	payload.GenerationConfig = &struct {
-		MaxOutputTokens int    `json:"maxOutputTokens"`
+		MaxOutputTokens  int    `json:"maxOutputTokens"`
 		ResponseMIMEType string `json:"responseMimeType"`
 	}{MaxOutputTokens: configuredMaxOutputTokens(request)}
 	if request.StructuredOutput {
 		payload.GenerationConfig = &struct {
-			MaxOutputTokens int    `json:"maxOutputTokens"`
+			MaxOutputTokens  int    `json:"maxOutputTokens"`
 			ResponseMIMEType string `json:"responseMimeType"`
 		}{MaxOutputTokens: configuredMaxOutputTokens(request), ResponseMIMEType: "application/json"}
 	}
@@ -75,14 +74,14 @@ func (provider geminiProvider) Generate(ctx context.Context, model ModelConfig, 
 		return Response{}, err
 	}
 	if len(result.Candidates) == 0 {
-		return Response{}, &ProviderError{Provider: model.Provider, Err: errors.New("response contained no candidate")}
+		return Response{}, &ProviderError{Provider: model.Provider, Retryable: true, Err: ErrEmptyProviderResponse}
 	}
 	var content strings.Builder
 	for _, part := range result.Candidates[0].Content.Parts {
 		content.WriteString(part.Text)
 	}
 	if strings.TrimSpace(content.String()) == "" {
-		return Response{}, &ProviderError{Provider: model.Provider, Err: errors.New("response contained no text")}
+		return Response{}, &ProviderError{Provider: model.Provider, Retryable: true, Err: ErrEmptyProviderResponse}
 	}
 	return Response{
 		Content: content.String(),

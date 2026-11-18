@@ -67,10 +67,11 @@ type CodeSender interface {
 }
 
 type Service struct {
-	store  Store
-	sender CodeSender
-	pepper []byte
-	now    func() time.Time
+	store     Store
+	sender    CodeSender
+	pepper    []byte
+	now       func() time.Time
+	bypassOTP bool
 }
 
 func NewService(store Store, sender CodeSender, pepper []byte) (*Service, error) {
@@ -86,9 +87,23 @@ func NewService(store Store, sender CodeSender, pepper []byte) (*Service, error)
 	return &Service{store: store, sender: sender, pepper: append([]byte(nil), pepper...), now: time.Now}, nil
 }
 
+// NewDevelopmentService skips proof of phone ownership. Callers must restrict
+// this service to explicitly configured development environments.
+func NewDevelopmentService(store Store) (*Service, error) {
+	if store == nil {
+		return nil, errors.New("authentication store is required")
+	}
+	pepper := make([]byte, 32)
+	if _, err := rand.Read(pepper); err != nil {
+		return nil, fmt.Errorf("create development authentication pepper: %w", err)
+	}
+	return &Service{store: store, pepper: pepper, now: time.Now, bypassOTP: true}, nil
+}
+
 type ChallengeResult struct {
-	ID      string
-	Message string
+	ID      string   `json:"challenge_id,omitempty"`
+	Message string   `json:"message"`
+	Session *Session `json:"session,omitempty"`
 }
 
 func (service *Service) RequestRegistration(ctx context.Context, profile Profile, sourceIP string) (ChallengeResult, error) {
@@ -134,6 +149,19 @@ func (service *Service) requestChallenge(ctx context.Context, challenge Challeng
 	if err != nil {
 		return ChallengeResult{}, err
 	}
+	if service.bypassOTP {
+		if !eligible {
+			return ChallengeResult{}, fmt.Errorf("%w: account details are not eligible; try signing in or creating an account", ErrInvalidProfile)
+		}
+		session, err := service.verify(ctx, id, code)
+		if err != nil {
+			if cancelErr := service.store.CancelChallenge(ctx, id); cancelErr != nil {
+				return ChallengeResult{}, fmt.Errorf("create development session: %w (also invalidate challenge: %v)", err, cancelErr)
+			}
+			return ChallengeResult{}, err
+		}
+		return ChallengeResult{Message: "OTP verification is disabled for development.", Session: &session}, nil
+	}
 	result := ChallengeResult{
 		ID:      id,
 		Message: "If the details are eligible, a verification code has been sent.",
@@ -151,6 +179,13 @@ func (service *Service) requestChallenge(ctx context.Context, challenge Challeng
 }
 
 func (service *Service) Verify(ctx context.Context, challengeID, code string) (Session, error) {
+	if service.bypassOTP {
+		return Session{}, ErrInvalidChallenge
+	}
+	return service.verify(ctx, challengeID, code)
+}
+
+func (service *Service) verify(ctx context.Context, challengeID, code string) (Session, error) {
 	if challengeID == "" || len(code) > 32 {
 		return Session{}, ErrInvalidChallenge
 	}

@@ -11,7 +11,8 @@ import (
 )
 
 type AIUsageLimiter struct {
-	db *sql.DB
+	db         *sql.DB
+	bypassCaps bool
 }
 
 func NewAIUsageLimiter(ctx context.Context, db *sql.DB) (*AIUsageLimiter, error) {
@@ -30,6 +31,17 @@ func NewAIUsageLimiter(ctx context.Context, db *sql.DB) (*AIUsageLimiter, error)
 	return &AIUsageLimiter{db: db}, nil
 }
 
+// NewDevelopmentAIUsageLimiter retains the persistent usage ledger while
+// skipping PADI-side caps. The caller must enforce development-only access.
+func NewDevelopmentAIUsageLimiter(ctx context.Context, db *sql.DB) (*AIUsageLimiter, error) {
+	limiter, err := NewAIUsageLimiter(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	limiter.bypassCaps = true
+	return limiter, nil
+}
+
 func (limiter *AIUsageLimiter) Reserve(
 	ctx context.Context,
 	provider string,
@@ -41,10 +53,10 @@ func (limiter *AIUsageLimiter) Reserve(
 		limits.TokenUnitsPerDay <= 0 || limits.TokenUnitsPerMonth <= 0 {
 		return errors.New("AI usage limits and reservation must be positive")
 	}
-	if tokenUnits > limits.TokenUnitsPerDay {
+	if !limiter.bypassCaps && tokenUnits > limits.TokenUnitsPerDay {
 		return &ai.UsageLimitError{Provider: provider, Window: "daily"}
 	}
-	if tokenUnits > limits.TokenUnitsPerMonth {
+	if !limiter.bypassCaps && tokenUnits > limits.TokenUnitsPerMonth {
 		return &ai.UsageLimitError{Provider: provider, Window: "monthly"}
 	}
 
@@ -56,11 +68,11 @@ func (limiter *AIUsageLimiter) Reserve(
 	defer tx.Rollback()
 
 	if err := reserveUsagePeriod(ctx, tx, provider, "day", now.Format("2006-01-02"),
-		tokenUnits, limits.RequestsPerDay, limits.TokenUnitsPerDay); err != nil {
+		tokenUnits, limits.RequestsPerDay, limits.TokenUnitsPerDay, limiter.bypassCaps); err != nil {
 		return err
 	}
 	if err := reserveUsagePeriod(ctx, tx, provider, "month", now.Format("2006-01")+"-01",
-		tokenUnits, limits.RequestsPerMonth, limits.TokenUnitsPerMonth); err != nil {
+		tokenUnits, limits.RequestsPerMonth, limits.TokenUnitsPerMonth, limiter.bypassCaps); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -120,6 +132,7 @@ func reserveUsagePeriod(
 	tx *sql.Tx,
 	provider, period, start string,
 	tokenUnits, requestLimit, tokenLimit int,
+	bypassCaps bool,
 ) error {
 	var requestCount int
 	err := tx.QueryRowContext(ctx, `
@@ -129,10 +142,10 @@ func reserveUsagePeriod(
 		ON CONFLICT (provider, period_type, period_start) DO UPDATE
 		SET request_count = ai_provider_usage_periods.request_count + 1,
 		    reserved_token_units = ai_provider_usage_periods.reserved_token_units + EXCLUDED.reserved_token_units
-		WHERE ai_provider_usage_periods.request_count < $5
-		  AND ai_provider_usage_periods.reserved_token_units + EXCLUDED.reserved_token_units <= $6
+		WHERE $7 OR (ai_provider_usage_periods.request_count < $5
+		  AND ai_provider_usage_periods.reserved_token_units + EXCLUDED.reserved_token_units <= $6)
 		RETURNING request_count
-	`, provider, period, start, tokenUnits, requestLimit, tokenLimit).Scan(&requestCount)
+	`, provider, period, start, tokenUnits, requestLimit, tokenLimit, bypassCaps).Scan(&requestCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		window := "monthly"
 		if period == "day" {

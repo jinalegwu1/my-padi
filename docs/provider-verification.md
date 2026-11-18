@@ -1,14 +1,15 @@
 # Free AI provider verification
 
-Date: 2026-11-17. Current feature status: **Testing — Z.ai account key pending**.
+Date: 2026-11-18. Current feature status: **Verified — four live greetings and controlled fallback**.
 
 PADI uses free models for the current development stage. Z.ai replaces Mistral
 in the reasoning role, using **GLM-4.7-Flash**, API ID `glm-4.7-flash`.
 
 The PostgreSQL quota system is [Verified](postgresql-quota-verification.md).
-Three providers have returned real PADI replies, and the primary-to-backup
-fallback check passed. All four providers cannot be marked Verified until
-Z.ai returns a real response with the user's account. Voice conversations,
+All four providers returned real PADI greetings with the configured accounts,
+and the primary-to-backup fallback check passed. Z.ai's separate live reasoning
+check remains **Testing** after follow-up requests returned HTTP 429; reasoning
+quality is not marked Verified. Voice conversations,
 persistent memory, and reminder delivery remain Planned under the agreed
 feature-by-feature process.
 
@@ -20,10 +21,30 @@ registry, and real PostgreSQL usage ledger. Each request used the normal
 
 | Provider / role | Selected API model | Result | Free-access evidence |
 | --- | --- | --- | --- |
-| Gemini / primary | `gemini-3.1-flash-lite` | Real reply; 234 input and 27 output tokens | User confirmed free account; Google lists free text input/output |
-| Groq / fast | `openai/gpt-oss-20b` | Real reply; 300 input and 42 output tokens | User confirmed free account access |
-| Z.ai / reasoning | `glm-4.7-flash` | Adapter tests passed; live reply pending `ZAI_API_KEY` | Official pricing lists input, cache, storage, and output as Free |
-| OpenRouter / backup | `nvidia/nemotron-3.5-lightning:free` | Real reply; 250 input and 298 output tokens | Fresh public catalogue confirmed every published price field was zero |
+| Gemini / primary | `gemini-3.1-flash-lite` | Real greeting; 234 input and 19 output tokens | User confirmed free account; Google lists free text input/output |
+| Groq / fast | `openai/gpt-oss-20b` | Real greeting; 300 input and 40 output tokens | User confirmed free account access |
+| Z.ai / reasoning | `glm-4.7-flash` | Real greeting; 236 input and 28 output tokens | User confirmed free access; fresh official pricing check confirmed Free |
+| OpenRouter / backup | `nvidia/nemotron-3.5-lightning:free` | Real greeting; 250 input and 288 output tokens | Fresh public catalogue confirmed every published price field was zero |
+
+Z.ai returned: “Hello! I am PADI, your consistent AI companion. It's a pleasure
+to meet you. How can I support you today?” This greeting used thinking disabled.
+Follow-up reasoning checks used thinking enabled, but were rate-limited. The
+reasoning model's configured timeout is now 60 seconds, with no automatic retry.
+Mobile chat sends the conversation task. Go also infers complexity from message
+length and keywords such as “step by step”, “compare”, and “analyze”; complex
+messages can therefore use Z.ai even without an explicit reasoning task label.
+This is a basic heuristic, not a production model-based classification service.
+
+Provider replies with no visible text now trigger immediate fallback. Contract
+tests cover Z.ai returning only hidden reasoning, skipping retries against that
+model, obtaining a primary reply, and returning an error if every route is empty.
+Hidden reasoning is never shown as the user's answer.
+
+A separate live fallback check observed Z.ai rate-limited, Gemini unavailable,
+and a successful visible OpenRouter reply. Its requested exact answer-format
+check did not pass, so this run confirms routing/availability but does not
+verify response quality. The backend regression suite and `go vet` passed
+after the empty-response fallback fix.
 
 The fallback check injected a controlled failure of the configured Gemini
 primary. PADI's router then obtained a real OpenRouter reply:
@@ -38,25 +59,35 @@ selected free Nemotron model first returned no visible reply at a 256-token
 ceiling, then succeeded with the normal 1,024-token allowance. Reasoning
 tokens can consume an output budget before visible text is produced.
 
-The private machine-local report is:
-`/tmp/my-padi-quota-verification/provider-live-verification.json`.
-The first attempt is retained as `provider-live-first-attempt.json` in the
-same directory. These reports contain test replies and metadata, never keys.
-Both have owner-only permissions. The latest pending results are only the
-missing Z.ai key and the associated unconfigured reasoning model.
+The latest owner-only machine-local report is:
+`/tmp/my-padi-provider-verification-20261118.json`.
+It contains test replies and metadata, never keys or hidden reasoning, and has
+no pending greeting/fallback checks. Earlier reports described above were
+retained under `/tmp/my-padi-quota-verification/` on the previous verification
+machine. The later reasoning check is separate from this successful report.
 
 ## Configuration and rerunning
 
+For current development testing, `PADI_DEV_BYPASS_AI_USAGE_LIMITS='true'` skips
+PADI's daily/monthly request and token caps. The API and verifier still reserve
+and record usage in PostgreSQL. The switch requires `PADI_ENV='development'`
+and defaults to false. A real PostgreSQL check passed for exceeding all four
+caps, preserving both ledger rows and actual usage, restoring normal
+enforcement, and cleaning up its own test-only rows. Vendor rate limits and
+free-account/model checks are unchanged. The three-hour work/rest proposal
+remains unimplemented.
+
 The private environment file is `backend/.env`, excluded from Git and mode
-`0600`. Existing Gemini, Groq, and OpenRouter keys were preserved. A distinct
-empty `ZAI_API_KEY` slot was added. Z.ai is not enabled in the private model
-registry until its key is supplied; the other three tested selections are
-configured. The committed `.env.example` contains empty keys and a commented
+`0600`. All four provider keys are configured, with Z.ai enabled as
+`zai-reasoning` and `PADI_AI_REASONING_MODEL='zai-reasoning'`.
+Gemini remains primary, Groq is the fast route, and OpenRouter is backup.
+The committed `.env.example` contains empty keys and a commented
 four-provider configuration with the selected free model IDs.
 
-Keep keys in the backend environment file. Add the Z.ai account key there,
-then enable the `zai-reasoning` entry and matching free-model identity from
-the example. Runtime Z.ai configuration accepts only `glm-4.7-flash`; the
+Keep keys in the backend environment file, with one active assignment per key;
+a later empty assignment overrides an earlier populated value. Restart the
+backend after changing models, roles, or credentials.
+Runtime Z.ai configuration accepts only `glm-4.7-flash`; the
 other Z.ai model variants are outside the current free-model plan.
 
 For accounts whose free access has been confirmed, use the matching entries

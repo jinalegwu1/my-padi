@@ -275,6 +275,11 @@ emotional awareness, privacy, uncertainty, safety, and honest reporting of
 application actions. The user should not see a different assistant persona
 when the route changes.
 
+Friendly chat replies are guided to use one or two context-appropriate Unicode
+emojis. Emojis supplement clear wording, use restraint in sensitive discussions,
+and are omitted when users request plain text, no emojis, or formal documents.
+Code, quoted text, and structured data are not decorated with emojis.
+
 ## Responsibilities owned by Go
 
 Go owns AI connections and API credentials; provider and model selection;
@@ -391,6 +396,10 @@ AI model should interpret it, not invent it.
 
 ## Current implementation status
 
+- An explicit development-only switch can skip PADI's daily/monthly usage
+  caps while preserving the PostgreSQL ledger. Default enforcement remains
+  enabled. Vendor limits still apply; no upstream quota is reset. See the
+  [development usage-cap instructions](../backend/README.md#temporary-development-usage-cap-bypass).
 - Separate Go adapters exist for Gemini, Groq, Z.ai, and OpenRouter.
 - The Go router supports configurable primary, fast, reasoning, and backup
   model IDs. Provider roles and model IDs are supplied through environment
@@ -430,16 +439,17 @@ AI model should interpret it, not invent it.
   provider replies when authenticated and configured. Phone OTP, Termii SMS,
   PostgreSQL sessions, revocation, and rate-limited challenge issuance are
   implemented. Live Termii delivery still needs operator credentials and
-  device/account verification. Three AI providers returned real replies in
-  the [free-provider verification](provider-verification.md); Z.ai's live
-  check remains pending its account key.
+  device/account verification. All four AI providers returned real greetings in
+  the [free-provider verification](provider-verification.md). Z.ai's separate
+  reasoning check remains pending after provider rate limits.
 - Chat history stays on the device. Only successfully completed backend-chat
   exchanges are sent as follow-up context; old simulated exchanges, greetings,
   preferences, and unrelated personal data are excluded. Server-side
   PostgreSQL conversation persistence is not implemented.
-- Live Gemini, Groq, and OpenRouter replies and a controlled primary-to-backup
-  fallback were verified. The selected free Z.ai model's pricing and adapter
-  are checked; its real account response remains pending `ZAI_API_KEY`.
+- Live greetings from Gemini, Groq, OpenRouter, and Z.ai plus a controlled
+  primary-to-backup fallback were verified. The selected free Z.ai model's
+  pricing and account access are checked; its thinking-enabled reasoning
+  check remains Testing after HTTP 429 responses.
   Vendor account rate limits were not deliberately exhausted.
 - The application does not automatically monitor future provider pricing.
   Python specialist services, PostgreSQL conversation storage, and production

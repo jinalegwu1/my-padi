@@ -137,6 +137,7 @@ var ErrCircuitOpen = errors.New("AI provider circuit is open")
 var ErrUsageLimiterUnavailable = errors.New("persistent AI usage limiter is unavailable")
 var ErrUsageLimitReached = errors.New("AI provider usage limit reached")
 var ErrInvalidProviderUsage = errors.New("AI provider returned invalid token usage")
+var ErrEmptyProviderResponse = errors.New("response contained no message")
 
 type UsageLimitError struct {
 	Provider string

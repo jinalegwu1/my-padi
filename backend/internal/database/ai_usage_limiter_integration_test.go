@@ -376,6 +376,30 @@ func TestPostgresQuotaUsageRecordingIntegration(t *testing.T) {
 	assertQuotaIntegrationCounters(t, fixture, quotaIntegrationExpectedCounters(fixture.at, 2, 15, 3, 2))
 }
 
+func TestPostgresDevelopmentUsageBypassIntegration(t *testing.T) {
+	fixture := newQuotaIntegrationFixture(t)
+	limiter, err := NewDevelopmentAIUsageLimiter(fixture.ctx, fixture.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits := ai.UsageLimits{RequestsPerDay: 1, RequestsPerMonth: 1, TokenUnitsPerDay: 10, TokenUnitsPerMonth: 10}
+	for i := 0; i < 2; i++ {
+		if err := limiter.Reserve(fixture.ctx, fixture.provider, 20, limits, fixture.at); err != nil {
+			t.Fatalf("development reservation above request and token caps failed: %v", err)
+		}
+		if err := limiter.RecordUsage(fixture.ctx, fixture.provider, ai.Usage{InputTokens: 3, OutputTokens: 2}, fixture.at); err != nil {
+			t.Fatalf("development usage recording failed: %v", err)
+		}
+	}
+	want := quotaIntegrationExpectedCounters(fixture.at, 2, 40, 6, 4)
+	assertQuotaIntegrationCounters(t, fixture, want)
+	// Switching back on uses the preserved counters, including development usage.
+	if err := fixture.limiter.Reserve(fixture.ctx, fixture.provider, 1, limits, fixture.at); !errors.Is(err, ai.ErrUsageLimitReached) {
+		t.Fatalf("normal limiter did not enforce the preserved usage: %v", err)
+	}
+	assertQuotaIntegrationCounters(t, fixture, want)
+}
+
 func TestPostgresQuotaUsageRecordingRollsBackIntegration(t *testing.T) {
 	fixture := newQuotaIntegrationFixture(t)
 	if err := fixture.limiter.Reserve(fixture.ctx, fixture.provider, 10, ai.FreeUsageLimits(), fixture.at); err != nil {

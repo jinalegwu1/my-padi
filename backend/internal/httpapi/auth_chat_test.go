@@ -8,22 +8,79 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jinalegwu1/my-padi/backend/internal/ai"
 	"github.com/jinalegwu1/my-padi/backend/internal/auth"
 )
 
 type testAuthAPI struct {
-	user auth.User
-	err  error
+	user   auth.User
+	err    error
+	result *auth.ChallengeResult
 }
 
 func (service testAuthAPI) RequestRegistration(context.Context, auth.Profile, string) (auth.ChallengeResult, error) {
+	if service.result != nil {
+		return *service.result, service.err
+	}
 	return auth.ChallengeResult{ID: "challenge", Message: "If the details are eligible, a verification code has been sent."}, service.err
 }
 
 func (service testAuthAPI) RequestLogin(context.Context, string, string) (auth.ChallengeResult, error) {
+	if service.result != nil {
+		return *service.result, service.err
+	}
 	return auth.ChallengeResult{ID: "challenge", Message: "If the details are eligible, a verification code has been sent."}, service.err
+}
+
+func TestDevelopmentAuthEndpointsReturnSessionWithoutChallenge(t *testing.T) {
+	session := auth.Session{Token: "development-test-token", ExpiresAt: time.Now().Add(time.Hour), User: auth.User{ID: "test-user", FullName: "Test"}}
+	result := auth.ChallengeResult{Message: "OTP disabled for development.", Session: &session}
+	for _, test := range []struct{ path, body string }{
+		{"/v1/auth/login", `{"phone_number":"+2348012345678"}`},
+		{"/v1/auth/register", `{"full_name":"Test","date_of_birth":"1990-01-01","phone_number":"+2348012345678"}`},
+	} {
+		t.Run(test.path, func(t *testing.T) {
+			router := NewRouter(nil, Dependencies{Auth: testAuthAPI{result: &result}, DevelopmentOTPBypass: true})
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body)))
+			var body struct {
+				Session auth.Session `json:"session"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != http.StatusOK || body.Session.Token != session.Token || strings.Contains(response.Body.String(), "challenge_id") {
+				t.Fatal("development auth did not return HTTP 200 and session without a challenge")
+			}
+			if response.Header().Get("Cache-Control") != "no-store" {
+				t.Fatal("session response permits caching")
+			}
+		})
+	}
+}
+
+func TestAuthConfigurationReflectsOTPMode(t *testing.T) {
+	for _, bypass := range []bool{false, true} {
+		router := NewRouter(nil, Dependencies{DevelopmentOTPBypass: bypass})
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/auth/config", nil))
+		var body struct {
+			Required bool `json:"otp_required"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if response.Code != http.StatusOK || body.Required == bypass {
+			t.Fatal("incorrect OTP configuration")
+		}
+		wrongMethod := httptest.NewRecorder()
+		router.ServeHTTP(wrongMethod, httptest.NewRequest(http.MethodPost, "/v1/auth/config", nil))
+		if wrongMethod.Code != http.StatusMethodNotAllowed {
+			t.Fatal("auth config accepted unsupported method")
+		}
+	}
 }
 
 func (service testAuthAPI) Verify(context.Context, string, string) (auth.Session, error) {
@@ -134,6 +191,7 @@ func TestChatMapsUsageLimitAndProviderErrors(t *testing.T) {
 		wantCode   string
 	}{
 		{name: "usage cap", err: ai.ErrUsageLimitReached, wantStatus: http.StatusTooManyRequests, wantCode: "usage_limit_reached"},
+		{name: "provider rate limit", err: &ai.ProviderError{Provider: ai.ProviderZAI, Status: http.StatusTooManyRequests}, wantStatus: http.StatusTooManyRequests, wantCode: "provider_rate_limited"},
 		{name: "provider down", err: errors.New("private provider error"), wantStatus: http.StatusBadGateway, wantCode: "provider_unavailable"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

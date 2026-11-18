@@ -4,6 +4,7 @@ import { memo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { PadiAvatar } from '@/components/padi-avatar';
+import { MarkdownMessage } from '@/components/chat/markdown-message';
 import { fonts, radius, spacing, useColors, useType } from '@/constants/theme';
 import { VISUALS } from '@/data/visuals';
 import { formatClock } from '@/lib/date';
@@ -51,18 +52,22 @@ export const MessageBubble = memo(function MessageBubble({ message, voiceLabel }
               borderColor: isUser ? colors.userBubble : colors.border,
             },
           ]}>
-          <Text
-            selectable
-            style={[
-              styles.text,
-              {
-                color: isUser ? colors.userBubbleText : colors.padiBubbleText,
-                fontSize: type.body,
-                lineHeight: type.lineHeight(type.body),
-              },
-            ]}>
-            {message.text}
-          </Text>
+          {isUser ? (
+            <Text
+              selectable
+              style={[
+                styles.text,
+                {
+                  color: colors.userBubbleText,
+                  fontSize: type.body,
+                  lineHeight: type.lineHeight(type.body),
+                },
+              ]}>
+              {message.text}
+            </Text>
+          ) : (
+            <MarkdownMessage text={message.text} />
+          )}
         </View>
 
         {message.visual ? <VisualBlockView block={message.visual} /> : null}

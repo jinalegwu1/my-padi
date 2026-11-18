@@ -28,10 +28,16 @@ chat API. Go routes those messages through the configured AI provider adapters
 and usage limits. This path still requires operator-provided Termii credentials,
 PostgreSQL, and approved provider model credentials before it can return live
 responses. Real PostgreSQL quota tests passed, and backend verification obtained
-real replies from the selected free Gemini, Groq, and OpenRouter models plus a
-controlled primary-to-backup fallback. Z.ai's GLM-4.7-Flash adapter is tested;
-its live check awaits the account key. See the [provider verification results](./docs/provider-verification.md).
+real greetings from the selected free Gemini, Groq, OpenRouter, and Z.ai models
+plus a controlled primary-to-backup fallback. Z.ai's separate reasoning check
+remains pending after provider rate limits. See the [provider verification results](./docs/provider-verification.md).
 Live SMS delivery and complete mobile sign-in/chat still need verification.
+For temporary local testing, an explicit development setting can bypass OTP
+and issue real PostgreSQL sessions without SMS. See the
+[development OTP bypass instructions](./backend/README.md#temporary-development-otp-bypass).
+PADI-side usage caps can also be temporarily disabled in development while
+keeping the PostgreSQL ledger; provider limits still apply. See the
+[usage-cap bypass instructions](./backend/README.md#temporary-development-usage-cap-bypass).
 Voice remains simulated; reminders remain local and are not scheduled as
 background notifications. Chat transcripts are
 still stored on the phone, not PostgreSQL; persistent memory and specialist
