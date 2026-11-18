@@ -13,6 +13,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { palette } from '@/constants/theme';
 import { PreferencesProvider, usePreferences } from '@/hooks/use-preferences';
+import { MemoryProvider } from '@/state/memory-context';
+import { ChatProvider } from '@/state/chat-context';
 
 /** Applies the user's appearance choice to the navigation theme. */
 function ThemedStack() {
@@ -95,7 +97,11 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <PreferencesProvider>
-        <ThemedStack />
+        <MemoryProvider>
+          <ChatProvider>
+            <ThemedStack />
+          </ChatProvider>
+        </MemoryProvider>
       </PreferencesProvider>
     </SafeAreaProvider>
   );

@@ -2,6 +2,17 @@ import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 
 const SESSION_KEY = 'padi.auth.session.v1';
+const listeners = new Set<() => void>();
+
+/** Account-scoped state must discard cached data when credentials change. */
+export function subscribeSession(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+
+function notifySession(): void {
+  listeners.forEach((listener) => listener());
+}
 
 export type AppSession = {
   token: string;
@@ -52,15 +63,19 @@ export async function saveSession(session: AppSession): Promise<void> {
       throw new Error('Browser session storage is unavailable.');
     }
     sessionStorage.setItem(SESSION_KEY, serialized);
+    notifySession();
     return;
   }
   await SecureStore.setItemAsync(SESSION_KEY, serialized);
+  notifySession();
 }
 
 export async function clearSession(): Promise<void> {
   if (Platform.OS === 'web') {
     if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(SESSION_KEY);
+    notifySession();
     return;
   }
   await SecureStore.deleteItemAsync(SESSION_KEY);
+  notifySession();
 }

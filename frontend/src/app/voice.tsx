@@ -1,186 +1,86 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PadiOrb, type OrbState } from '@/components/padi-orb';
 import { VoiceCaption } from '@/components/voice/voice-caption';
 import { VoiceStatePill } from '@/components/voice/voice-state-pill';
 import { Button } from '@/components/ui/button';
-import { fonts, radius, spacing, useColors, useType } from '@/constants/theme';
-import { VOICE_SCRIPT } from '@/data/mock-replies';
-import { useChat } from '@/hooks/use-chat';
+import { fonts, spacing, useColors, useType } from '@/constants/theme';
 import { usePreferences } from '@/hooks/use-preferences';
 import { useTranslation } from '@/hooks/use-translation';
+import { useVoiceSession } from '@/hooks/use-voice-session';
 
-/**
- * Voice conversation screen.
- *
- * PADI's animated Orb lives here and only here. The session is SIMULATED: no
- * microphone is opened and no speech service is connected — the screen says so.
- */
+/** Hands-free microphone → Python speech intelligence → shared chat → natural voice. */
 export default function VoiceScreen() {
   const router = useRouter();
   const colors = useColors();
   const type = useType();
   const { t } = useTranslation();
   const { preferences, update } = usePreferences();
-  const { addVoiceExchange } = useChat();
-
-  const [state, setState] = useState<OrbState>('idle');
-  const [turn, setTurn] = useState(0);
-  const [userText, setUserText] = useState<string | undefined>(undefined);
-  const [padiText, setPadiText] = useState(
-    'Tap the microphone and I’ll listen. We can talk about anything at all.',
-  );
+  const voice = useVoiceSession();
   const [showWords, setShowWords] = useState(preferences.showVoiceTranscript);
-  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  useFocusEffect(useCallback(() => () => { void voice.session.cancel(); }, [voice.session]));
 
-  const clearTimers = useCallback(() => {
-    timers.current.forEach(clearTimeout);
-    timers.current = [];
-  }, []);
-
-  useEffect(() => clearTimers, [clearTimers]);
-
-  /** Runs one simulated turn: listening → thinking → speaking → idle. */
-  const runTurn = useCallback(() => {
-    clearTimers();
-    const script = VOICE_SCRIPT[turn % VOICE_SCRIPT.length];
-
-    setUserText(script.user);
-    setPadiText('');
-    setState('listening');
-
-    timers.current.push(
-      setTimeout(() => {
-        setState('thinking');
-      }, 1800),
-    );
-
-    timers.current.push(
-      setTimeout(() => {
-        setState('speaking');
-        setPadiText(script.padi);
-      }, 3000),
-    );
-
-    timers.current.push(
-      setTimeout(() => {
-        setState('idle');
-        setTurn((prev) => prev + 1);
-      }, 7000),
-    );
-  }, [clearTimers, turn]);
-
+  const busy = voice.connected || voice.phase === 'preparing';
+  const state: OrbState = voice.phase === 'preparing' || voice.phase === 'transcribing' ? 'thinking' : voice.phase;
+  const label = voice.phase === 'preparing' ? 'Starting conversation…'
+    : voice.phase === 'transcribing' ? 'Understanding your voice…'
+    : state === 'listening' ? 'I’m listening'
+    : t(`voice.${state}`);
+  const micLabel = busy ? 'Pause conversation' : 'Start conversation';
+  const error = voice.configurationError ?? voice.error ?? voice.chatError;
   const handleMic = () => {
-    if (state === 'idle') {
-      runTurn();
-    } else {
-      clearTimers();
-      setState('idle');
-    }
+    if (busy) void voice.session.cancel();
+    else if (voice.ready && !voice.chatBusy) { void voice.session.start(); }
   };
-
-  const handleEnd = () => {
-    clearTimers();
-    // Keep the exchange in the conversation so the user can read it later.
-    if (userText && padiText) {
-      addVoiceExchange(userText, padiText);
-    }
-    router.back();
-  };
-
-  const toggleWords = () => {
-    const next = !showWords;
-    setShowWords(next);
-    update({ showVoiceTranscript: next });
-  };
-
-  const stateLabel = {
-    idle: t('voice.idle'),
-    listening: t('voice.listening'),
-    thinking: t('voice.thinking'),
-    speaking: t('voice.speaking'),
-  }[state];
+  const handleEnd = () => { void voice.session.cancel(); router.back(); };
+  const toggleWords = () => { const next = !showWords; setShowWords(next); update({ showVoiceTranscript: next }); };
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: colors.background }]} edges={['top', 'left', 'right', 'bottom']}>
       <View style={styles.header}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={t('voice.end')}
-          onPress={handleEnd}
-          hitSlop={10}
-          style={({ pressed }) => [
-            styles.closeButton,
-            { backgroundColor: colors.cardMuted },
-            pressed && { opacity: 0.7 },
-          ]}>
+        <Pressable accessibilityRole="button" accessibilityLabel={t('voice.end')} onPress={handleEnd} hitSlop={10}
+          style={({ pressed }) => [styles.closeButton, { backgroundColor: colors.cardMuted }, pressed && { opacity: 0.7 }]}>
           <Ionicons name="chevron-down" size={20} color={colors.textSecondary} />
         </Pressable>
-        <Text style={[styles.headerTitle, { color: colors.text, fontSize: type.subheading }]}>
-          {t('voice.title')}
-        </Text>
+        <Text style={[styles.headerTitle, { color: colors.text, fontSize: type.subheading }]}>{t('voice.title')}</Text>
         <View style={styles.closeButton} />
       </View>
-
-      <View style={styles.orbArea}>
-        <PadiOrb state={state} size={190} />
-        <VoiceStatePill state={state} label={stateLabel} />
-      </View>
-
-      <View style={styles.captionArea}>
-        <VoiceCaption
-          padiText={padiText || '…'}
-          userText={userText}
-          visible={showWords}
-          onToggle={toggleWords}
-          showLabel={t('voice.showWords')}
-          hideLabel={t('voice.hideWords')}
-          youSaidLabel={t('voice.youSaid')}
-        />
-      </View>
-
-      <View style={styles.controls}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={state === 'idle' ? t('voice.micStart') : t('voice.micStop')}
-          accessibilityState={{ busy: state !== 'idle' }}
-          onPress={handleMic}
-          style={({ pressed }) => [
-            styles.micButton,
-            {
-              backgroundColor: state === 'idle' ? colors.primary : colors.card,
-              borderColor: state === 'idle' ? colors.primary : colors.border,
-              opacity: pressed ? 0.85 : 1,
-            },
-          ]}>
-          <Ionicons
-            name={state === 'idle' ? 'mic' : 'stop'}
-            size={30}
-            color={state === 'idle' ? colors.onPrimary : colors.primary}
-          />
-        </Pressable>
-        <Text style={[styles.micLabel, { color: colors.muted, fontSize: type.caption }]}>
-          {t('voice.mic')}
-        </Text>
-
-        <Button
-          title={t('voice.end')}
-          variant="secondary"
-          icon="close"
-          onPress={handleEnd}
-        />
-
-        <View style={styles.notice}>
-          <Ionicons name="information-circle-outline" size={14} color={colors.muted} />
+      <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
+        <View style={[styles.orbArea, { minHeight: 250 }]}>
+          <PadiOrb state={state} size={190} />
+          <VoiceStatePill state={state} label={label} />
+        </View>
+        <View style={styles.captionArea}>
+          <VoiceCaption padiText={voice.padiText || '…'} userText={voice.userText} visible={showWords} onToggle={toggleWords}
+            showLabel={t('voice.showWords')} hideLabel={t('voice.hideWords')} youSaidLabel={t('voice.youSaid')} />
+        </View>
+        <View style={styles.controls}>
+          {error ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite"
+            style={{ color: colors.text, fontSize: type.bodySmall, textAlign: 'center' }}>{error}</Text> : null}
+          <Pressable accessibilityRole="button" accessibilityLabel={micLabel}
+            accessibilityState={{ disabled: !busy && (!voice.ready || voice.chatBusy) }}
+            disabled={!busy && (!voice.ready || voice.chatBusy)} onPress={handleMic}
+            style={({ pressed }) => [styles.micButton, { backgroundColor: busy ? colors.card : colors.primary,
+              borderColor: busy ? colors.border : colors.primary, opacity: !busy && (!voice.ready || voice.chatBusy) ? 0.4 : pressed ? 0.85 : 1 }]}>
+            <Ionicons name={busy ? 'stop' : 'mic'} size={30} color={busy ? colors.primary : colors.onPrimary} />
+          </Pressable>
+          <Text style={[styles.micLabel, { color: colors.muted, fontSize: type.caption }]}>{micLabel}</Text>
+          <Button title={t('voice.end')} variant="secondary" icon="close" onPress={handleEnd} />
+          <View style={styles.notice}>
+            <Ionicons name="information-circle-outline" size={14} color={colors.muted} />
+            <Text style={[styles.noticeText, { color: colors.muted, fontSize: type.micro }]}>
+              Start conversation keeps the microphone on while this screen is open. When you finish speaking, PADI sends your speaking turn for transcription and answers automatically. Start talking to interrupt PADI. Pause or End stops the microphone.
+            </Text>
+          </View>
           <Text style={[styles.noticeText, { color: colors.muted, fontSize: type.micro }]}>
-            {t('voice.simulated')}
+            Groq transcribes your speaking turns and Gemini generates spoken replies. Recordings are temporary. Noise and accents can affect recognition. Calls, messages, and emails are not connected yet.
           </Text>
         </View>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }

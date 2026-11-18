@@ -1,4 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { MarkdownMessage } from '@/components/chat/markdown-message';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { fonts, radius, spacing, useColors, useType } from '@/constants/theme';
@@ -78,17 +79,7 @@ export function VoiceCaption({
             <Text style={[styles.speaker, { color: colors.primary, fontSize: type.micro }]}>
               PADI
             </Text>
-            <Text
-              style={[
-                styles.padiText,
-                {
-                  color: colors.text,
-                  fontSize: type.body,
-                  lineHeight: type.lineHeight(type.body),
-                },
-              ]}>
-              {padiText}
-            </Text>
+            <MarkdownMessage text={padiText} />
           </View>
         </View>
       ) : null}

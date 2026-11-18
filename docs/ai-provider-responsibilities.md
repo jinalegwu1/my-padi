@@ -304,13 +304,16 @@ evaluation, model comparisons, specialist audio/DSP, data analysis, machine
 learning experiments, personalisation, memory relevance, recommendations,
 and specialist classification.
 
-Go coordinates any such service. PostgreSQL remains the source of truth for
-persistent application data. No Python service currently exists in this
-repository; these capabilities are planned, not connected.
+Go coordinates these services. PostgreSQL remains the source of truth for
+persistent application data. The independent Python Voice Engine now exists in
+`services/voice`, with VAD, audio preparation, speech recognition, and expressive
+speech generation. Browser conversation/interruption checks pass; native phone
+compilation and device verification remain pending. The other seven specialist
+engines are planned in the [Python roadmap](python-roadmap.md).
 
 ## Free API and billing protection
 
-Every configured provider/model pair must exactly match an entry in
+Every configured conversational/text provider/model pair must exactly match an entry in
 `PADI_AI_APPROVED_FREE_MODELS`, a comma-separated environment variable using
 `provider:model-id` entries. For example:
 
@@ -344,9 +347,10 @@ pricing and terms remain unchanged.
 
 API keys are read by Go from backend environment variables and are not part
 of mobile configuration. The authenticated chat path sends only the bounded
-current conversation; successful backend exchanges may be included as follow-up
-context, while local greetings, preferences, and unrelated personal data are
-excluded. The app tells users that submitted messages are forwarded to the
+current conversation; successful same-account, same-revision exchanges may be
+included as follow-up context. Relevant active approved memory facts may also
+be included with account consent. Local greetings, other device preferences,
+and unrelated personal data are excluded. The app tells users that submitted context is forwarded to the
 configured AI provider. Provider data-retention policies still require review.
 
 ## PADI features and source-of-truth services
@@ -396,6 +400,11 @@ AI model should interpret it, not invent it.
 
 ## Current implementation status
 
+- Account-owned personal memory is connected to PostgreSQL and authenticated
+  APIs. Consent defaults to off; explicit saves, correction, pause, deletion,
+  bounded relevance selection, and consent-aware chat context are implemented.
+  Conversation-based automatic saving and semantic retrieval remain planned.
+  See [personal-memory verification](personal-memory-verification.md).
 - An explicit development-only switch can skip PADI's daily/monthly usage
   caps while preserving the PostgreSQL ledger. Default enforcement remains
   enabled. Vendor limits still apply; no upstream quota is reset. See the
@@ -443,17 +452,23 @@ AI model should interpret it, not invent it.
   the [free-provider verification](provider-verification.md). Z.ai's separate
   reasoning check remains pending after provider rate limits.
 - Chat history stays on the device. Only successfully completed backend-chat
-  exchanges are sent as follow-up context; old simulated exchanges, greetings,
-  preferences, and unrelated personal data are excluded. Server-side
+  exchanges for the same account and memory revision are used as follow-up
+  context. Relevant active approved memories may be included when enabled;
+  simulated exchanges, greetings, other device preferences, and unrelated
+  personal data are excluded. Server-side
   PostgreSQL conversation persistence is not implemented.
 - Live greetings from Gemini, Groq, OpenRouter, and Z.ai plus a controlled
   primary-to-backup fallback were verified. The selected free Z.ai model's
   pricing and account access are checked; its thinking-enabled reasoning
   check remains Testing after HTTP 429 responses.
   Vendor account rate limits were not deliberately exhausted.
+- The Python Voice Engine uses separately configured, checked speech models
+  through protected Go endpoints, with server-side keys and usage tracking.
+  See [voice verification](voice-verification.md). Speech models are not added
+  to the conversational/text model registry.
 - The application does not automatically monitor future provider pricing.
-  Python specialist services, PostgreSQL conversation storage, and production
-  reminder/notification integrations are not implemented. Chat payloads are bounded and minimized
+  The other Python engines, PostgreSQL conversation storage, and production
+  reminder/notification integrations remain planned. Chat payloads are bounded and minimized
   to the current conversation; the app tells users that submitted messages are
   forwarded to the configured AI provider and displays quota/provider errors.
 

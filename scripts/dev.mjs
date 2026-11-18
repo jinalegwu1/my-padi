@@ -49,6 +49,14 @@ async function runningBackend(backendPort, needsDatabase) {
   return matches;
 }
 
+async function runningVoiceService(voicePort) {
+  try {
+    const response=await fetch(`http://127.0.0.1:${voicePort}/health`,{signal:AbortSignal.timeout(1500),redirect:'error'});
+    if(!response.ok || (await response.json()).service!=='padi-python-voice') throw new Error('wrong service');
+    return true;
+  } catch { return false; }
+}
+
 function signal(child, name) {
   if (!child.pid) return;
   try {
@@ -123,8 +131,8 @@ try {
   } else {
     const frontendValues = environment('frontend');
     const frontendEnv = { ...frontendValues, ...process.env };
-    // Backend credentials belong only to the Go process, including credentials
-    // the developer may already have exported in their terminal.
+    // Server credentials never go to Expo. Python receives its own explicitly
+    // scoped voice-service subset below; Go keeps the backend configuration.
     for (const name of Object.keys(backendValues)) {
       if (!name.startsWith('EXPO_PUBLIC_')) delete frontendEnv[name];
     }
@@ -144,6 +152,21 @@ try {
     const needsDatabase = Boolean(backendEnv.DATABASE_URL || backendEnv.PADI_DATABASE_URL || backendEnv.PADI_AI_MODELS);
     const backendRunning = await runningBackend(backendPort, needsDatabase);
     if (!stopping) {
+      if(backendEnv.PADI_PYTHON_VOICE_ENABLED==='true') {
+        const voicePort=port(backendEnv.PADI_PYTHON_VOICE_PORT||'8090','PADI_PYTHON_VOICE_PORT');
+        if(voicePort===backendPort || voicePort===frontendPort) throw new Error('Python voice needs its own port.');
+        const python=backendEnv.PADI_VOICE_PYTHON || join(root,'services','voice','.venv',process.platform==='win32'?'Scripts':'bin',process.platform==='win32'?'python.exe':'python');
+        if(!existsSync(python)) throw new Error('Prepare services/voice/.venv and install services/voice/requirements.txt before starting Python voice.');
+        const voiceEnv={PATH:process.env.PATH,PYTHONUNBUFFERED:'1',
+          PADI_PYTHON_VOICE_PORT:String(voicePort),PADI_VOICE_SERVICE_TOKEN:backendEnv.PADI_VOICE_SERVICE_TOKEN,
+          PADI_AI_FREE_ACCOUNT_CONFIRMED:backendEnv.PADI_AI_FREE_ACCOUNT_CONFIRMED,
+          GEMINI_API_KEY:backendEnv.GEMINI_API_KEY,GROQ_API_KEY:backendEnv.GROQ_API_KEY};
+        for(const name of ['SystemRoot','WINDIR','SSL_CERT_FILE','SSL_CERT_DIR','HTTPS_PROXY','HTTP_PROXY','NO_PROXY']) {
+          if(process.env[name]) voiceEnv[name]=process.env[name];
+        }
+        if(await runningVoiceService(voicePort)) console.log('Using the Python voice service already running.');
+        else launch('Python voice',python,['app.py'],'services/voice',voiceEnv);
+      }
       if (backendRunning) console.log('Using the My PADI backend already running on this port.');
       else launch('Go backend', 'go', ['run', './cmd/api'], 'backend', backendEnv);
       launch('Expo frontend', process.execPath, [expo, 'start', '--web', '--port', String(frontendPort)], 'frontend', frontendEnv);

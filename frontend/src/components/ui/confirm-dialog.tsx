@@ -12,6 +12,7 @@ type Props = {
   cancelTitle: string;
   /** Red confirm button for deletes and other actions that cannot be undone. */
   destructive?: boolean;
+  busy?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 };
@@ -27,17 +28,18 @@ export function ConfirmDialog({
   confirmTitle,
   cancelTitle,
   destructive,
+  busy = false,
   onConfirm,
   onCancel,
 }: Props) {
   const colors = useColors();
   const type = useType();
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={() => { if (!busy) onCancel(); }}>
       <Pressable
         style={[styles.backdrop, { backgroundColor: colors.overlay }]}
         accessibilityViewIsModal
-        onPress={onCancel}>
+        onPress={() => { if (!busy) onCancel(); }}>
         {/* Swallow taps inside the panel so they do not close the dialog. */}
         <Pressable
           style={[styles.panel, { backgroundColor: colors.card, borderColor: colors.border }]}
@@ -50,13 +52,15 @@ export function ConfirmDialog({
           ) : null}
           <View style={styles.actions}>
             <View style={styles.action}>
-              <Button title={cancelTitle} variant="secondary" onPress={onCancel} />
+              <Button title={cancelTitle} variant="secondary" onPress={onCancel} disabled={busy} />
             </View>
             <View style={styles.action}>
               <Button
                 title={confirmTitle}
                 variant={destructive ? 'danger' : 'primary'}
                 onPress={onConfirm}
+                loading={busy}
+                disabled={busy}
               />
             </View>
           </View>

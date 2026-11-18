@@ -84,7 +84,7 @@ const en = {
   'voice.end': 'End voice session',
   'voice.showWords': 'Show words',
   'voice.hideWords': 'Hide words',
-  'voice.simulated': 'Simulated voice session — no microphone or speech service is connected.',
+  'voice.simulated': 'Voice uses microphone recording, backend transcription, and your device’s speech voice when configured.',
   'voice.youSaid': 'You said',
 
   // Reminders
@@ -140,7 +140,7 @@ const en = {
   'settings.accessibility.highContrast.hint': 'Stronger colours for easier reading.',
   'settings.about': 'About',
   'settings.about.body':
-    'My PADI is a frontend prototype. Chat replies, voice conversations and reminders are simulated; spoken greetings use your device’s speech voice.',
+    'My PADI is in development. Chat connects to the backend; the Python Voice Engine handles natural conversations and spoken replies. Reminders are local and do not yet trigger background notifications.',
   'settings.reset': 'Reset app data',
   'settings.reset.hint': 'Clears your name, preferences and sample data on this phone.',
 

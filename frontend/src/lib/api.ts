@@ -1,5 +1,6 @@
 import { API_URL } from '@/lib/config';
 import type { AppSession } from '@/lib/session';
+import type { MemoryCategory, MemoryItem, MemorySnapshot } from '@/types';
 
 export class APIError extends Error {
   constructor(
@@ -19,21 +20,24 @@ type ChallengeResponse =
 async function requestJSON<T>(
   path: string,
   body: unknown,
-  options: { token?: string; timeoutMs?: number; method?: 'GET' | 'POST' } = {},
+  options: { token?: string; timeoutMs?: number; method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'; signal?: AbortSignal; multipart?: boolean } = {},
 ): Promise<T> {
   if (!API_URL) {
     throw new Error('The PADI backend address is not configured in this app build.');
   }
   const controller = new AbortController();
+  const abort = () => controller.abort();
+  options.signal?.addEventListener('abort', abort, { once: true });
+  if (options.signal?.aborted) controller.abort();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 20_000);
   try {
     const response = await fetch(`${API_URL}${path}`, {
       method: options.method ?? 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        ...(!options.multipart ? { 'Content-Type': 'application/json' } : {}),
         ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
       },
-      body: JSON.stringify(body),
+      body: options.multipart ? body as FormData : JSON.stringify(body),
       signal: controller.signal,
     });
     if (response.status === 204) return undefined as T;
@@ -59,11 +63,13 @@ async function requestJSON<T>(
   } catch (error) {
     if (error instanceof APIError) throw error;
     if (error instanceof Error && error.name === 'AbortError') {
+      if (options.signal?.aborted) throw error;
       throw new Error('The request timed out. Please try again.');
     }
     throw error;
   } finally {
     clearTimeout(timeout);
+    options.signal?.removeEventListener('abort', abort);
   }
 }
 
@@ -98,6 +104,70 @@ export function revokeSession(token: string): Promise<void> {
 export function sendChat(
   token: string,
   messages: { role: 'user' | 'assistant'; content: string }[],
-): Promise<{ reply: string }> {
-  return requestJSON('/v1/chat', { messages }, { token, timeoutMs: 155_000 });
+  memoryRevision = 0,
+  signal?: AbortSignal,
+  delivery: 'text' | 'voice' = 'text',
+  voiceContext?: { interrupted_reply: string; spoken_prefix: string },
+): Promise<{ reply: string; memory_revision: number }> {
+  return requestJSON('/v1/chat', { messages, memory_revision: memoryRevision, delivery, voice_context: voiceContext }, { token, timeoutMs: 155_000, signal });
+}
+
+export async function getVoiceConfiguration(signal?: AbortSignal): Promise<{ enabled: boolean; max_seconds: number; natural_speech?: boolean }> {
+  const result = await requestJSON<{ enabled: boolean; max_seconds: number; natural_speech?: boolean }>('/v1/voice/config', undefined, { method: 'GET', signal });
+  if (typeof result?.enabled !== 'boolean' || result.max_seconds !== 60) throw new Error('PADI returned invalid voice settings.');
+  return result;
+}
+
+export async function synthesiseSpeech(token:string,text:string,style:string,rate:number,signal:AbortSignal):Promise<{audio_base64:string;mime_type:string}> {
+  const result=await requestJSON<{audio_base64:string;mime_type:string}>('/v1/voice/speak',{text,style,rate},{token,signal,timeoutMs:65_000});
+  if(result?.mime_type!=='audio/wav' || typeof result.audio_base64!=='string' || !result.audio_base64 || result.audio_base64.length>12*1024*1024) throw new Error('PADI returned invalid speech audio.');
+  return result;
+}
+
+export async function transcribeAudio(token: string, audio: FormData, signal: AbortSignal): Promise<string> {
+  const result = await requestJSON<{ text: string }>('/v1/voice/transcribe', audio, { token, multipart: true, timeoutMs: 55_000, signal });
+  if (typeof result?.text !== 'string' || !result.text.trim()) throw new Error('PADI could not hear clear speech. Please try again.');
+  return result.text.trim();
+}
+
+const memoryCategories: MemoryCategory[] = ['name', 'interests', 'relationships', 'preferences', 'plans'];
+
+function memorySnapshot(value: unknown): MemorySnapshot {
+  if (!value || typeof value !== 'object') throw new Error('PADI returned invalid memory data.');
+  const snapshot = value as { enabled?: unknown; revision?: unknown; items?: unknown };
+  if (typeof snapshot.enabled !== 'boolean' || !Number.isSafeInteger(snapshot.revision) || Number(snapshot.revision) < 0 || !Array.isArray(snapshot.items) || snapshot.items.length > 100) {
+    throw new Error('PADI returned invalid memory data.');
+  }
+  const items = snapshot.items.map((raw): MemoryItem => {
+    const item = raw as Record<string, unknown> | null;
+    if (!item || typeof item.id !== 'string' || !item.id || typeof item.category !== 'string' || !memoryCategories.includes(item.category as MemoryCategory) ||
+      typeof item.label !== 'string' || !item.label.trim() || Array.from(item.label).length > 100 ||
+      typeof item.value !== 'string' || !item.value.trim() || Array.from(item.value).length > 500 || typeof item.paused !== 'boolean' || typeof item.source !== 'string' ||
+      typeof item.created_at !== 'string' || !Number.isFinite(Date.parse(item.created_at))) {
+      throw new Error('PADI returned an invalid memory entry.');
+    }
+    return { id: item.id, category: item.category as MemoryCategory, label: item.label, value: item.value,
+      paused: item.paused, source: item.source, createdAt: Date.parse(item.created_at) };
+  });
+  return { enabled: snapshot.enabled, revision: Number(snapshot.revision), items };
+}
+
+export async function fetchMemory(token: string): Promise<MemorySnapshot> {
+  return memorySnapshot(await requestJSON('/v1/memory', undefined, { token, method: 'GET' }));
+}
+
+export async function setMemoryEnabled(token: string, enabled: boolean): Promise<MemorySnapshot> {
+  return memorySnapshot(await requestJSON('/v1/memory/settings', { enabled }, { token, method: 'PATCH' }));
+}
+
+export async function createMemory(token: string, draft: { category: MemoryCategory; label: string; value: string }): Promise<MemorySnapshot> {
+  return memorySnapshot(await requestJSON('/v1/memory', { ...draft, approved: true }, { token }));
+}
+
+export async function updateMemory(token: string, id: string, update: { value?: string; paused?: boolean }): Promise<MemorySnapshot> {
+  return memorySnapshot(await requestJSON(`/v1/memory/${encodeURIComponent(id)}`, update, { token, method: 'PATCH' }));
+}
+
+export async function deleteMemory(token: string, id: string): Promise<MemorySnapshot> {
+  return memorySnapshot(await requestJSON(`/v1/memory/${encodeURIComponent(id)}`, undefined, { token, method: 'DELETE' }));
 }

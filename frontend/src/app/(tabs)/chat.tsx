@@ -23,6 +23,7 @@ import { usePreferences } from '@/hooks/use-preferences';
 import { useTranslation } from '@/hooks/use-translation';
 import { revokeSession } from '@/lib/api';
 import { hasBackend } from '@/lib/config';
+import { visibleChatMessages } from '@/lib/chat-context';
 import { clearSession, readSession, type AppSession } from '@/lib/session';
 import type { Message } from '@/types';
 
@@ -78,7 +79,7 @@ export default function ConversationScreen() {
 
   const handleSend = useCallback(
     async (text: string): Promise<boolean> => {
-      const result = await send(text);
+      const result = await send(text, session?.user.id);
       if (result === 'unauthorized') {
         setSession(null);
         router.push('/auth');
@@ -86,7 +87,7 @@ export default function ConversationScreen() {
       if (result === 'sent') scrollToEnd();
       return result === 'sent';
     },
-    [router, scrollToEnd, send],
+    [router, scrollToEnd, send, session?.user.id],
   );
 
   const handleSignOut = useCallback(async () => {
@@ -198,7 +199,7 @@ export default function ConversationScreen() {
         keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}>
         <FlatList
           ref={listRef}
-          data={messages}
+        data={visibleChatMessages(messages, session.user.id)}
           keyExtractor={(item) => item.id}
           renderItem={({ item, index }) => (
             <MessageBubble
@@ -238,6 +239,7 @@ export default function ConversationScreen() {
         ) : null}
 
         <Composer
+          key={session.user.id}
           onSend={handleSend}
           onOpenVoice={() => router.push('/voice')}
           placeholder={t('chat.placeholder')}

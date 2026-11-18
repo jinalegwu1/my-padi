@@ -9,8 +9,9 @@ The PostgreSQL quota system is [Verified](postgresql-quota-verification.md).
 All four providers returned real PADI greetings with the configured accounts,
 and the primary-to-backup fallback check passed. Z.ai's separate live reasoning
 check remains **Testing** after follow-up requests returned HTTP 429; reasoning
-quality is not marked Verified. Voice conversations,
-persistent memory, and reminder delivery remain Planned under the agreed
+quality is not marked Verified. Account-owned, explicitly approved personal
+memory is implemented; see [its verification](personal-memory-verification.md).
+Voice conversations and reminder delivery remain Planned under the agreed
 feature-by-feature process.
 
 ## Live results

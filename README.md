@@ -20,6 +20,9 @@ The provider responsibilities, routing policy, free-model safeguards, and
 implementation status are documented in the
 [AI provider and technology responsibility agreement](./docs/ai-provider-responsibilities.md).
 
+The [Python specialist-service roadmap](./docs/python-roadmap.md) defines the
+eight planned intelligence engines and their boundaries with Go.
+
 ## Current status
 
 The mobile app now has a real-chat connection path: phone sign-in by Termii
@@ -38,10 +41,21 @@ and issue real PostgreSQL sessions without SMS. See the
 PADI-side usage caps can also be temporarily disabled in development while
 keeping the PostgreSQL ledger; provider limits still apply. See the
 [usage-cap bypass instructions](./backend/README.md#temporary-development-usage-cap-bypass).
-Voice remains simulated; reminders remain local and are not scheduled as
-background notifications. Chat transcripts are
-still stored on the phone, not PostgreSQL; persistent memory and specialist
-Python services are not connected.
+Voice now supports a hands-free conversation flow through a separate Python
+Voice Engine: automatic speaking-turn detection, speech recognition, expressive
+spoken replies, and interruption when the user starts talking. Go retains
+account authentication, shared chat context, memory permissions, and usage
+tracking. The browser flow passed an end-to-end test. Android/iPhone require
+an Expo development build with the new native echo-cancelled capture module;
+native compilation and physical device checks remain pending. See
+[voice verification and setup](./docs/voice-verification.md).
+Reminders remain local and are not
+scheduled as background notifications. Chat transcripts are
+still stored on the phone, not PostgreSQL. Personal memory now stores explicitly
+approved facts against accounts in PostgreSQL, with opt-in use in relevant AI
+replies and review, correction, pause, and deletion controls. See the
+[personal-memory verification](./docs/personal-memory-verification.md).
+Automatic memory extraction and the other Python intelligence engines remain planned.
 
 ## Run frontend and backend
 

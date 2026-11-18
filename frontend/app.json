@@ -38,7 +38,16 @@
           "locationWhenInUsePermission": "Allow My PADI to use your location while open to identify your area and tailor local weather greetings."
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow My PADI to listen during a voice conversation. Speaking turns are sent for transcription automatically when you finish talking. Pause or End closes the microphone.",
+          "recordAudioAndroid": true,
+          "enableBackgroundRecording": false,
+          "enableBackgroundPlayback": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

@@ -83,6 +83,19 @@ Keep database credentials out of source control. For local UI/API work without P
 
 ## Phone authentication and real chat
 
+### Account-owned personal memory
+
+Apply migrations before restarting the API. Migration 9 adds account-owned
+memory facts and opt-in settings. Memory defaults to off; new facts require
+explicit approval. The app's Memory screen connects review, creation,
+correction, pause, deletion, and the master switch to authenticated APIs.
+Relevant active facts may be added to AI requests only when enabled.
+
+Memory changes advance a revision and prevent older recalled replies from
+re-entering follow-up context. Existing transcripts remain local. See the
+[memory API, limits, and verification results](../docs/personal-memory-verification.md).
+Saving facts through conversation remains a future feature.
+
 ### Temporary development usage-cap bypass
 
 To test extended conversations without PADI's daily/monthly request and token
@@ -158,11 +171,52 @@ Endpoints:
 
 Codes expire after five minutes, allow at most five guesses, and are stored only as peppered hashes. Challenge sends are limited per phone and source IP, and challenge records are purged after 24 hours. Sessions are revocable and expire after 30 days. The source IP is taken from the direct connection; do not trust arbitrary forwarded-IP headers. If deploying behind a proxy, configure the proxy and rate-limit boundary deliberately.
 
-The chat endpoint validates roles and payload size, rejects unauthenticated requests, and calls the Go AI router with provider-neutral PADI instructions, approved-model checks, fallback, and PostgreSQL usage limits. Only successful authenticated chat exchanges are sent as follow-up context; old simulated local messages, local greetings, user preferences, and unrelated personal data are not included. Conversation history remains on the phone and is not yet stored in PostgreSQL. Chat content is forwarded to the configured AI provider, as disclosed in the app.
+The chat endpoint validates roles and payload size, rejects unauthenticated requests, and calls the Go AI router with provider-neutral PADI instructions, approved-model checks, fallback, and PostgreSQL usage limits. Follow-up context uses successful authenticated exchanges belonging to the same account and memory revision. Relevant explicitly approved, active memories may be included when account memory is enabled. Local greetings, simulated messages, unrelated data, and other device preferences are excluded. Conversation history remains on the phone; approved memory facts are stored separately in PostgreSQL. Submitted context is forwarded to the configured AI provider, as disclosed in the app.
 
-SMS delivery and provider requests may incur charges. PADI-side model quotas do not guarantee a provider's free tier. Live greetings from all four configured free providers and controlled fallback passed the [provider verification](../docs/provider-verification.md). Live Termii delivery and complete mobile sign-in/chat still need verification. Authentication and chat endpoints return service-unavailable errors when their required database, SMS, or AI configuration is missing.
+## Python Voice Engine
 
-Startup, shutdown, and server errors are logged. Ctrl+C (`SIGINT`) or `SIGTERM` starts a graceful shutdown with up to 10 seconds for active requests to finish. The server uses a 5-second header read timeout, 10-second read and write timeouts, and a 60-second idle timeout.
+Go exposes authenticated `POST /v1/voice/transcribe` and
+`POST /v1/voice/speak`, plus `GET /v1/voice/config`. The mobile/web client starts
+one foreground microphone session, detects speaking turns, and sends them
+automatically. It listens during responses and interrupts playback on speech.
+Voice messages use the existing `/v1/chat` pipeline with spoken-delivery
+instructions and interrupted-reply context. Account and memory revision
+boundaries still apply.
+
+The independent Python service in `services/voice` performs WebRTC VAD,
+16 kHz mono PCM conversion, trimming, low-frequency rumble/DC reduction,
+Groq Whisper recognition, transcript validation, and expressive Gemini speech
+synthesis. Android/iPhone capture and echo cancellation use the new native
+PadiVoice module; these require an Expo development build.
+
+Set `PADI_STT_ENABLED=true` and `PADI_PYTHON_VOICE_ENABLED=true` in the local
+backend environment. Configure `PADI_PYTHON_VOICE_URL` (loopback HTTP or HTTPS)
+and an internal `PADI_VOICE_SERVICE_TOKEN` of at least 32 bytes. The launcher
+starts Python on port 8090 and passes only its required Gemini/Groq credentials
+and internal token. The frontend receives no private provider keys.
+
+Prepare Python once from the project root:
+
+```sh
+python3 -m venv services/voice/.venv
+services/voice/.venv/bin/python -m pip install -r services/voice/requirements.txt
+npm run dev
+```
+
+Gemini and Groq must be included in `PADI_AI_FREE_ACCOUNT_CONFIRMED`. Speech
+models are independent of the approved text-model registry. The initial
+speech models are `whisper-large-v3-turbo` and `gemini-3.1-flash-tts-preview`;
+free-tier availability was checked against official pricing and live calls.
+Do not add speech models to `PADI_AI_APPROVED_FREE_MODELS`.
+
+Recordings are bounded to 8 MB and up to 60 seconds per segment. Audio is
+processed in memory by Go/Python and never logged or saved by these servers.
+Temporary device upload files are deleted. Speech request accounting uses
+separate `groq-speech` and `gemini-voice` ledger buckets; Gemini input text
+usage enters the text-token columns, while audio output is not counted as
+text tokens. Existing development quota bypass applies; provider account
+limits still apply. See [voice verification](../docs/voice-verification.md)
+and the [Python roadmap](../docs/python-roadmap.md).
 
 ## Health endpoint
 
@@ -219,4 +273,4 @@ The test skips when this dedicated variable is absent; it never uses `DATABASE_U
 - `internal/httpapi/`: health/readiness, phone-authentication, protected chat, CORS allowlist, and handler tests.
 - `go.mod`: standalone backend module.
 
-Phone OTP, Termii delivery, revocable PostgreSQL sessions, and authenticated AI chat endpoints are implemented. OTP-enabled sign-in requires database migrations, Termii credentials and the account-specific HTTPS base URL, the auth pepper, an exact web-origin allowlist where needed, and AI provider configuration. Development OTP bypass skips the SMS requirements. All four providers returned live greetings with checked free-model configuration; complex-task suitability and ongoing vendor pricing still need evaluation. Live SMS delivery and complete mobile sign-in/chat remain unverified. Chat history remains local to the app; PostgreSQL conversation persistence and Python specialist services remain future work.
+Phone OTP, Termii delivery, revocable PostgreSQL sessions, and authenticated AI chat endpoints are implemented. OTP-enabled sign-in requires database migrations, Termii credentials and the account-specific HTTPS base URL, the auth pepper, an exact web-origin allowlist where needed, and AI provider configuration. Development OTP bypass skips the SMS requirements. All four providers returned live greetings with checked free-model configuration; complex-task suitability and ongoing vendor pricing still need evaluation. Live SMS delivery and complete mobile sign-in/chat remain unverified. The Python Voice Engine is connected and its browser flow is tested; native compilation/device verification remains pending. Chat history stays local; PostgreSQL conversation persistence and the other Python engines remain planned.

@@ -1,21 +1,21 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/ui/button';
+import { MemoryConsentDialog } from '@/components/memory/memory-consent-dialog';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Sheet } from '@/components/ui/sheet';
 import { TextField } from '@/components/ui/text-field';
 import { fonts, radius, spacing, useColors, useType } from '@/constants/theme';
-import { MEMORY_CATEGORY_META } from '@/data/mock-memory';
+import { MEMORY_CATEGORY_META, MEMORY_CATEGORY_ORDER } from '@/data/mock-memory';
 import { useMemory } from '@/hooks/use-memory';
-import { usePreferences } from '@/hooks/use-preferences';
 import { useTranslation } from '@/hooks/use-translation';
 import { formatRelative } from '@/lib/date';
-import type { MemoryItem } from '@/types';
+import type { MemoryCategory, MemoryItem } from '@/types';
 
 /**
  * Memory management: review, correct, pause and delete what PADI remembers.
@@ -26,12 +26,41 @@ export default function MemoryScreen() {
   const colors = useColors();
   const type = useType();
   const { t } = useTranslation();
-  const { preferences, update } = usePreferences();
-  const { grouped, counts, status, correct, togglePaused, remove } = useMemory();
+  const { accountID, enabled, grouped, counts, status, busy, error, reload, add, correct, togglePaused, remove, setEnabled } = useMemory();
 
   const [editing, setEditing] = useState<MemoryItem | undefined>(undefined);
   const [draft, setDraft] = useState('');
   const [pendingDelete, setPendingDelete] = useState<MemoryItem | undefined>(undefined);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [consentOpen, setConsentOpen] = useState(false);
+  const [category, setCategory] = useState<MemoryCategory>('preferences');
+  const [label, setLabel] = useState('');
+  const [notice, setNotice] = useState('');
+  const [dialogAccountID, setDialogAccountID] = useState<string | null>(null);
+
+  useEffect(() => {
+    setEditing(undefined);
+    setEditorOpen(false);
+    setConsentOpen(false);
+    setPendingDelete(undefined);
+    setDraft('');
+    setLabel('');
+    setNotice('');
+    setDialogAccountID(null);
+  }, [accountID]);
+
+  useFocusEffect(useCallback(() => { void reload(); }, [reload]));
+
+  const save = async () => {
+    const saved = editing
+      ? await correct(editing.id, draft.trim())
+      : await add({ category, label: label.trim(), value: draft.trim() });
+    if (saved) {
+      setNotice(editing ? 'Memory updated.' : 'Memory saved. PADI can use it when relevant.');
+      setEditorOpen(false);
+      setEditing(undefined);
+    }
+  };
 
   if (status === 'loading') {
     return (
@@ -51,7 +80,7 @@ export default function MemoryScreen() {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={t('onboarding.back')}
-          onPress={() => router.back()}
+          onPress={() => { if (router.canGoBack()) router.back(); else router.replace('/(tabs)/settings'); }}
           hitSlop={10}
           style={({ pressed }) => [
             styles.back,
@@ -79,25 +108,25 @@ export default function MemoryScreen() {
           style={[
             styles.consent,
             {
-              backgroundColor: preferences.memoryEnabled ? colors.successSoft : colors.warningSoft,
+              backgroundColor: enabled ? colors.successSoft : colors.warningSoft,
               borderColor: colors.border,
             },
           ]}>
           <Ionicons
-            name={preferences.memoryEnabled ? 'shield-checkmark-outline' : 'pause-circle-outline'}
+            name={enabled ? 'shield-checkmark-outline' : 'pause-circle-outline'}
             size={18}
-            color={preferences.memoryEnabled ? colors.success : colors.warning}
+            color={enabled ? colors.success : colors.warning}
           />
           <View style={styles.consentText}>
             <Text
               style={[
                 styles.consentTitle,
                 {
-                  color: preferences.memoryEnabled ? colors.success : colors.warning,
+                  color: enabled ? colors.success : colors.warning,
                   fontSize: type.bodySmall,
                 },
               ]}>
-              {preferences.memoryEnabled ? t('memory.consent') : t('memory.consentOff')}
+              {enabled ? 'Personal memory is on' : 'Personal memory is off'}
             </Text>
             <Text style={[styles.consentBody, { color: colors.textSecondary, fontSize: type.micro }]}>
               {counts.active} in use · {counts.paused} paused · {counts.total} total
@@ -115,14 +144,18 @@ export default function MemoryScreen() {
           </Text>
           <Pressable
             accessibilityRole="switch"
-            accessibilityState={{ checked: preferences.memoryEnabled }}
+            accessibilityState={{ checked: enabled, disabled: busy || status !== 'ready' }}
             accessibilityLabel="Allow PADI to remember"
-            onPress={() => update({ memoryEnabled: !preferences.memoryEnabled })}
+            disabled={busy || status !== 'ready'}
+            onPress={async () => {
+              if (!enabled) { setDialogAccountID(accountID); setConsentOpen(true); }
+              else if (await setEnabled(false)) setNotice('Personal memory is off. Saved facts will not be used for new replies.');
+            }}
             style={({ pressed }) => [
               styles.masterButton,
               {
-                backgroundColor: preferences.memoryEnabled ? colors.primary : colors.cardMuted,
-                borderColor: preferences.memoryEnabled ? colors.primary : colors.border,
+                backgroundColor: enabled ? colors.primary : colors.cardMuted,
+                borderColor: enabled ? colors.primary : colors.border,
                 opacity: pressed ? 0.8 : 1,
               },
             ]}>
@@ -130,20 +163,39 @@ export default function MemoryScreen() {
               style={[
                 styles.masterButtonText,
                 {
-                  color: preferences.memoryEnabled ? colors.onPrimary : colors.textSecondary,
+                  color: enabled ? colors.onPrimary : colors.textSecondary,
                   fontSize: type.caption,
                 },
               ]}>
-              {preferences.memoryEnabled ? 'On' : 'Off'}
+              {enabled ? 'On' : 'Off'}
             </Text>
           </Pressable>
         </View>
+
+        <Text style={[styles.consentBody, { color: colors.textSecondary, fontSize: type.caption }]}>
+          Only facts you explicitly save are kept. After a memory change, PADI starts fresh with the saved facts currently allowed. Previous messages stay visible. Changes affect the next request.
+        </Text>
+        {error ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{error}</Text> : null}
+        {error && status === 'ready' ? <Button title="Reload memory" variant="secondary" disabled={busy} onPress={() => { void reload(); }} /> : null}
+        {notice && !error ? <Text accessibilityRole="text" style={{ color: colors.success }}>{notice}</Text> : null}
+        {status === 'unauthorized' ? (
+          <Button title="Sign in to manage memory" onPress={() => router.push('/auth')} />
+        ) : status === 'error' ? (
+          <Button title="Retry loading memory" onPress={() => { void reload(); }} />
+        ) : (
+          <Button
+            title="Add memory"
+            icon="add"
+            disabled={!enabled || busy}
+            onPress={() => { setDialogAccountID(accountID); setEditing(undefined); setDraft(''); setLabel(''); setCategory('preferences'); setEditorOpen(true); setNotice(''); }}
+          />
+        )}
 
         {grouped.length === 0 ? (
           <EmptyState
             icon="sparkles-outline"
             title={t('memory.empty')}
-            message="When you tell PADI something worth keeping, it will appear here for you to review."
+            message="Enable memory, then choose Add memory to review and approve a fact. PADI does not automatically save conversations or import demo entries."
           />
         ) : (
           grouped.map((group) => {
@@ -172,7 +224,7 @@ export default function MemoryScreen() {
                       {
                         backgroundColor: colors.card,
                         borderColor: colors.border,
-                        opacity: item.paused ? 0.7 : 1,
+                        opacity: item.paused || !enabled ? 0.7 : 1,
                       },
                     ]}>
                     <View style={styles.itemTop}>
@@ -183,18 +235,18 @@ export default function MemoryScreen() {
                         style={[
                           styles.statusPill,
                           {
-                            backgroundColor: item.paused ? colors.cardMuted : colors.successSoft,
+                            backgroundColor: item.paused || !enabled ? colors.cardMuted : colors.successSoft,
                           },
                         ]}>
                         <Text
                           style={[
                             styles.statusText,
                             {
-                              color: item.paused ? colors.muted : colors.success,
+                              color: item.paused || !enabled ? colors.muted : colors.success,
                               fontSize: type.micro,
                             },
                           ]}>
-                          {item.paused ? t('memory.paused') : t('memory.active')}
+                      {item.paused ? t('memory.paused') : !enabled ? 'Not in use' : t('memory.active')}
                         </Text>
                       </View>
                     </View>
@@ -219,9 +271,12 @@ export default function MemoryScreen() {
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel={`${t('memory.correct')}: ${item.label}`}
+                        disabled={busy}
                         onPress={() => {
                           setEditing(item);
+                          setDialogAccountID(accountID);
                           setDraft(item.value);
+                          setEditorOpen(true);
                         }}
                         style={({ pressed }) => [
                           styles.action,
@@ -237,7 +292,10 @@ export default function MemoryScreen() {
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel={`${item.paused ? t('memory.resume') : t('memory.pause')}: ${item.label}`}
-                        onPress={() => togglePaused(item.id)}
+                        disabled={busy}
+                        onPress={async () => {
+                          if (await togglePaused(item.id)) setNotice(item.paused ? 'Memory resumed.' : 'Memory paused.');
+                        }}
                         style={({ pressed }) => [
                           styles.action,
                           { backgroundColor: colors.cardMuted, opacity: pressed ? 0.7 : 1 },
@@ -256,7 +314,8 @@ export default function MemoryScreen() {
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel={`${t('memory.delete')}: ${item.label}`}
-                        onPress={() => setPendingDelete(item)}
+                        disabled={busy}
+                        onPress={() => { setDialogAccountID(accountID); setPendingDelete(item); }}
                         style={({ pressed }) => [
                           styles.action,
                           { backgroundColor: colors.dangerSoft, opacity: pressed ? 0.7 : 1 },
@@ -276,44 +335,63 @@ export default function MemoryScreen() {
       </ScrollView>
 
       <Sheet
-        visible={!!editing}
-        title={t('memory.editTitle')}
+        visible={editorOpen && dialogAccountID === accountID}
+        title={editing ? t('memory.editTitle') : 'Add a memory'}
         subtitle={editing?.label}
-        onClose={() => setEditing(undefined)}
+        onClose={() => { if (!busy) { setEditorOpen(false); setEditing(undefined); } }}
         footer={
           <Button
-            title={t('memory.save')}
+            title={editing ? t('memory.save') : 'Save and approve memory'}
             icon="checkmark"
-            onPress={() => {
-              if (editing && draft.trim()) correct(editing.id, draft.trim());
-              setEditing(undefined);
-            }}
+            onPress={save}
+            loading={busy}
+            disabled={busy || !draft.trim() || (!editing && !label.trim())}
           />
         }>
+        {!editing ? (
+          <>
+            <View style={{ gap: spacing.xs, marginBottom: spacing.md }}>
+              {MEMORY_CATEGORY_ORDER.map((choice) => (
+                <Button key={choice} title={MEMORY_CATEGORY_META[choice].label} variant={category === choice ? 'primary' : 'secondary'} disabled={busy}
+                  onPress={() => setCategory(choice)} />
+              ))}
+            </View>
+            <TextField label="Memory label" value={label} onChangeText={setLabel} maxLength={100} editable={!busy} placeholder="e.g. Favourite food" />
+            <Text style={[styles.consentBody, { color: colors.textSecondary, fontSize: type.caption, marginVertical: spacing.sm }]}>
+              By saving, you approve keeping this fact in your account and using it in relevant AI replies while memory is on.
+            </Text>
+          </>
+        ) : null}
         <TextField
           label={t('memory.correct')}
           value={draft}
           onChangeText={setDraft}
           multiline
           numberOfLines={3}
-          maxLength={240}
+          maxLength={500}
+          editable={!busy}
           style={styles.editInput}
         />
+        {error ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{error}</Text> : null}
       </Sheet>
 
       <ConfirmDialog
-        visible={!!pendingDelete}
+        visible={!!pendingDelete && dialogAccountID === accountID}
         title={t('memory.deleteTitle')}
-        message={t('memory.deleteBody')}
+        message={error ?? t('memory.deleteBody')}
         confirmTitle={t('common.delete')}
         cancelTitle={t('common.cancel')}
         destructive
+        busy={busy}
         onCancel={() => setPendingDelete(undefined)}
-        onConfirm={() => {
-          if (pendingDelete) remove(pendingDelete.id);
-          setPendingDelete(undefined);
+        onConfirm={async () => {
+          if (pendingDelete && await remove(pendingDelete.id)) {
+            setPendingDelete(undefined);
+            setNotice('Memory deleted.');
+          }
         }}
       />
+      <MemoryConsentDialog visible={consentOpen} accountID={dialogAccountID} onClose={() => setConsentOpen(false)} />
     </SafeAreaView>
   );
 }

@@ -27,6 +27,8 @@ func NewRouter(readiness ReadinessChecker, dependencies ...Dependencies) http.Ha
 		logger = slog.Default()
 	}
 	registerAuthRoutes(mux, deps.Auth, logger)
+	registerMemoryRoutes(mux, deps.Auth, deps.Memory, logger)
+	registerVoiceRoutes(mux, deps)
 	mux.HandleFunc("/v1/auth/config", func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodGet) {
 			return
@@ -35,6 +37,6 @@ func NewRouter(readiness ReadinessChecker, dependencies ...Dependencies) http.Ha
 			OTPRequired bool `json:"otp_required"`
 		}{OTPRequired: !deps.DevelopmentOTPBypass})
 	})
-	mux.Handle("/v1/chat", chatHandler{auth: deps.Auth, chat: deps.Chat, logger: logger})
+	mux.Handle("/v1/chat", chatHandler{auth: deps.Auth, chat: deps.Chat, logger: logger, memory: deps.Memory})
 	return corsMiddleware(mux, deps.AllowedOrigins)
 }

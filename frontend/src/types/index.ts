@@ -1,4 +1,4 @@
-/** Shared domain types for My PADI. Frontend-only: everything here is local state. */
+/** Shared mobile domain types. Personal memory is persisted by the backend. */
 
 export type AppearanceMode = 'system' | 'light' | 'dark';
 
@@ -10,7 +10,7 @@ export type VoiceOption = {
   gender: VoiceGender;
   accent: string;
   description: string;
-  /** Short line used by the simulated preview player. */
+  /** Short line used by the natural voice preview. */
   sample: string;
 };
 
@@ -68,10 +68,17 @@ export type Message = {
   createdAt: number;
   /** Optional rich content rendered inside the bubble. */
   visual?: VisualBlock;
-  /** Marks a message that was produced by the simulated voice session. */
+  /** Marks a message from a voice conversation. Legacy demo turns are not backendChat. */
   viaVoice?: boolean;
+  /** Fully played speech segments; an interrupted segment is never guessed. */
+  voiceSpokenText?: string;
+  voiceInterrupted?: boolean;
   /** Only messages from successful authenticated backend chat are sent as context. */
   backendChat?: boolean;
+  /** Account that produced the verified exchange; never reuse another account's context. */
+  backendUserID?: string;
+  /** Consent/memory revision used for this exchange. */
+  memoryRevision?: number;
   /** True while PADI's reply is still being "composed". */
   pending?: boolean;
 };
@@ -121,6 +128,12 @@ export type MemoryItem = {
   source: string;
 };
 
+export type MemorySnapshot = {
+  enabled: boolean;
+  revision: number;
+  items: MemoryItem[];
+};
+
 export type Preferences = {
   onboarded: boolean;
   countryCode: string | null;
@@ -133,7 +146,6 @@ export type Preferences = {
   highContrast: boolean;
   voiceId: string;
   voiceRate: number;
-  memoryEnabled: boolean;
   notificationsEnabled: boolean;
   dailyCheckIn: boolean;
   checkInTime: string;

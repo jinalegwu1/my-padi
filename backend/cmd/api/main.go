@@ -19,6 +19,7 @@ import (
 	"github.com/jinalegwu1/my-padi/backend/internal/config"
 	"github.com/jinalegwu1/my-padi/backend/internal/database"
 	"github.com/jinalegwu1/my-padi/backend/internal/httpapi"
+	"github.com/jinalegwu1/my-padi/backend/internal/voice"
 )
 
 func main() {
@@ -49,6 +50,7 @@ func run(logger *slog.Logger) error {
 	var db *sql.DB
 	var readiness httpapi.ReadinessChecker
 	var authService *auth.Service
+	var memoryStore httpapi.MemoryAPI
 	if cfg.DatabaseURL != "" {
 		openContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		openedDB, err := database.Open(openContext, cfg.DatabaseURL)
@@ -68,6 +70,13 @@ func run(logger *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("configure authentication: %w", err)
 		}
+		memoryContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		store, err := database.NewMemoryStore(memoryContext, db)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("configure personal memory: %w", err)
+		}
+		memoryStore = store
 	} else {
 		logger.Warn("DATABASE_URL is not set; API will not be ready for data-backed requests")
 		if bypassOTP || hasAuthenticationConfiguration() {
@@ -76,12 +85,12 @@ func run(logger *slog.Logger) error {
 	}
 
 	var aiRouter *ai.Router
+	var usageLimiter *database.AIUsageLimiter
 	if len(aiConfiguration.Models) > 0 {
 		if db == nil {
 			return errors.New("DATABASE_URL is required when AI models are configured so usage limits can be enforced")
 		}
 		usageContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		var usageLimiter *database.AIUsageLimiter
 		if bypassUsageCaps {
 			usageLimiter, err = database.NewDevelopmentAIUsageLimiter(usageContext, db)
 		} else {
@@ -111,18 +120,51 @@ func run(logger *slog.Logger) error {
 		}
 		logger.Info("AI model registry loaded", "model_count", aiRouter.ModelCount())
 	}
+	var speechLimiter ai.UsageLimiter
+	if usageLimiter != nil {
+		speechLimiter = usageLimiter
+	}
+	speechService, err := voice.LoadEnvironment(speechLimiter)
+	if err != nil {
+		return fmt.Errorf("configure voice transcription: %w", err)
+	}
+	var speechAPI httpapi.SpeechTranscriber
+	if speechService != nil {
+		speechAPI = speechService
+		logger.Info("voice transcription configured", "provider", "groq", "model", voice.Model)
+	}
+	pythonSpeech, err := voice.LoadPythonSpeech(speechLimiter)
+	if err != nil {
+		return fmt.Errorf("configure Python speech: %w", err)
+	}
+	var synthesisAPI httpapi.SpeechSynthesiser
+	if pythonSpeech != nil {
+		synthesisAPI = pythonSpeech
+		logger.Info("Python natural speech configured")
+	}
 
 	signalContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	var authAPI httpapi.AuthAPI
+	if authService != nil {
+		authAPI = authService
+	}
+	var chatAPI httpapi.ChatGenerator
+	if aiRouter != nil {
+		chatAPI = aiRouter
+	}
 
 	server := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.NewRouter(readiness, httpapi.Dependencies{
-			Auth:                 authService,
-			Chat:                 aiRouter,
+			Auth:                 authAPI,
+			Chat:                 chatAPI,
 			AllowedOrigins:       corsOrigins(),
 			Logger:               logger,
 			DevelopmentOTPBypass: bypassOTP,
+			Memory:               memoryStore,
+			Speech:               speechAPI,
+			Synthesis:            synthesisAPI,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,

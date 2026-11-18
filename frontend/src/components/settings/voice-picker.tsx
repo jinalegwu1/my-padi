@@ -1,5 +1,4 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import * as Speech from 'expo-speech';
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -7,7 +6,9 @@ import { Button } from '@/components/ui/button';
 import { fonts, radius, spacing, useColors, useType } from '@/constants/theme';
 import { VOICES } from '@/data/languages';
 import { usePreferences } from '@/hooks/use-preferences';
-import { padiSpeechLanguage, padiVoiceOptions, stopPadiSpeech } from '@/lib/speech';
+import { stopPadiSpeech } from '@/lib/speech';
+import { previewVoice } from '@/lib/voice-preview';
+import { subscribeSession } from '@/lib/session';
 import type { VoiceOption } from '@/types';
 
 type Props = {
@@ -22,8 +23,7 @@ type Props = {
 };
 
 /**
- * Voice styles with native speech previews. The selected style adjusts pitch
- * and uses the preferred language; the device supplies the actual TTS voice.
+ * Voice styles with actual Python-generated speech previews.
  */
 export function VoicePicker({ labels }: Props) {
   const colors = useColors();
@@ -31,30 +31,31 @@ export function VoicePicker({ labels }: Props) {
   const { preferences, update } = usePreferences();
   const [previewing, setPreviewing] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState('');
+  const preview=useRef<AbortController|null>(null);
+  const [hasStarted,setHasStarted]=useState(false);
 
   useEffect(
-    () => () => {
-      void stopPadiSpeech();
+    () => {
+      const unsubscribe=subscribeSession(()=>{preview.current?.abort();setPreviewing(null);setHasStarted(false);});
+      return () => {preview.current?.abort();void stopPadiSpeech();unsubscribe();};
     },
     [],
   );
 
   const startPreview = (voice: VoiceOption) => {
+    preview.current?.abort();
+    const controller=new AbortController();preview.current=controller;
     setPreviewError('');
     setPreviewing(voice.id);
+    setHasStarted(false);
     void stopPadiSpeech();
-    Speech.speak(voice.sample, {
-      language: padiSpeechLanguage(preferences.languageCode),
-      ...padiVoiceOptions(voice.id, preferences.voiceRate),
-      onDone: () => setPreviewing(null),
-      onError: (error) => {
-        setPreviewing(null);
-        setPreviewError(error.message);
-      },
-    });
+    void previewVoice(voice.sample,voice.id,preferences.voiceRate,controller.signal,()=>{if(preview.current===controller)setHasStarted(true);})
+      .catch(error=>{if(!controller.signal.aborted&&preview.current===controller)setPreviewError(error instanceof Error?error.message:'Voice preview failed.');})
+      .finally(()=>{if(preview.current===controller){preview.current=null;setPreviewing(null);setHasStarted(false);}});
   };
 
   const stopPreview = () => {
+    preview.current?.abort();preview.current=null;setHasStarted(false);
     void stopPadiSpeech();
     setPreviewing(null);
   };
@@ -140,7 +141,7 @@ export function VoicePicker({ labels }: Props) {
 
   return (
     <View style={styles.wrap}>
-      {active ? (
+      {active && hasStarted ? (
         <View
           style={[
             styles.nowPlaying,
@@ -152,6 +153,7 @@ export function VoicePicker({ labels }: Props) {
           </Text>
         </View>
       ) : null}
+      {active&&!hasStarted?<Text style={{color:colors.muted,fontSize:type.caption}}>Preparing voice preview…</Text>:null}
 
       <Text style={[styles.groupLabel, { color: colors.muted, fontSize: type.micro }]}>
         {labels.female.toUpperCase()}

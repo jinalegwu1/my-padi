@@ -49,55 +49,55 @@ export function languageLabel(code: string): string {
 }
 
 /**
- * Voice styles for Settings → Voice. Speech uses the device's installed TTS voice
- * with a pitch adjustment; named styles are not separate recorded voices.
+ * Voice styles for Settings → Voice, mapped to speech models by Python.
+ * Named styles are not recordings or a guarantee of a particular local accent.
  */
 export const VOICES: VoiceOption[] = [
   {
     id: 'baby',
     name: 'Baby',
     gender: 'female',
-    accent: 'Device language',
-    description: 'Childlike, bright and playful',
+    accent: 'Natural voice',
+    description: 'Bright and gently playful',
     sample: "Hello! I'm PADI. I'm happy to be here with you.",
   },
   {
     id: 'ada',
     name: 'Ada',
     gender: 'female',
-    accent: 'Nigerian English',
+    accent: 'Natural voice',
     description: 'Warm, clear and encouraging',
-    sample: "Hey! I'm Ada. I'm here whenever you want to talk.",
+    sample: "Hey! I'm PADI. I'm here whenever you want to talk.",
   },
   {
     id: 'chidi',
     name: 'Chidi',
     gender: 'male',
-    accent: 'Nigerian English',
+    accent: 'Natural voice',
     description: 'Calm, steady and friendly',
-    sample: "Hello, I'm Chidi. Let's take it one step at a time.",
+    sample: "Hello, I'm PADI. Let's take it one step at a time.",
   },
   {
     id: 'zainab',
     name: 'Zainab',
     gender: 'female',
-    accent: 'Neutral English',
+    accent: 'Natural voice',
     description: 'Bright and lively',
-    sample: "Hi there! I'm Zainab. What are we learning today?",
+    sample: "Hi there! I'm PADI. What are we learning today?",
   },
   {
     id: 'tunde',
     name: 'Tunde',
     gender: 'male',
-    accent: 'Nigerian Pidgin',
+    accent: 'Natural voice',
     description: 'Relaxed and playful',
-    sample: 'How you dey? Na me be Tunde. Make we gist small.',
+    sample: 'How you dey? Na me be PADI. Make we gist small.',
   },
   {
     id: 'amara',
     name: 'Amara',
     gender: 'female',
-    accent: 'Neutral English',
+    accent: 'Natural voice',
     description: 'Soft and thoughtful',
     sample: "I'm Amara. Take your time — I'm listening.",
   },
@@ -105,9 +105,9 @@ export const VOICES: VoiceOption[] = [
     id: 'daniel',
     name: 'Daniel',
     gender: 'male',
-    accent: 'British English',
+    accent: 'Natural voice',
     description: 'Deep and reassuring',
-    sample: "Good to see you. I'm Daniel. Shall we begin?",
+    sample: "Good to see you. I'm PADI. Shall we begin?",
   },
 ];
 

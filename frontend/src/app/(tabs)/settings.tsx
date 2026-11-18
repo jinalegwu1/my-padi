@@ -1,12 +1,13 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CountryPicker } from '@/components/onboarding/country-picker';
 import { LanguagePicker } from '@/components/onboarding/language-picker';
 import { VoicePicker } from '@/components/settings/voice-picker';
+import { MemoryConsentDialog } from '@/components/memory/memory-consent-dialog';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { SectionHeader, SettingRow, SettingsGroup, SwitchRow } from '@/components/ui/rows';
@@ -31,7 +32,11 @@ export default function SettingsScreen() {
   const type = useType();
   const { t } = useTranslation();
   const { preferences, update, reset } = usePreferences();
-  const { counts } = useMemory();
+  const { accountID, counts, enabled: memoryEnabled, status: memoryStatus, busy: memoryBusy, error: memoryError, reload, setEnabled } = useMemory();
+  const [memoryConsentOpen, setMemoryConsentOpen] = useState(false);
+  const [memoryConsentAccount, setMemoryConsentAccount] = useState<string | null>(null);
+  useEffect(() => { setMemoryConsentOpen(false); setMemoryConsentAccount(null); }, [accountID]);
+  useFocusEffect(useCallback(() => { void reload(); }, [reload]));
 
   const [languageOpen, setLanguageOpen] = useState(false);
   const [countryOpen, setCountryOpen] = useState(false);
@@ -168,9 +173,10 @@ export default function SettingsScreen() {
           <SwitchRow
             icon="sparkles-outline"
             title="Let PADI remember with permission"
-            subtitle="PADI only keeps something when you say yes."
-            value={preferences.memoryEnabled}
-            onValueChange={(value) => update({ memoryEnabled: value })}
+            subtitle={memoryStatus === 'unauthorized' ? 'Sign in to manage your account memory.' : 'Only explicitly approved facts are stored in your account.'}
+            value={memoryEnabled}
+            disabled={memoryBusy || memoryStatus !== 'ready'}
+            onValueChange={(value) => { if (value) { setMemoryConsentAccount(accountID); setMemoryConsentOpen(true); } else void setEnabled(false); }}
             accent
           />
           <SettingRow
@@ -182,6 +188,7 @@ export default function SettingsScreen() {
         </SettingsGroup>
 
         {/* Notifications and check-in */}
+        {memoryError ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{memoryError}</Text> : null}
         <SectionHeader title={t('settings.notifications')} subtitle={t('settings.notifications.hint')} />
         <SettingsGroup>
           <SwitchRow
@@ -399,6 +406,7 @@ export default function SettingsScreen() {
         </View>
       </Sheet>
 
+      <MemoryConsentDialog visible={memoryConsentOpen} accountID={memoryConsentAccount} onClose={() => setMemoryConsentOpen(false)} />
       <ConfirmDialog
         visible={resetOpen}
         title={t('settings.reset')}
