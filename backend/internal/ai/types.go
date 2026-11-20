@@ -52,6 +52,7 @@ type Request struct {
 	Complexity       Complexity `json:"complexity,omitempty"`
 	StructuredOutput bool       `json:"structured_output,omitempty"`
 	MaxOutputTokens  int        `json:"max_output_tokens,omitempty"`
+	StyleGuidance    string     `json:"-"`
 }
 
 type Usage struct {

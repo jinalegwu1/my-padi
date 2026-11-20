@@ -20,8 +20,8 @@ func TestReadMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readMigrations() error = %v", err)
 	}
-	if len(migrations) != 9 {
-		t.Fatalf("readMigrations() returned %d migrations, want 9", len(migrations))
+	if len(migrations) != 13 {
+		t.Fatalf("readMigrations() returned %d migrations, want 13", len(migrations))
 	}
 
 	for i, current := range migrations {

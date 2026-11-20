@@ -10,6 +10,7 @@ test('generated native speech opens no microphone and cleans temporary audio aft
     'expo-file-system': { Paths: { cache: 'cache' }, File: class { exists = true; uri = 'file://generated.wav'; create() {} write(value, options) { assert.equal(value, 'generated-audio'); assert.equal(options.encoding, 'base64'); } delete() { removed++; } } },
     'react-native': { Platform: { OS: 'android' } },
     '@/lib/voice-playback': { playVoice() { assert.fail('standalone speech must not use microphone-dependent playback'); } },
+    '@/lib/portrait-speech': loadTS('src/lib/portrait-speech.ts'),
   });
   const controller = new AbortController();
   const playing = speech.playStandaloneSpeech('generated-audio', controller.signal, () => { started++; });

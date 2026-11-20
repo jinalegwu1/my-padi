@@ -62,6 +62,24 @@ func TestPublicPreviewSurvivesRestartWhileProviderIsUnavailable(t *testing.T) {
 	}
 }
 
+func TestTouchGreetingReusesARealCachedHelloDuringProviderOutage(t *testing.T) {
+	t.Setenv("PADI_VOICE_SAMPLE_CACHE_DIR", t.TempDir())
+	cache := newSpeechFileCache()
+	if err := cache.save("ada:en-NG:1.00", previewWords["ada"], publicTestAudio()); err != nil {
+		t.Fatal(err)
+	}
+	speech := &sampleSpeech{err: &ai.ProviderError{Provider: "gemini-voice", Status: 429}}
+	router := NewRouter(nil, Dependencies{Synthesis: speech})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest("GET", "/v1/voice/call?style=ada&language=en-NG&rate=1", nil))
+	var body struct {
+		Text string `json:"text"`
+	}
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &body) != nil || body.Text != previewWords["ada"] || speech.calls != 0 {
+		t.Fatal("Touch greeting did not reuse the actual cached hello")
+	}
+}
+
 func TestPublicCacheRejectsChangedProfileOrPhraseAndUnapprovedText(t *testing.T) {
 	directory := t.TempDir()
 	cache := &speechFileCache{directory: directory, model: "model-one", originalVoice: "voice_one"}

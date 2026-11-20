@@ -152,6 +152,89 @@ func TestProviderAdapters(t *testing.T) {
 	}
 }
 
+func TestSharedPersonalityInstructionsReachEveryProviderAdapter(t *testing.T) {
+	t.Setenv("PADI_TEST_AI_KEY", "provider-secret")
+	providers := []string{
+		ProviderOpenAI,
+		ProviderAnthropic,
+		ProviderGemini,
+		ProviderOpenAICompatible,
+		ProviderOpenRouter,
+		ProviderGroq,
+		ProviderZAI,
+		ProviderMistral,
+	}
+	systemByProvider := make(map[string]string, len(providers))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		provider := strings.TrimPrefix(r.URL.Path, "/")
+		var payload struct {
+			System            string `json:"system"`
+			SystemInstruction struct {
+				Parts []geminiPart `json:"parts"`
+			} `json:"systemInstruction"`
+			Messages []Message `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("%s request decode: %v", provider, err)
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		system := payload.System
+		switch provider {
+		case ProviderGemini:
+			if len(payload.SystemInstruction.Parts) == 1 {
+				system = payload.SystemInstruction.Parts[0].Text
+			}
+		case ProviderAnthropic:
+		default:
+			if len(payload.Messages) > 0 && payload.Messages[0].Role == RoleSystem {
+				system = payload.Messages[0].Content
+			}
+		}
+		systemByProvider[provider] = system
+		switch provider {
+		case ProviderGemini:
+			_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"Hello"}]}}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":2}}`))
+		case ProviderAnthropic:
+			_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"Hello"}],"usage":{"input_tokens":2,"output_tokens":2}}`))
+		default:
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Hello"}}],"usage":{"prompt_tokens":2,"completion_tokens":2}}`))
+		}
+	}))
+	defer server.Close()
+
+	adapters := NewProviderAdapters(server.Client())
+	models := make([]ModelConfig, 0, len(providers))
+	for _, provider := range providers {
+		models = append(models, ModelConfig{
+			ID: "test-" + provider, Provider: provider, Model: "test-model",
+			Endpoint: server.URL + "/" + provider, APIKeyEnv: "PADI_TEST_AI_KEY",
+		})
+	}
+	router := testRouter(t, models, adapters, RoutingConfig{PrimaryModel: models[0].ID}, nil)
+	request := Request{
+		StyleGuidance: "Current-turn response guidance: use an empathetic tone. Humour is not appropriate for this turn.",
+		Messages: []Message{
+			{Role: RoleSystem, Content: "Respond in the user's selected language."},
+			{Role: RoleUser, Content: "My mother died and I feel lost."},
+		},
+	}
+	expectedSystem := withPADIInstructions(request).Messages[0].Content
+	for _, provider := range providers {
+		if _, err := router.GenerateWithModel(context.Background(), "test-"+provider, request); err != nil {
+			t.Fatalf("%s GenerateWithModel() error = %v", provider, err)
+		}
+		if got := systemByProvider[provider]; got != expectedSystem {
+			t.Errorf("%s system instruction differs or was dropped:\n got: %q\nwant: %q", provider, got, expectedSystem)
+		}
+	}
+	if !strings.Contains(expectedSystem, "one consistent AI companion") ||
+		!strings.Contains(expectedSystem, "Never joke about a user's suffering, grief, trauma, health, identity") ||
+		!strings.Contains(expectedSystem, "Humour is not appropriate for this turn") {
+		t.Fatal("shared system instruction does not include required personality and distress rules")
+	}
+}
+
 func TestProviderDefaultEndpoints(t *testing.T) {
 	tests := []struct {
 		provider string

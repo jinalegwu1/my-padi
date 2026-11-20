@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PadiOrb, type OrbState } from '@/components/padi-orb';
@@ -12,6 +12,7 @@ import { fonts, spacing, useColors, useType } from '@/constants/theme';
 import { usePreferences } from '@/hooks/use-preferences';
 import { useTranslation } from '@/hooks/use-translation';
 import { useVoiceSession } from '@/hooks/use-voice-session';
+import { speakPortraitGreeting } from '@/lib/speech';
 
 /**
  * Runs the human-portrait hands-free conversation: microphone capture, transcription,
@@ -19,27 +20,63 @@ import { useVoiceSession } from '@/hooks/use-voice-session';
  */
 export default function VoiceScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ connect?: string }>();
   const colors = useColors();
   const type = useType();
+  const { width } = useWindowDimensions();
   const { t } = useTranslation();
   const { preferences, update } = usePreferences();
   const voice = useVoiceSession();
   const [showWords, setShowWords] = useState(preferences.showVoiceTranscript);
-  useFocusEffect(useCallback(() => () => { void voice.session.cancel(); }, [voice.session]));
+  const hasConnected = useRef(false);
+  const autoAttempted = useRef(false);
+  const touchReply = useRef<AbortController|null>(null);
+  const [touchPhase,setTouchPhase]=useState<'idle'|'thinking'|'speaking'>('idle');
+  const [touchText,setTouchText]=useState('');
+  const [touchError,setTouchError]=useState<string|null>(null);
+  const welcomed=useRef(false);
+  useEffect(() => { if (voice.connected) hasConnected.current = true; }, [voice.connected]);
+  useEffect(() => {
+    if (params.connect === '1' && voice.ready && !voice.chatBusy && !autoAttempted.current) {
+      autoAttempted.current = true;
+      voice.connect();
+    }
+  }, [params.connect, voice.ready, voice.chatBusy, voice.connect]);
+  useFocusEffect(useCallback(() => () => {touchReply.current?.abort();touchReply.current=null;void voice.session.cancel();}, [voice.session]));
 
   const busy = voice.connected || voice.phase === 'preparing';
-  const state: OrbState = voice.phase === 'preparing' || voice.phase === 'transcribing' ? 'thinking' : voice.phase;
-  const label = voice.phase === 'preparing' ? 'Starting conversation…'
-    : voice.phase === 'transcribing' ? 'Understanding your voice…'
-    : state === 'listening' ? 'I’m listening'
+  const state: OrbState = touchPhase!=='idle'?touchPhase:voice.phase === 'preparing' || voice.phase === 'transcribing' ? 'thinking' : voice.phase;
+  const label = voice.phase === 'preparing' ? t('voice.connecting')
+    : voice.phase === 'transcribing' ? t('voice.understanding')
     : t(`voice.${state}`);
-  const micLabel = busy ? 'Pause conversation' : 'Start conversation';
-  const error = voice.configurationError ?? voice.error ?? voice.chatError;
+  const micLabel = busy ? t('voice.pause') : hasConnected.current ? t('voice.resume') : t('voice.tapToChat');
+  const error = touchError ?? voice.configurationError ?? voice.error ?? voice.chatError;
   const handleMic = () => {
+    touchReply.current?.abort();touchReply.current=null;setTouchPhase('idle');setTouchError(null);
     if (busy) void voice.session.cancel();
-    else if (voice.ready && !voice.chatBusy) { void voice.session.start(); }
+    else if (voice.ready && !voice.chatBusy) { voice.connect(!hasConnected.current&&!welcomed.current); }
   };
-  const handleEnd = () => { void voice.session.cancel(); router.back(); };
+  const handleEnd = () => {
+    touchReply.current?.abort();
+    touchReply.current=null;
+    void voice.session.cancel();
+    if (router.canGoBack()) router.back();
+    else router.replace('/(tabs)/chat');
+  };
+  const handlePortrait = () => {
+    if(voice.connected)void voice.session.reactToTouch();
+    else if(!busy) {
+      touchReply.current?.abort();
+      const controller=new AbortController();touchReply.current=controller;
+      setTouchError(null);setTouchPhase('thinking');
+      void speakPortraitGreeting(preferences.voiceId,preferences.languageCode,preferences.voiceRate,controller.signal,
+        ()=>{if(touchReply.current===controller&&!controller.signal.aborted)setTouchPhase('speaking');},
+        text=>{if(touchReply.current===controller&&!controller.signal.aborted)setTouchText(text);})
+        .then(result=>{if(result==='played'&&touchReply.current===controller)welcomed.current=true;})
+        .catch(error=>{if(touchReply.current===controller&&!controller.signal.aborted)setTouchError(error instanceof Error?error.message:'The greeting could not play.');})
+        .finally(()=>{if(touchReply.current===controller){touchReply.current=null;setTouchPhase('idle');}});
+    }
+  };
   const toggleWords = () => { const next = !showWords; setShowWords(next); update({ showVoiceTranscript: next }); };
 
   return (
@@ -54,33 +91,25 @@ export default function VoiceScreen() {
       </View>
       <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
         <View style={[styles.orbArea, { minHeight: 250 }]}>
-          <PadiOrb state={state} voiceId={preferences.voiceId} size={190} />
+          <PadiOrb state={state} voiceId={preferences.voiceId} size={Math.min(210, width * .5)}
+            onPress={handlePortrait} accessibilityHint={t('voice.touchHint')} />
           <VoiceStatePill state={state} label={label} />
+          {!busy && !hasConnected.current ? <Text style={[styles.invitation, {color: colors.textSecondary, fontSize: type.body}]}>{t('voice.invitation')}</Text> : null}
         </View>
-        <View style={styles.captionArea}>
-          <VoiceCaption padiText={voice.padiText || '…'} userText={voice.userText} visible={showWords} onToggle={toggleWords}
+        {voice.padiText || voice.userText || touchText ? <View style={styles.captionArea}>
+          <VoiceCaption padiText={touchPhase!=='idle'?touchText:voice.padiText||touchText||'…'} userText={voice.userText} visible={showWords} onToggle={toggleWords}
             showLabel={t('voice.showWords')} hideLabel={t('voice.hideWords')} youSaidLabel={t('voice.youSaid')} />
-        </View>
+        </View> : null}
         <View style={styles.controls}>
           {error ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite"
             style={{ color: colors.text, fontSize: type.bodySmall, textAlign: 'center' }}>{error}</Text> : null}
-          <Pressable accessibilityRole="button" accessibilityLabel={micLabel}
-            accessibilityState={{ disabled: !busy && (!voice.ready || voice.chatBusy) }}
-            disabled={!busy && (!voice.ready || voice.chatBusy)} onPress={handleMic}
-            style={({ pressed }) => [styles.micButton, { backgroundColor: busy ? colors.card : colors.primary,
-              borderColor: busy ? colors.border : colors.primary, opacity: !busy && (!voice.ready || voice.chatBusy) ? 0.4 : pressed ? 0.85 : 1 }]}>
-            <Ionicons name={busy ? 'stop' : 'mic'} size={30} color={busy ? colors.primary : colors.onPrimary} />
-          </Pressable>
-          <Text style={[styles.micLabel, { color: colors.muted, fontSize: type.caption }]}>{micLabel}</Text>
-          <Button title={t('voice.end')} variant="secondary" icon="close" onPress={handleEnd} />
-          <View style={styles.notice}>
-            <Ionicons name="information-circle-outline" size={14} color={colors.muted} />
-            <Text style={[styles.noticeText, { color: colors.muted, fontSize: type.micro }]}>
-              Start conversation keeps the microphone on while this screen is open. When you finish speaking, PADI sends your speaking turn for transcription and answers automatically. Start talking to interrupt PADI. Pause or End stops the microphone.
-            </Text>
+          <View style={styles.chatControls}>
+            <Button title={micLabel} onPress={handleMic} icon={busy?'pause':hasConnected.current?'mic':'chatbubbles'}
+              disabled={!busy&&(!voice.ready||voice.chatBusy)} variant={busy?'secondary':'primary'} />
+            <Button title={t('voice.end')} onPress={handleEnd} icon="close" variant="ghost" />
           </View>
           <Text style={[styles.noticeText, { color: colors.muted, fontSize: type.micro }]}>
-            Groq transcribes your speaking turns and Gemini generates spoken replies. Recordings are temporary. Noise and accents can affect recognition. Calls, messages, and emails are not connected yet.
+            {busy ? t('voice.liveHint') : hasConnected.current ? t('voice.pausedHint') : t('voice.readyHint')}
           </Text>
         </View>
       </ScrollView>
@@ -108,15 +137,7 @@ const styles = StyleSheet.create({
   orbArea: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.lg },
   captionArea: { paddingHorizontal: spacing.base, paddingBottom: spacing.md },
   controls: { paddingHorizontal: spacing.base, paddingBottom: spacing.md, gap: spacing.sm, alignItems: 'center' },
-  micButton: {
-    width: 78,
-    height: 78,
-    borderRadius: 39,
-    borderWidth: 1.5,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  micLabel: { fontFamily: fonts.medium, marginBottom: spacing.sm },
-  notice: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.xs, paddingTop: spacing.xs },
-  noticeText: { flex: 1, fontFamily: fonts.regular, lineHeight: 16, textAlign: 'center' },
+  invitation: {fontFamily: fonts.medium, textAlign:'center'},
+  chatControls: {gap:spacing.sm, width:'100%',maxWidth:320},
+  noticeText: { fontFamily: fonts.regular, lineHeight: 18, textAlign: 'center', maxWidth:310 },
 });

@@ -12,7 +12,7 @@ export async function speakNaturally(text:string,style:string,rate:number,signal
   if(!session) throw new Error('Sign in to hear PADI’s reply.');
   const segments=speechSegments(spokenText(text));
   if(!segments.length) return;
-  const load=(segment:string)=>synthesiseSpeech(session.token,segment,style,rate,signal,languageCode);
+  const load=(segment:string)=>synthesiseSpeech(session.token,segment,style,rate,signal,languageCode,true);
   let audio=load(segments[0]);
   for(let index=0;index<segments.length;index++) {
     const result=await audio;
@@ -22,7 +22,7 @@ export async function speakNaturally(text:string,style:string,rate:number,signal
       // A cancelled prefetched request may reject before the current clip ends.
       void audio.catch(()=>undefined);
     }
-    await playVoice(result.audio_base64,signal,onStart);
+    await playVoice(result.audio_base64,signal,onStart,style);
     if(signal.aborted) return;
     completed(segments[index]);
   }

@@ -114,7 +114,7 @@ export function Composer({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={voiceLabel}
-        accessibilityHint="Opens the voice conversation screen"
+        accessibilityHint="Connects you to a live chat with PADI"
         onPress={onOpenVoice}
         style={({ pressed }) => [
           styles.voiceButton,

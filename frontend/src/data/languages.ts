@@ -69,8 +69,8 @@ export const VOICES: VoiceOption[] = [
     gender: 'female',
     accent: 'Nigerian English style',
     description: 'Beautiful Idoma girl, warm and encouraging',
-    imageUrl: 'https://images.unsplash.com/photo-1531123897727-8f129e1688ce?auto=format&fit=crop&w=900&q=88',
-    imageDescription: 'A beautiful Idoma girl',
+    imageUrl: 'https://images.pexels.com/photos/33588240/pexels-photo-33588240.jpeg?auto=compress&cs=tinysrgb&w=1200',
+    imageDescription: 'An African woman in a traditional headwrap and attire',
     sample: "Hey! I'm PADI. I'm here whenever you want to talk.",
   },
   {
@@ -101,7 +101,7 @@ export const VOICES: VoiceOption[] = [
     description: 'Handsome Yoruba guy, relaxed and playful',
     imageUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=900&q=88',
     imageDescription: 'A handsome Yoruba guy',
-    sample: 'How you dey? Na me be PADI. Make we gist small.',
+    sample: "Hey, I'm PADI. Let's have a little chat.",
   },
   {
     id: 'amara',

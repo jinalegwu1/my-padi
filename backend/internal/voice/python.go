@@ -13,6 +13,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jinalegwu1/my-padi/backend/internal/ai"
@@ -46,8 +47,12 @@ func ValidSpeechAudio(audio Audio) bool {
 
 type PythonSpeech struct {
 	endpoint, token string
+	fallbackModel   string
+	fastVoice       bool
 	client          *http.Client
 	limiter         ai.UsageLimiter
+	mu              sync.Mutex
+	cooldowns       map[string]time.Time
 }
 
 func LoadPythonSpeech(limiter ai.UsageLimiter) (*PythonSpeech, error) {
@@ -86,15 +91,97 @@ func LoadPythonSpeech(limiter ai.UsageLimiter) (*PythonSpeech, error) {
 	if !confirmed {
 		return nil, errors.New("Python speech requires confirmed Gemini free-tier use")
 	}
-	return &PythonSpeech{endpoint: endpoint + "/synthesise", token: token, limiter: limiter, client: &http.Client{Timeout: 55 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	fallback, configured := os.LookupEnv("PADI_VOICE_FALLBACK_MODEL")
+	if !configured && os.Getenv("PADI_VOICE_MODEL") != "gemini-2.5-flash-preview-tts" {
+		fallback = "gemini-2.5-flash-preview-tts"
+	}
+	if fallback != "" && fallback != "gemini-2.5-flash-preview-tts" && fallback != "gemini-3.1-flash-tts-preview" && fallback != "gemini-3.8-flash-tts" && fallback != "gemini-3.8-flash-lite-tts" {
+		return nil, errors.New("choose a supported fallback voice model")
+	}
+	if fallback == os.Getenv("PADI_VOICE_MODEL") {
+		fallback = ""
+	}
+	provider := os.Getenv("PADI_LIVE_VOICE_PROVIDER")
+	if provider != "" && provider != "gemini" && provider != "groq" {
+		return nil, errors.New("live voice provider must be gemini or groq")
+	}
+	if provider == "groq" {
+		confirmed := false
+		for _, account := range strings.Split(os.Getenv("PADI_AI_FREE_ACCOUNT_CONFIRMED"), ",") {
+			if strings.TrimSpace(account) == "groq" {
+				confirmed = true
+			}
+		}
+		if !confirmed || os.Getenv("GROQ_API_KEY") == "" {
+			return nil, errors.New("fast live voice requires a configured, confirmed Groq account")
+		}
+	}
+	return &PythonSpeech{endpoint: endpoint + "/synthesise", token: token, fallbackModel: fallback, fastVoice: provider == "groq", limiter: limiter, client: &http.Client{Timeout: 55 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+}
+
+const fastVoiceModel = "canopylabs/orpheus-v1-english"
+
+// Live English turns can use Groq speech while the selected locale/pace falls
+// back to Gemini when unsupported or the fast service is unavailable.
+func (service *PythonSpeech) SynthesiseLive(ctx context.Context, text, style string, rate float64, language string) (Audio, error) {
+	if service.fastVoice && rate == 1 && (language == "en-NG" || language == "en-GB" || language == "pcm-NG") {
+		service.mu.Lock()
+		blocked := time.Now().Before(service.cooldowns[fastVoiceModel])
+		service.mu.Unlock()
+		if !blocked {
+			audio, err := service.synthesise(ctx, text, style, rate, language, fastVoiceModel)
+			if err == nil {
+				return audio, nil
+			}
+			if ctx.Err() != nil || errors.Is(err, ai.ErrUsageLimiterUnavailable) {
+				return Audio{}, err
+			}
+		}
+	}
+	return service.Synthesise(ctx, text, style, rate, language)
 }
 
 func (service *PythonSpeech) Synthesise(ctx context.Context, text, style string, rate float64, language string) (Audio, error) {
+	models := []string{""} // Empty selects the configured primary in Python.
+	if service.fallbackModel != "" {
+		models = append(models, service.fallbackModel)
+	}
+	var lastErr error
+	for _, model := range models {
+		service.mu.Lock()
+		blocked := time.Now().Before(service.cooldowns[model])
+		service.mu.Unlock()
+		if blocked {
+			lastErr = &ai.ProviderError{Provider: "gemini-voice", Status: http.StatusTooManyRequests}
+			continue
+		}
+		audio, err := service.synthesise(ctx, text, style, rate, language, model)
+		if err == nil {
+			return audio, nil
+		}
+		lastErr = err
+		var providerErr *ai.ProviderError
+		if !errors.As(err, &providerErr) || (providerErr.Status != 429 && providerErr.Status < 500) {
+			return Audio{}, err
+		}
+	}
+	return Audio{}, lastErr
+}
+
+func (service *PythonSpeech) synthesise(ctx context.Context, text, style string, rate float64, language, model string) (Audio, error) {
+	provider := "gemini-voice"
+	if model == fastVoiceModel {
+		provider = "groq-voice"
+	}
 	reservedAt := time.Now()
-	if err := service.limiter.Reserve(ctx, "gemini-voice", 1, ai.FreeUsageLimits(), reservedAt); err != nil {
+	if err := service.limiter.Reserve(ctx, provider, 1, ai.FreeUsageLimits(), reservedAt); err != nil {
 		return Audio{}, err
 	}
-	body, err := json.Marshal(map[string]any{"text": text, "style": style, "rate": rate, "language": language})
+	payload := map[string]any{"text": text, "style": style, "rate": rate, "language": language}
+	if model != "" {
+		payload["model"] = model
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return Audio{}, err
 	}
@@ -113,7 +200,26 @@ func (service *PythonSpeech) Synthesise(ctx context.Context, text, style string,
 	}
 	defer response.Body.Close()
 	if response.StatusCode != 200 {
-		return Audio{}, &ai.ProviderError{Provider: "gemini-voice", Status: response.StatusCode}
+		if response.StatusCode == 429 {
+			var failure struct {
+				RetryAfter int `json:"retry_after_seconds"`
+			}
+			_ = json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&failure)
+			seconds := failure.RetryAfter
+			if seconds < 1 {
+				seconds = 60
+			}
+			if seconds > 86400 {
+				seconds = 86400
+			}
+			service.mu.Lock()
+			if service.cooldowns == nil {
+				service.cooldowns = make(map[string]time.Time)
+			}
+			service.cooldowns[model] = time.Now().Add(time.Duration(seconds) * time.Second)
+			service.mu.Unlock()
+		}
+		return Audio{}, &ai.ProviderError{Provider: provider, Status: response.StatusCode}
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, 12*1024*1024+1))
 	if err != nil || len(data) > 12*1024*1024 {
@@ -128,7 +234,7 @@ func (service *PythonSpeech) Synthesise(ctx context.Context, text, style string,
 	}
 	// Output is audio tokens, not text tokens. Only input text usage enters the
 	// existing token columns; the separate speech request bucket remains auditable.
-	if err := service.limiter.RecordUsage(ctx, "gemini-voice", ai.Usage{InputTokens: audio.InputTokens}, reservedAt); err != nil {
+	if err := service.limiter.RecordUsage(ctx, provider, ai.Usage{InputTokens: audio.InputTokens}, reservedAt); err != nil {
 		return Audio{}, ai.ErrUsageLimiterUnavailable
 	}
 	return audio, nil

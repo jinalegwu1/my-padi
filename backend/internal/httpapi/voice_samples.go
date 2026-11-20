@@ -24,9 +24,26 @@ var previewWords = map[string]string{
 	"ada":    "Hey! I'm PADI. I'm here whenever you want to talk.",
 	"chidi":  "Hello, I'm PADI. Let's take it one step at a time.",
 	"zainab": "Hi there! I'm PADI. What are we learning today?",
-	"tunde":  "How you dey? Na me be PADI. Make we gist small.",
+	"tunde":  "Hey, I'm PADI. Let's have a little chat.",
 	"amara":  "Hey, I'm PADI. Take your time. I'm here with you.",
 	"daniel": "Good to see you. I'm PADI. Shall we begin?",
+}
+
+var callWords = map[string]string{
+	"en-NG":  "Hey! Good to see you. How are you doing?",
+	"en-GB":  "Hey! Good to see you. How are you doing?",
+	"pcm-NG": "How you dey, my padi? I dey here. How your day dey go?",
+	"fr-FR":  "Salut ! Ça fait plaisir de te retrouver. Comment tu vas ?",
+	"pt-BR":  "Oi! Que bom te ver. Como você está?",
+	"es-ES":  "¡Hola! Qué alegría verte. ¿Cómo estás?",
+	"ar-SA":  "أهلًا! سعيد بلقائك. كيف حالك اليوم؟",
+	"sw-KE":  "Habari! Nimefurahi kukuona. Unaendeleaje leo?",
+	"ha-NG":  "Sannu! Na yi farin cikin ganinka. Yaya kake yau?",
+	"yo-NG":  "Báwo ni! Inú mi dùn láti rí ọ. Báwo ni ọjọ́ rẹ ṣe ń lọ?",
+	"ig-NG":  "Ndewo! Obi dị m ụtọ ịhụ gị. Kedu ka ị mere taa?",
+	"am-ET":  "ሰላም! ስላገኘሁህ ደስ ብሎኛል። ዛሬ እንዴት ነህ?",
+	"hi-IN":  "नमस्ते! तुमसे मिलकर अच्छा लगा। आज कैसे हो?",
+	"zh-CN":  "嗨！很高兴见到你。今天过得怎么样？",
 }
 
 type speechSample struct {
@@ -34,6 +51,7 @@ type speechSample struct {
 	audio   voice.Audio
 	err     error
 	created time.Time
+	text    string
 }
 
 type speechSamples struct {
@@ -47,11 +65,12 @@ type speechSamples struct {
 
 func registerSpeechSamples(mux *http.ServeMux, speech SpeechSynthesiser, logger *slog.Logger) {
 	samples := &speechSamples{speech: speech, items: make(map[string]*speechSample), slot: make(chan struct{}, 1), files: newSpeechFileCache(), logger: logger}
-	mux.HandleFunc("/v1/voice/welcome", samples.handle(false))
-	mux.HandleFunc("/v1/voice/preview", samples.handle(true))
+	mux.HandleFunc("/v1/voice/welcome", samples.handle("welcome"))
+	mux.HandleFunc("/v1/voice/preview", samples.handle("preview"))
+	mux.HandleFunc("/v1/voice/call", samples.handle("call"))
 }
 
-func (samples *speechSamples) handle(preview bool) http.HandlerFunc {
+func (samples *speechSamples) handle(kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodGet) {
 			return
@@ -85,13 +104,23 @@ func (samples *speechSamples) handle(preview bool) http.HandlerFunc {
 		}
 		rate := 1.0
 		text, allowed := welcomeWords[language]
-		kind := "welcome"
-		if preview {
-			kind = "preview"
+		if kind == "preview" {
 			text, allowed = previewWords[style]
 			if query.Get("language") != "" {
-				allowed = false
+				allowed = validSpeechLanguage(language)
+				if allowed && language != "en-NG" && language != "en-GB" {
+					text, allowed = callWords[language]
+				}
 			}
+			if raw := query.Get("rate"); raw != "" {
+				parsed, err := strconv.ParseFloat(raw, 64)
+				if err != nil || (parsed != 0.85 && parsed != 1 && parsed != 1.15) {
+					allowed = false
+				}
+				rate = parsed
+			}
+		} else if kind == "call" {
+			text, allowed = callWords[language]
 			if raw := query.Get("rate"); raw != "" {
 				parsed, err := strconv.ParseFloat(raw, 64)
 				if err != nil || (parsed != 0.85 && parsed != 1 && parsed != 1.15) {
@@ -108,9 +137,7 @@ func (samples *speechSamples) handle(preview bool) http.HandlerFunc {
 		}
 		key := kind + ":" + style + ":" + language + ":" + strconv.FormatFloat(rate, 'f', 2, 64)
 		speechLanguage := language
-		if preview && style == "tunde" {
-			speechLanguage = "pcm-NG"
-		} else if language == "fr" {
+		if language == "fr" {
 			speechLanguage = "fr-FR"
 		}
 		samples.mu.Lock()
@@ -125,9 +152,19 @@ func (samples *speechSamples) handle(preview bool) http.HandlerFunc {
 			}
 		}
 		if entry == nil {
-			entry = &speechSample{done: make(chan struct{}), created: time.Now()}
+			entry = &speechSample{done: make(chan struct{}), created: time.Now(), text: text}
 			samples.items[key] = entry
-			go samples.generate(entry, text, style, rate, speechLanguage)
+			if kind == "call" {
+				if audio, words, found := samples.cachedGreeting(text, style, rate, speechLanguage); found {
+					entry.audio = audio
+					entry.text = words
+					close(entry.done)
+				} else {
+					go samples.generate(entry, text, style, rate, speechLanguage)
+				}
+			} else {
+				go samples.generate(entry, text, style, rate, speechLanguage)
+			}
 		}
 		samples.mu.Unlock()
 		select {
@@ -144,8 +181,35 @@ func (samples *speechSamples) handle(preview bool) http.HandlerFunc {
 			writeAPIError(w, status, code, message)
 			return
 		}
-		writeJSON(w, 200, map[string]string{"audio_base64": entry.audio.Base64, "mime_type": entry.audio.MIME, "text": text})
+		writeJSON(w, 200, map[string]string{"audio_base64": entry.audio.Base64, "mime_type": entry.audio.MIME, "text": entry.text})
 	}
+}
+
+func (samples *speechSamples) cachedGreeting(text, style string, rate float64, language string) (voice.Audio, string, bool) {
+	key := style + ":" + language + ":" + strconv.FormatFloat(rate, 'f', 2, 64)
+	if audio, found := samples.files.load(key, text); found {
+		return audio, text, true
+	}
+	// Existing public introductions are already real spoken greetings. Reuse
+	// those fixed phrases so tapping a character avoids another provider call.
+	if language == "en-NG" || language == "en-GB" {
+		words := previewWords[style]
+		if audio, found := samples.files.load(key, words); found {
+			return audio, words, true
+		}
+	}
+	if rate == 1 {
+		locale := language
+		if locale == "fr-FR" {
+			locale = "fr"
+		}
+		if words, valid := welcomeWords[locale]; valid {
+			if audio, found := samples.files.load(key, words); found {
+				return audio, words, true
+			}
+		}
+	}
+	return voice.Audio{}, "", false
 }
 
 func (samples *speechSamples) generate(entry *speechSample, text, style string, rate float64, language string) {
@@ -166,7 +230,11 @@ func (samples *speechSamples) generate(entry *speechSample, text, style string, 
 		entry.err = ctx.Err()
 		return
 	}
-	entry.audio, entry.err = samples.speech.Synthesise(ctx, text, style, rate, language)
+	if fast, ok := samples.speech.(LiveSpeechSynthesiser); ok {
+		entry.audio, entry.err = fast.SynthesiseLive(ctx, text, style, rate, language)
+	} else {
+		entry.audio, entry.err = samples.speech.Synthesise(ctx, text, style, rate, language)
+	}
 	if entry.err == nil {
 		if err := samples.files.save(key, text, entry.audio); err != nil && samples.logger != nil {
 			samples.logger.Warn("public voice sample cache write failed")

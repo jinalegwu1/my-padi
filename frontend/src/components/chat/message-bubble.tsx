@@ -1,23 +1,32 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Image } from 'expo-image';
 import { memo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { PadiAvatar } from '@/components/padi-avatar';
 import { MarkdownMessage } from '@/components/chat/markdown-message';
 import { fonts, radius, spacing, useColors, useType } from '@/constants/theme';
 import { VISUALS } from '@/data/visuals';
 import { formatClock } from '@/lib/date';
-import type { Message, VisualBlock } from '@/types';
+import type { Message, ResponseRating, VisualBlock } from '@/types';
 
 type Props = {
   message: Message;
   /** Shown under a voice-session message. */
   voiceLabel?: string;
+  feedbackLabels?: Record<ResponseRating, string>;
+  feedbackSaving?: boolean;
+  onFeedback?: (messageID: string, rating: ResponseRating) => void;
 };
 
 /** One message in the conversation. PADI on the start side, the user on the end side. */
-export const MessageBubble = memo(function MessageBubble({ message, voiceLabel }: Props) {
+export const MessageBubble = memo(function MessageBubble({
+  message,
+  voiceLabel,
+  feedbackLabels,
+  feedbackSaving = false,
+  onFeedback,
+}: Props) {
   const colors = useColors();
   const type = useType();
   const isUser = message.role === 'user';
@@ -85,6 +94,41 @@ export const MessageBubble = memo(function MessageBubble({ message, voiceLabel }
             {formatClock(message.createdAt)}
           </Text>
         </View>
+        {!isUser && message.backendChat && feedbackLabels && onFeedback ? (
+          <View style={styles.feedbackRow} accessibilityLabel="Rate PADI's reply">
+            {([
+              ['helpful', 'thumbs-up-outline'],
+              ['not_helpful', 'thumbs-down-outline'],
+              ['liked_humour', 'happy-outline'],
+              ['unwanted_humour', 'alert-circle-outline'],
+            ] as const).map(([rating, icon]) => (
+              <Pressable
+                key={rating}
+                accessibilityRole="button"
+                accessibilityLabel={feedbackLabels[rating]}
+                accessibilityState={{ selected: message.responseFeedback === rating, disabled: feedbackSaving }}
+                disabled={feedbackSaving}
+                onPress={() => onFeedback(message.id, rating)}
+                style={({ pressed }) => [
+                  styles.feedbackButton,
+                  {
+                    borderColor: message.responseFeedback === rating ? colors.primary : colors.border,
+                    backgroundColor: message.responseFeedback === rating ? colors.primarySoft : 'transparent',
+                    opacity: feedbackSaving ? 0.5 : pressed ? 0.7 : 1,
+                  },
+                ]}>
+                <Ionicons
+                  name={icon}
+                  size={13}
+                  color={message.responseFeedback === rating ? colors.primary : colors.muted}
+                />
+                <Text style={[styles.feedbackText, { color: colors.textSecondary, fontSize: type.micro }]}>
+                  {feedbackLabels[rating]}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -263,6 +307,17 @@ const styles = StyleSheet.create({
   metaEnd: { justifyContent: 'flex-end', paddingEnd: spacing.xs },
   metaText: { fontFamily: fonts.medium },
   voiceTag: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  feedbackRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, paddingStart: spacing.xs },
+  feedbackButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    minHeight: 30,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm,
+  },
+  feedbackText: { fontFamily: fonts.medium },
   visualCard: {
     borderRadius: radius.lg,
     borderWidth: StyleSheet.hairlineWidth,

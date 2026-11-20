@@ -31,7 +31,7 @@ test('hands-free voice automatically responds after speech ends and keeps listen
 
 test('starting to speak interrupts playback and records only fully delivered speech',async()=>{
   const playing=deferred();let stopped=false;
-  const f=fixture({speak:async (_text,signal,start,completed)=>{start();completed('Hello!');signal.addEventListener('abort',()=>{stopped=true;playing.resolve();},{once:true});await playing.promise;}});
+  const f=fixture({speak:async (_text,signal,start,completed)=>{start();completed('Hello!');start();signal.addEventListener('abort',()=>{stopped=true;playing.resolve();},{once:true});await playing.promise;}});
   await f.session.start();f.voice();f.quiet();await tick();assert.equal(f.snapshot.phase,'speaking');
   f.voice();await tick();assert.equal(stopped,true);assert.equal(f.snapshot.phase,'listening');
   assert.ok(f.delivered.some(([id,words,interrupted])=>id==='reply-1'&&words==='Hello!'&&interrupted));
@@ -67,4 +67,50 @@ test('expired transcription credentials stop the microphone and clear private ca
   const f=fixture({transcribe:async()=>{throw Object.assign(new Error('Expired'),{status:401});}});
   await f.session.start();f.voice();f.quiet();await tick();
   assert.equal(f.snapshot.connected,false);assert.equal(f.snapshot.userText,undefined);assert.ok(f.calls.includes('closed'));
+});
+
+test('connecting plays a greeting first and resumes without repeating it',async()=>{
+  let greetings=0;
+  const f=fixture({greet:async (_signal,text,start)=>{greetings++;text('Hey! How are you?');start();}});
+  await f.session.start();await tick();
+  assert.equal(greetings,1);assert.equal(f.snapshot.padiText,'Hey! How are you?');
+  assert.equal(f.snapshot.connected,true);assert.equal(f.snapshot.phase,'listening');
+  assert.equal(f.calls.some(x=>Array.isArray(x)&&x[0]==='chat'),false,'Greeting must not invent user input');
+  await f.session.cancel();await f.session.start({greet:false});await tick();
+  assert.equal(greetings,1);await f.session.cancel();
+});
+
+test('speaking interrupts the opening greeting and receives a real reply',async()=>{
+  let interrupted=false;
+  const greeting=deferred();
+  const f=fixture({greet:async (signal,text,start)=>{
+    text('How are you?');start();
+    signal.addEventListener('abort',()=>{interrupted=true;greeting.resolve();},{once:true});
+    await greeting.promise;
+  }});
+  await f.session.start();await tick();assert.equal(f.snapshot.phase,'speaking');
+  f.voice();await tick();assert.equal(interrupted,true);
+  f.quiet();await tick();
+  assert.equal(f.snapshot.phase,'listening');
+  assert.equal(f.calls.filter(x=>Array.isArray(x)&&x[0]==='chat').length,1);
+  await f.session.cancel();
+});
+
+test('a late greeting cannot play after ending or changing accounts',async()=>{
+  const ready=deferred();
+  const f=fixture({greet:async (_signal,text,start)=>{await ready.promise;text('Late greeting');start();}});
+  await f.session.start();await tick();await f.session.cancel(null,true);
+  ready.resolve();await tick();assert.equal(f.snapshot.connected,false);
+  assert.equal(f.snapshot.padiText,'');assert.equal(f.snapshot.phase,'idle');
+});
+
+test('touching the active portrait speaks hello again without starting another microphone',async()=>{
+  let greetings=0;
+  const f=fixture({greet:async(_signal,text,start)=>{greetings++;text('Hi! Welcome back.');start();}});
+  await f.session.start();await tick();
+  await f.session.reactToTouch();await tick();
+  assert.equal(greetings,2);
+  assert.equal(f.calls.filter(value=>value==='microphone').length,1);
+  assert.equal(f.snapshot.connected,true);assert.equal(f.snapshot.phase,'listening');
+  await f.session.cancel();
 });

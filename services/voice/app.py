@@ -30,12 +30,17 @@ import webrtcvad
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LEGACY_MODEL = "gemini-3.1-flash-tts-preview"
+FALLBACK_VOICE_MODEL = "gemini-2.5-flash-preview-tts"
+LEGACY_MODELS = frozenset((LEGACY_MODEL, FALLBACK_VOICE_MODEL))
 NATURAL_MODEL = "gemini-3.8-flash-tts"
 NATURAL_MODELS = frozenset((NATURAL_MODEL, "gemini-3.8-flash-lite-tts"))
 MODEL = os.environ.get("PADI_VOICE_MODEL", LEGACY_MODEL)
+FALLBACK_MODEL = os.environ.get("PADI_VOICE_FALLBACK_MODEL", FALLBACK_VOICE_MODEL if MODEL != FALLBACK_VOICE_MODEL else "")
 DEFAULT_VOICE_ID = os.environ.get("PADI_VOICE_DEFAULT_ID", "")
 MAX_AUDIO_BYTES = 8 * 1024 * 1024
 MAX_TEXT_BYTES = 8192
+FAST_MODEL = "canopylabs/orpheus-v1-english"
+GROQ_VOICES = {"baby":"troy", "ada":"hannah", "chidi":"autumn", "zainab":"diana", "tunde":"austin", "amara":"daniel"}
 VOICE_STYLES = {
     # Keep the stored default ID so existing preferences continue to work.
     "baby": ("Orus", "a full, resonant adult male voice, confident, charismatic and warm"),
@@ -48,7 +53,7 @@ VOICE_STYLES = {
 LANGUAGE_DELIVERY = {
     "en-NG": "Speak English with a natural Nigerian English accent and everyday Nigerian cadence.",
     "pcm-NG": "Speak the provided Nigerian Pidgin with natural Naija pronunciation, rhythm and emphasis.",
-    "en-GB": "Use natural standard English pronunciation and conversational rhythm.",
+    "en-GB": "Use natural English pronunciation and conversational rhythm.",
     "fr-FR": "Use natural French pronunciation and conversational rhythm.",
     "pt-BR": "Use natural Brazilian Portuguese pronunciation and conversational rhythm.",
     "es-ES": "Use natural Spanish pronunciation and conversational rhythm.",
@@ -64,15 +69,22 @@ LANGUAGE_DELIVERY = {
 
 
 class SpeechError(Exception):
-    def __init__(self, status: int, code: str):
+    def __init__(self, status: int, code: str, retry_after_seconds: int = 0):
         super().__init__(code)
         self.status = status
         self.code = code
+        self.retry_after_seconds = retry_after_seconds
 
 
 def speech_payload(text: str, style: str, rate: float, language: str = "en-NG", model: str = MODEL, default_voice_id: str = "") -> dict:
     voice, delivery = VOICE_STYLES[style]
     pace = "comfortable" if 0.95 <= rate <= 1.05 else "slightly slower" if rate < 0.95 else "slightly quicker"
+    language_guard = (
+        "Speak in English. Do not translate the transcript or add words in another language. "
+        "Keep names and explicitly quoted foreign words as written. "
+        if language in ("en-NG", "en-GB") else
+        "Stay in the selected language. Do not translate the transcript or switch languages on your own. "
+    )
     if model in NATURAL_MODELS:
         if style == "baby":
             voice = default_voice_id or voice
@@ -83,7 +95,7 @@ def speech_payload(text: str, style: str, rate: float, language: str = "en-NG", 
             "contents": [{"parts": [{
                 "text": text,
                 "speech_metadata": {"style": (
-                    f"{delivery}. {LANGUAGE_DELIVERY[language]} "
+                    f"{delivery}. {LANGUAGE_DELIVERY[language]} {language_guard}"
                     f"{pace.capitalize()} conversational pace, connected phrasing and naturally varied emphasis. "
                     "Match the emotional tone of the words."
                 )},
@@ -93,14 +105,14 @@ def speech_payload(text: str, style: str, rate: float, language: str = "en-NG", 
                 "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}},
             },
         }
-    if model != LEGACY_MODEL or default_voice_id:
+    if model not in LEGACY_MODELS or default_voice_id:
         raise SpeechError(400, "invalid_speech_configuration")
     instructions = (
         "AUDIO PROFILE: PADI, an original personal companion.\n"
         f"Voice character: {delivery}. Keep this voice's normal pitch.\n"
         "SCENE: A friendly, spontaneous conversation with one person, close and comfortable.\n"
         "DIRECTOR'S NOTES:\n"
-        f"{LANGUAGE_DELIVERY[language]} Follow any language switches in the actual words; do not translate them. "
+        f"{LANGUAGE_DELIVERY[language]} {language_guard}"
         f"Use a {pace} conversational pace. Connect words into flowing phrases rather than pronouncing "
         "each word separately. Vary pitch, emphasis and timing with the meaning. Give important words "
         "clear, confident emphasis; let sentence endings settle naturally. Use brief, purposeful pauses "
@@ -171,10 +183,10 @@ def decode_audio(result: dict) -> dict:
     }
 
 
-def synthesise(key: str, text: str, style: str, rate: float, language: str = "en-NG") -> dict:
+def synthesise(key: str, text: str, style: str, rate: float, language: str = "en-NG", model: str = MODEL) -> dict:
     request = urllib.request.Request(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent",
-        data=json.dumps(speech_payload(text, style, rate, language, MODEL, DEFAULT_VOICE_ID)).encode(),
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        data=json.dumps(speech_payload(text, style, rate, language, model, DEFAULT_VOICE_ID if model in NATURAL_MODELS else "")).encode(),
         headers={"Content-Type": "application/json", "x-goog-api-key": key, "User-Agent": "MyPADI-Voice/1.0"},
         method="POST",
     )
@@ -185,7 +197,18 @@ def synthesise(key: str, text: str, style: str, rate: float, language: str = "en
                 raise SpeechError(502, "invalid_speech_audio")
         return decode_audio(json.loads(data))
     except urllib.error.HTTPError as error:
-        raise SpeechError(429 if error.code == 429 else 502, "speech_rate_limited" if error.code == 429 else "speech_unavailable") from None
+        retry_after = 60
+        if error.code == 429:
+            try:
+                details = json.loads(error.read(64 * 1024)).get("error", {}).get("details", [])
+                delays = [item.get("retryDelay", "") for item in details if isinstance(item, dict)]
+                for delay in delays:
+                    if isinstance(delay, str) and re.fullmatch(r"\d+(?:\.\d+)?s", delay):
+                        retry_after = math.ceil(max(1, min(86400, float(delay[:-1]))))
+                        break
+            except (ValueError, TypeError, AttributeError):
+                pass
+        raise SpeechError(429 if error.code == 429 else 502, "speech_rate_limited" if error.code == 429 else "speech_unavailable", retry_after if error.code == 429 else 0) from None
     except (urllib.error.URLError, TimeoutError):
         raise SpeechError(504, "speech_timeout") from None
     except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
@@ -242,11 +265,95 @@ def prepare_audio(audio: bytes) -> bytes:
     return out.getvalue()
 
 
-def recognise(key: str, audio: bytes) -> dict:
+def normalise_speech_wave(raw: bytes) -> dict:
+    """Keep generated speech intact while normalizing the provider WAV format."""
+    if len(raw) > MAX_AUDIO_BYTES:
+        raise SpeechError(502, "invalid_speech_audio")
+    # Groq delivers a completed streaming WAV whose RIFF/data lengths are
+    # 0xffffffff (unknown until EOF). Python's wave reader treats that as an
+    # enormous frame count. Repair only this explicit streaming format after
+    # the bounded HTTP response completes; ordinary truncated WAVs still fail.
+    if len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WAVE" and raw[4:8] == b"\xff" * 4:
+        repaired = bytearray(raw)
+        offset = 12
+        while offset + 8 <= len(raw):
+            length = int.from_bytes(raw[offset + 4:offset + 8], "little")
+            if raw[offset:offset + 4] == b"data" and length == 0xffffffff:
+                available = len(raw) - offset - 8
+                if not available or available % 2:
+                    raise SpeechError(502, "invalid_speech_audio")
+                repaired[offset + 4:offset + 8] = available.to_bytes(4, "little")
+                repaired[4:8] = (len(raw) - 8).to_bytes(4, "little")
+                raw = bytes(repaired)
+                break
+            if length > len(raw) - offset - 8:
+                raise SpeechError(502, "invalid_speech_audio")
+            offset += 8 + length + length % 2
+        else:
+            raise SpeechError(502, "invalid_speech_audio")
+    try:
+        with wave.open(io.BytesIO(raw), "rb") as wav:
+            rate = wav.getframerate()
+            if wav.getnchannels() != 1 or wav.getsampwidth() != 2 or wav.getcomptype() != "NONE" or not 8000 <= rate <= 96000 or wav.getnframes() * 2 > MAX_AUDIO_BYTES - 44:
+                raise SpeechError(502, "invalid_speech_audio")
+            frames = wav.getnframes()
+            pcm = wav.readframes(frames)
+            if not pcm or len(pcm) != frames * 2:
+                raise SpeechError(502, "invalid_speech_audio")
+    except (wave.Error, EOFError):
+        raise SpeechError(502, "invalid_speech_audio") from None
+    if rate != 24000:
+        samples = array("h")
+        samples.frombytes(pcm)
+        if sys.byteorder != "little": samples.byteswap()
+        count = int(len(samples) * 24000 / rate)
+        if count * 2 > MAX_AUDIO_BYTES - 44: raise SpeechError(502, "invalid_speech_audio")
+        converted = array("h")
+        for index in range(count):
+            position = index * rate / 24000
+            start, fraction = int(position), position - int(position)
+            converted.append(round(samples[start] * (1 - fraction) + samples[min(start + 1, len(samples) - 1)] * fraction))
+        if sys.byteorder != "little": converted.byteswap()
+        pcm = converted.tobytes()
+    return decode_audio({"candidates":[{"content":{"parts":[{"inlineData":{
+        "mimeType":"audio/l16;rate=24000", "data":base64.b64encode(pcm).decode("ascii")
+    }}]}}]})
+
+
+def synthesise_groq(key: str, text: str, style: str) -> dict:
+    request = urllib.request.Request("https://api.groq.com/openai/v1/audio/speech",
+        data=json.dumps({"model":FAST_MODEL, "input":text, "voice":GROQ_VOICES[style], "response_format":"wav"}).encode(),
+        headers={"Authorization":"Bearer " + key, "Content-Type":"application/json", "User-Agent":"MyPADI-Voice/1.0"}, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            raw = response.read(MAX_AUDIO_BYTES + 1)
+        if len(raw) > MAX_AUDIO_BYTES: raise SpeechError(502, "invalid_speech_audio")
+        return normalise_speech_wave(raw)
+    except urllib.error.HTTPError as error:
+        code = "speech_unavailable"
+        if error.code == 429: code = "speech_rate_limited"
+        elif error.code in (400, 403):
+            try:
+                detail = json.loads(error.read(64 * 1024)).get("error", {}).get("code")
+                if detail == "model_terms_required": code = "speech_terms_required"
+            except (ValueError, TypeError, AttributeError): pass
+        raise SpeechError(429 if error.code == 429 else 400 if code == "speech_terms_required" else 502, code, 60 if error.code == 429 else 0) from None
+    except (urllib.error.URLError, TimeoutError):
+        raise SpeechError(504, "speech_timeout") from None
+
+
+def recognise(key: str, audio: bytes, language: str = "en", prompt: str = "") -> dict:
     audio = prepare_audio(audio)
     boundary = "padi-" + uuid.uuid4().hex
     body = bytearray()
-    for name, value in {"model": "whisper-large-v3-turbo", "response_format": "verbose_json", "temperature": "0"}.items():
+    fields = {"model": "whisper-large-v3-turbo", "response_format": "verbose_json", "temperature": "0"}
+    if language:
+        if language not in ("en", "fr", "pt", "es", "ar", "sw", "ha", "yo", "am", "hi", "zh"):
+            raise SpeechError(400, "invalid_language")
+        fields["language"] = language
+    if prompt:
+        fields["prompt"] = prompt
+    for name, value in fields.items():
         body.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
     body.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="speech.wav"\r\nContent-Type: audio/wav\r\n\r\n'.encode())
     body.extend(audio); body.extend(f'\r\n--{boundary}--\r\n'.encode())
@@ -329,10 +436,23 @@ def make_handler(token: str, key: str, generate=synthesise, groq_key="", transcr
                     audio=files[0].get_payload(decode=True)
                     if not isinstance(audio,bytes) or len(audio)>MAX_AUDIO_BYTES:
                         raise SpeechError(400,"invalid_audio")
+                    def field(name, default):
+                        values = [part for part in parts if part.get_param("name", header="content-disposition") == name]
+                        if len(values) > 1:
+                            raise SpeechError(400,"invalid_audio")
+                        if not values:
+                            return default
+                        value = values[0].get_payload(decode=True)
+                        if not isinstance(value,bytes) or len(value)>512:
+                            raise SpeechError(400,"invalid_audio")
+                        return value.decode("utf8")
+                    language, prompt = field("language", "en"), field("prompt", "")
+                    if language not in ("", "en", "fr", "pt", "es", "ar", "sw", "ha", "yo", "am", "hi", "zh"):
+                        raise SpeechError(400,"invalid_language")
                     if not slots.acquire(blocking=False):
                         raise SpeechError(429,"speech_busy")
                     try:
-                        self.respond(200,transcribe(groq_key,audio))
+                        self.respond(200,transcribe(groq_key,audio,language=language,prompt=prompt))
                     finally:
                         slots.release()
                 except SpeechError as error:
@@ -348,15 +468,20 @@ def make_handler(token: str, key: str, generate=synthesise, groq_key="", transcr
                 if len(raw) != length:
                     raise ValueError()
                 body = json.loads(raw)
-                if not isinstance(body, dict) or set(body) - {"text", "style", "rate", "language"}:
+                if not isinstance(body, dict) or set(body) - {"text", "style", "rate", "language", "model"}:
                     raise ValueError()
                 text, style, rate = body.get("text"), body.get("style", "ada"), body.get("rate", 1.0)
                 language = body.get("language", "en-NG")
+                model = body.get("model", MODEL)
+                if not isinstance(model, str) or model not in (MODEL, FALLBACK_MODEL, FAST_MODEL) or not model:
+                    raise ValueError()
                 if not isinstance(text, str) or not text.strip() or len(text.encode()) > MAX_TEXT_BYTES:
                     raise ValueError()
                 if not isinstance(style, str) or style not in VOICE_STYLES or type(rate) not in (int, float) or not 0.5 <= rate <= 1.5:
                     raise ValueError()
                 if not isinstance(language, str) or language not in LANGUAGE_DELIVERY:
+                    raise ValueError()
+                if model == FAST_MODEL and (rate != 1 or language not in ("en-NG", "en-GB", "pcm-NG")):
                     raise ValueError()
             except (ValueError, TypeError, UnicodeError, TimeoutError):
                 self.respond(400, {"error": "invalid_request"})
@@ -365,9 +490,13 @@ def make_handler(token: str, key: str, generate=synthesise, groq_key="", transcr
                 self.respond(429, {"error": "speech_busy"})
                 return
             try:
-                self.respond(200, generate(key, text, style, rate, language))
+                if model == FAST_MODEL:
+                    result = synthesise_groq(groq_key, text, style)
+                else:
+                    result = generate(key, text, style, rate, language) if model == MODEL else generate(key, text, style, rate, language, model=model)
+                self.respond(200, result)
             except SpeechError as error:
-                self.respond(error.status, {"error": error.code})
+                self.respond(error.status, {"error": error.code, "retry_after_seconds": error.retry_after_seconds})
             except Exception:
                 self.respond(502, {"error": "speech_unavailable"})
             finally:
@@ -377,8 +506,10 @@ def make_handler(token: str, key: str, generate=synthesise, groq_key="", transcr
 
 
 def main():
-    if MODEL != LEGACY_MODEL and MODEL not in NATURAL_MODELS:
+    if MODEL not in LEGACY_MODELS and MODEL not in NATURAL_MODELS:
         raise SystemExit("Choose a verified, supported PADI voice model.")
+    if FALLBACK_MODEL and FALLBACK_MODEL not in LEGACY_MODELS and FALLBACK_MODEL not in NATURAL_MODELS:
+        raise SystemExit("Choose a supported PADI fallback voice model.")
     if DEFAULT_VOICE_ID and (MODEL not in NATURAL_MODELS or re.fullmatch(r"voice_[A-Za-z0-9_-]+", DEFAULT_VOICE_ID) is None):
         raise SystemExit("The original PADI voice profile requires the newer speech model and a valid voice ID.")
     token = os.environ.get("PADI_VOICE_SERVICE_TOKEN", "")

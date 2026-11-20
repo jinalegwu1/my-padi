@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 
 import { useChat } from '@/hooks/use-chat';
@@ -10,6 +10,8 @@ import { audioUpload } from '@/lib/voice-audio';
 import { speakNaturally } from '@/lib/natural-speech';
 import type { VoiceSnapshot } from '@/lib/voice-session';
 import { HandsfreeSession } from '@/lib/handsfree-session';
+import { greetLive } from '@/lib/live-greeting';
+import { unlockVoicePlayback } from '@/lib/voice-playback';
 
 /** Coordinates the full voice turn and exposes one snapshot to the voice screen. */
 export function useVoiceSession() {
@@ -17,7 +19,7 @@ export function useVoiceSession() {
   const { preferences } = usePreferences();
   const current = useRef({ chat, preferences });
   current.current = { chat, preferences };
-  const [snapshot, setSnapshot] = useState<VoiceSnapshot & { connected: boolean }>({ phase: 'idle', connected: false, padiText: 'Start a conversation. I’ll listen and reply when you finish speaking.', error: null });
+  const [snapshot, setSnapshot] = useState<VoiceSnapshot & { connected: boolean }>({ phase: 'idle', connected: false, padiText: '', error: null });
   const latestSnapshot = useRef(snapshot);
   latestSnapshot.current = snapshot;
   const [ready, setReady] = useState(false);
@@ -29,18 +31,27 @@ export function useVoiceSession() {
     capture: (frame, interrupted) => new VoiceCapture(frame, interrupted),
     transcribe: async (token, bytes, signal) => {
       const upload = audioUpload(bytes);
-      try { return await transcribeAudio(token, upload.form, signal); }
+      try { return await transcribeAudio(token, upload.form, signal, current.current.preferences.languageCode); }
       finally { upload.dispose(); }
     },
-    send: (text, accountID, signal) => current.current.chat.sendVoice(text, accountID, signal),
+    send: (text, accountID, signal) => current.current.chat.sendVoice(text, accountID, signal, current.current.preferences.languageCode),
     speak: (text, signal, onStart, completed) => {
       const p = current.current.preferences;
       return speakNaturally(text, p.voiceId, p.voiceRate, signal, onStart, completed, p.languageCode);
+    },
+    greet: (signal, onText, onStart) => {
+      const p = current.current.preferences;
+      return greetLive(p.voiceId, p.languageCode, p.voiceRate, signal, onText, onStart);
     },
     delivered: (id, words, interrupted, accountID) => current.current.chat.delivered(id, words, interrupted, accountID),
     changed: next => { if (mounted.current) setSnapshot(next); },
   });
   const session = sessionRef.current;
+  const connect = useCallback((greet = true) => {
+    // Start unlocking synchronously in the tap handler while capture prepares.
+    void unlockVoicePlayback().catch(error => { void session.cancel(error instanceof Error ? error.message : 'Tap to chat again to enable sound.'); });
+    void session.start({ greet });
+  }, [session]);
 
   useEffect(() => {
     mounted.current = true;
@@ -51,7 +62,7 @@ export function useVoiceSession() {
       if (!config.enabled || !config.natural_speech) setConfigurationError('Voice conversations are not available in this build yet.');
     }).catch(error => { if (!controller.signal.aborted) setConfigurationError(error instanceof Error ? error.message : 'Voice settings could not load.'); });
     const unsubscribe = subscribeSession(() => { void session.cancel('Your account changed. Start a new voice turn after signing in.', true); });
-    const background = () => { void session.cancel('Voice paused while the app was away. Tap the microphone to continue.'); };
+    const background = () => { void session.cancel('Chat paused while the app was away. Tap Resume chat to continue.'); };
     // Native permission sheets can briefly make the app inactive.
     const subscription = AppState.addEventListener('change', state => {
       if (state === 'background' || (state === 'inactive' && latestSnapshot.current.phase !== 'preparing')) background();
@@ -68,5 +79,5 @@ export function useVoiceSession() {
     };
   }, [session]);
 
-  return { ...snapshot, ready: ready && chat.status === 'ready', configurationError, session, chatError: chat.sendError, chatBusy: chat.isThinking };
+  return { ...snapshot, ready: ready && chat.status === 'ready', configurationError, session, connect, chatError: chat.sendError, chatBusy: chat.isThinking };
 }

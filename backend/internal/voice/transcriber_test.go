@@ -89,8 +89,8 @@ func TestTranscriptionProviderContractAndFailures(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer r.MultipartForm.RemoveAll()
-				if r.FormValue("model") != Model || r.FormValue("response_format") != "verbose_json" || r.FormValue("language") != "" {
-					t.Error("wrong model or forced translation")
+				if r.FormValue("model") != Model || r.FormValue("response_format") != "verbose_json" || r.FormValue("language") != "en" {
+					t.Error("wrong model or missing selected English language")
 				}
 				file, header, err := r.FormFile("file")
 				if err != nil {
@@ -147,5 +147,27 @@ func TestTranscriptionQuotaAndCancellationPreventProviderCalls(t *testing.T) {
 	cancel()
 	if _, err := service.Transcribe(ctx, []byte("RIFF0000WAVEdata")); !errors.Is(err, context.Canceled) {
 		t.Fatal("cancellation ignored")
+	}
+}
+
+func TestTranscriptionUsesSelectedProviderLanguageWithoutTranslation(t *testing.T) {
+	var selected string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(MaxAudioBytes); err != nil {
+			t.Fatal(err)
+		}
+		defer r.MultipartForm.RemoveAll()
+		selected = r.FormValue("language")
+		if r.FormValue("response_format") != "verbose_json" {
+			t.Error("Transcription was changed to translation")
+		}
+		io.WriteString(w, `{"text":"Hello","duration":1}`)
+	}))
+	defer server.Close()
+	service := &Transcriber{endpoint: server.URL, client: server.Client(), limiter: &testLimiter{}, active: make(chan struct{}, 1)}
+	for _, test := range []struct{ locale, language string }{{"en-NG", "en"}, {"en-GB", "en"}, {"fr-FR", "fr"}, {"pcm-NG", "en"}} {
+		if _, err := service.TranscribeLanguage(context.Background(), []byte("RIFF0000WAVEdata"), test.locale); err != nil || selected != test.language {
+			t.Fatal("Language was auto-detected instead of using the selected language")
+		}
 	}
 }

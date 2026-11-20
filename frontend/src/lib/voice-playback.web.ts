@@ -1,17 +1,70 @@
-export async function playVoice(encoded:string,signal:AbortSignal,onStart:()=>void):Promise<void> {
-  const bytes=Uint8Array.from(atob(encoded),character=>character.charCodeAt(0));
-  const url=URL.createObjectURL(new Blob([bytes],{type:'audio/wav'}));
-  const audio=new Audio(url);
+import { portraitSpeech, speechEnvelope } from '@/lib/portrait-speech';
+
+let output: AudioContext | null = null;
+
+/** Unlock sound from the actual tap, before navigation or network requests. */
+export async function unlockVoicePlayback(): Promise<void> {
+  output ??= new AudioContext();
+  if (output.state === 'closed') output = new AudioContext();
+  if (output.state === 'running') return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await new Promise<void>((resolve,reject)=>{
-      const stop=()=>{ audio.pause(); resolve(); };
-      const finish=()=>{ signal.removeEventListener('abort',stop); resolve(); };
-      audio.onended=finish;
-      audio.onerror=()=>{ signal.removeEventListener('abort',stop); reject(new Error('Voice playback failed. Your reply is available in the transcript.')); };
-      audio.onplaying=()=>{ if(!signal.aborted) onStart(); };
-      signal.addEventListener('abort',stop,{once:true});
-      if(signal.aborted) { stop(); return; }
-      void audio.play().catch(()=>{ signal.removeEventListener('abort',stop); reject(new Error('Playback was blocked. Tap Start conversation again to enable sound.')); });
+    await Promise.race([
+      output.resume(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('Tap to chat again to enable sound in your browser.')), 1500);
+      }),
+    ]);
+    if ((output.state as AudioContextState) !== 'running') throw new Error('Tap to chat again to enable sound in your browser.');
+  } finally { if (timer) clearTimeout(timer); }
+}
+
+/** One unlocked output context keeps replies audible after async requests. */
+export async function playVoice(encoded: string, signal: AbortSignal, onStart: () => void, voiceId?: string): Promise<void> {
+  if (signal.aborted) return;
+  await unlockVoicePlayback();
+  const context = output!;
+  const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+  let buffer: AudioBuffer;
+  try { buffer = await context.decodeAudioData(bytes.buffer); }
+  catch { throw new Error('Voice playback failed. Your reply is available in the transcript.'); }
+  if (signal.aborted) return;
+  const source = context.createBufferSource();
+  source.buffer = buffer;
+  source.connect(context.destination);
+  const envelope = voiceId ? speechEnvelope(encoded) : null;
+  let face: ReturnType<typeof portraitSpeech> | undefined;
+  let progress: ReturnType<typeof setInterval> | undefined;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', stop);
+        resolve();
+      };
+      const stop = () => { try { source.stop(); } finally { finish(); } };
+      source.onended = finish;
+      signal.addEventListener('abort', stop, { once: true });
+      if (signal.aborted) { finish(); return; }
+      try {
+        source.start();
+        if (voiceId && envelope) {
+          face = portraitSpeech(voiceId);
+          const began = context.currentTime;
+          progress = setInterval(() => face?.report(envelope.levelAt(context.currentTime - began)), 40);
+        }
+        onStart();
+      }
+      catch {
+        signal.removeEventListener('abort', stop);
+        reject(new Error('PADI’s audio could not start. Tap to chat again to enable sound.'));
+      }
     });
-  } finally { audio.pause(); audio.src=''; URL.revokeObjectURL(url); }
+  } finally {
+    if (progress) clearInterval(progress);
+    face?.stop();
+    source.onended = null; source.disconnect();
+  }
 }

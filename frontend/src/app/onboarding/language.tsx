@@ -33,7 +33,7 @@ export default function LanguageStep() {
       stepLabel={t('onboarding.step', { current: 2, total: 3 })}
       title={t('onboarding.language.title')}
       subtitle={t('onboarding.language.subtitle')}
-      onBack={() => router.back()}
+      onBack={() => { if (router.canGoBack()) router.back(); else router.replace('/onboarding/welcome'); }}
       backLabel={t('onboarding.back')}
       footer={<Button title={t('onboarding.continue')} onPress={confirm} icon="arrow-forward" iconPosition="end" />}>
       <LanguagePicker

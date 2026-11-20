@@ -45,7 +45,7 @@ export class VoiceActivity {
     }
     this.frames.push(pcm); this.durationMs += ms;
     this.quietMs = voiced ? 0 : this.quietMs+ms;
-    if (this.quietMs >= 1100 || this.durationMs >= Math.min(55_000,7*1024*1024/(2*this.rate)*1000)) {
+    if (this.quietMs >= 750 || this.durationMs >= Math.min(55_000,7*1024*1024/(2*this.rate)*1000)) {
       const audio = new Uint8Array(this.frames.reduce((size,buffer)=>size+buffer.length,0));
       let offset=0; this.frames.forEach(buffer=>{ audio.set(buffer,offset); offset+=buffer.length; });
       const rate=this.rate;

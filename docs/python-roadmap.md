@@ -17,10 +17,12 @@ Python's approved scope consists of these three engines:
 | Voice and Audio Intelligence Engine | Process and convert audio; detect voice activity; reduce noise; recognise speech; process transcripts; integrate specialist speech and voice models; analyse voice signals. | Testing |
 | AI Quality and Evaluation Engine | Compare AI models; test reasoning and accuracy; evaluate Nigerian English and Pidgin, PADI's personality and humour; measure response speed and cost; run quality regression checks after changes. | Planned |
 
-The current Voice and Audio Intelligence Engine lives in `services/voice`. The
-memory/context and quality/evaluation engines will be added
-as separate services when their feature requirements are agreed. They are not
-empty endpoints or simulated implementations in the current application.
+The current Voice and Audio Intelligence Engine lives in `services/voice`. Go
+also has a bounded model-by-model evaluation runner and PADI regression cases;
+the Python quality/evaluation service itself remains planned. The memory/context
+and quality/evaluation engines will be added as separate Python services when
+their feature requirements are agreed. They are not empty endpoints or
+simulated implementations in the current application.
 
 The existing verified personal-memory feature stays intact: Go/PostgreSQL
 currently stores approved facts and uses basic relevance selection. That is

@@ -129,7 +129,9 @@ func TestVoiceLiveTranscriptionAndChat(t *testing.T) {
 		}
 		return result.Text
 	}
+	transcriptionStart := time.Now()
 	text := transcribe(audio, 200)
+	transcriptionDuration := time.Since(transcriptionStart)
 	if !strings.Contains(strings.ToLower(text), "ask not what your country") {
 		t.Fatal("recognised speech did not match public fixture")
 	}
@@ -152,18 +154,22 @@ func TestVoiceLiveTranscriptionAndChat(t *testing.T) {
 	request := httptest.NewRequest("POST", "/v1/chat", bytes.NewReader(requestBody)).WithContext(ctx)
 	request.Header.Set("Authorization", "Bearer "+session.Token)
 	response := httptest.NewRecorder()
+	chatStart := time.Now()
 	router.ServeHTTP(response, request)
+	chatDuration := time.Since(chatStart)
 	var reply struct {
 		Reply string `json:"reply"`
 	}
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &reply) != nil || strings.TrimSpace(reply.Reply) == "" {
 		t.Fatal("recognised speech did not receive a real chat reply")
 	}
-	spokenBody, _ := json.Marshal(map[string]any{"text": reply.Reply, "style": "ada", "rate": 1})
+	spokenBody, _ := json.Marshal(map[string]any{"text": reply.Reply, "style": "ada", "rate": 1, "live": true})
 	spokenRequest := httptest.NewRequest("POST", "/v1/voice/speak", bytes.NewReader(spokenBody)).WithContext(ctx)
 	spokenRequest.Header.Set("Authorization", "Bearer "+session.Token)
 	spokenResponse := httptest.NewRecorder()
+	speechStart := time.Now()
 	router.ServeHTTP(spokenResponse, spokenRequest)
+	speechDuration := time.Since(speechStart)
 	var spoken struct {
 		AudioBase64 string `json:"audio_base64"`
 		MIME        string `json:"mime_type"`
@@ -180,4 +186,5 @@ func TestVoiceLiveTranscriptionAndChat(t *testing.T) {
 		t.Fatal("speech ledger missing or audio counted as text tokens")
 	}
 	t.Log("Public speech matched; silence rejected; authenticated AI reply and real PCM speech received; usage persisted.")
+	t.Logf("Voice stages: transcription %.2fs, chat %.2fs, speech %.2fs; total %.2fs.", transcriptionDuration.Seconds(), chatDuration.Seconds(), speechDuration.Seconds(), (transcriptionDuration + chatDuration + speechDuration).Seconds())
 }

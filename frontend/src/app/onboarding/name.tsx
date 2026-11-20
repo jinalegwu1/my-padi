@@ -44,7 +44,7 @@ export default function NameStep() {
       stepLabel={t('onboarding.step', { current: 4, total: 4 })}
       title={t('onboarding.name.title')}
       subtitle={t('onboarding.name.subtitle')}
-      onBack={() => router.back()}
+      onBack={() => { if (router.canGoBack()) router.back(); else router.replace('/onboarding/location'); }}
       backLabel={t('onboarding.back')}
       footer={
         <>

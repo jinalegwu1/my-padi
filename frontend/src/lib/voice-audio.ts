@@ -18,6 +18,9 @@ export function audioUpload(bytes: Uint8Array): { form: FormData; dispose(): voi
 export function speechSegments(text: string): string[] {
   const sentences=text.trim().match(/[\s\S]*?[.!?](?=\s|$)|[\s\S]+$/g)?.map(sentence=>sentence.trim()).filter(Boolean)??[];
   const segments:string[]=[];
+  // Start a long reply with its first complete sentence while the remaining
+  // passage is prefetched. Short conversational replies use one request.
+  if(text.length > 220 && sentences.length > 1) segments.push(sentences.shift()!);
   let current='';
   for(const sentence of sentences) {
     if(current && current.length+sentence.length>650) {segments.push(current);current='';}

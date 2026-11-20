@@ -29,6 +29,7 @@ function expressive(overrides = {}) {
     '@/lib/voice-audio': { speechSegments: text => [text] },
     '@/lib/spoken-text': { spokenText },
     '@/lib/standalone-speech': { playStandaloneSpeech: async () => {}, ...overrides.playback },
+    '@/lib/voice-playback': { unlockVoicePlayback: async () => {} },
     'expo-speech': { speak: () => assert.fail('PADI must not use device speech') },
   });
 }
@@ -80,4 +81,23 @@ test('unsigned personal text stays private while fixed introductions and preview
   assert.equal(await speech.speakPadiWelcome('ada', 'fr-FR', new AbortController().signal, () => {}), 'played');
   assert.equal(await speech.speakVoicePreview('tunde', 1.15, new AbortController().signal, () => {}), 'played');
   assert.deepEqual(requests.map(args => [args[0], args[1]]), [['welcome', 'ada'], ['preview', 'tunde']]);
+});
+
+test('long voice replies play their first sentence before the rest without losing words',()=>{
+  const {speechSegments}=loadTS('src/lib/voice-audio.ts',{'react-native':{Platform:{OS:'web'}},'expo-file-system':{}});
+  const first='Here is the answer.';
+  const text=first+' '+Array(12).fill('This is a further explanation.').join(' ');
+  const segments=speechSegments(text);
+  assert.equal(segments[0],first);assert.equal(segments.join(' '),text);
+  assert.equal(speechSegments('I’m doing well. How about you?').length,1);
+});
+
+test('touch greetings speak the actual cached words in the selected language and drive the chosen face',async()=>{
+  let fetched,spoken,displayed;
+  const speech=expressive({api:{fetchVoiceSample:async(...args)=>{fetched=args;return {audio_base64:'greeting',text:'Bonjour ! Bienvenue.',mime_type:'audio/wav'};}},
+    playback:{playStandaloneSpeech:async(...args)=>{spoken=args;args[2]();}}});
+  let started=false;
+  await speech.speakPortraitGreeting('ada','fr-FR',1,new AbortController().signal,()=>{started=true;},text=>{displayed=text;});
+  assert.deepEqual(fetched.slice(0,4),['call','ada','fr-FR',1]);
+  assert.equal(displayed,'Bonjour ! Bienvenue.');assert.equal(spoken[3],'ada');assert.equal(started,true);
 });

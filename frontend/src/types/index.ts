@@ -36,6 +36,7 @@ export type LanguageOption = {
 };
 
 export type MessageRole = 'user' | 'padi';
+export type ResponseRating = 'helpful' | 'not_helpful' | 'liked_humour' | 'unwanted_humour';
 
 export type VisualBlock =
   | {
@@ -83,6 +84,8 @@ export type Message = {
   backendUserID?: string;
   /** Consent/memory revision used for this exchange. */
   memoryRevision?: number;
+  /** User reaction saved for this authenticated PADI reply. */
+  responseFeedback?: ResponseRating;
   /** True while PADI's reply is still being "composed". */
   pending?: boolean;
 };
@@ -137,6 +140,30 @@ export type MemorySnapshot = {
   revision: number;
   items: MemoryItem[];
 };
+
+export type PersonalityPreferences = {
+  humour: 'off' | 'subtle' | 'occasional' | 'frequent';
+  humour_explicit: boolean;
+  tone: 'adaptive' | 'playful' | 'serious' | 'gentle' | 'direct';
+  learn_from_feedback: boolean;
+};
+
+export type PersonalityPreferencePatch = Partial<Pick<PersonalityPreferences, 'humour' | 'tone' | 'learn_from_feedback'>>;
+
+export type CheckInPreferences = {
+  morning_enabled: boolean;
+  morning_time: string;
+  afternoon_enabled: boolean;
+  afternoon_time: string;
+  evening_enabled: boolean;
+  evening_time: string;
+  timezone: string;
+  quiet_hours_enabled: boolean;
+  quiet_hours_start: string;
+  quiet_hours_end: string;
+};
+
+export type CheckInPreferencesPatch = Partial<CheckInPreferences>;
 
 export type Preferences = {
   onboarded: boolean;

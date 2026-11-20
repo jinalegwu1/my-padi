@@ -3,6 +3,7 @@ import { readSession, subscribeSession } from '@/lib/session';
 import { speechSegments } from '@/lib/voice-audio';
 import { spokenText } from '@/lib/spoken-text';
 import { playStandaloneSpeech } from '@/lib/standalone-speech';
+import { unlockVoicePlayback } from '@/lib/voice-playback';
 
 export type SpeechOutcome = 'played' | 'cancelled';
 let active: AbortController | null = null;
@@ -23,8 +24,10 @@ async function performSpeech(signal: AbortSignal, play: (signal: AbortSignal) =>
   const abort = () => controller.abort();
   signal.addEventListener('abort', abort, { once: true });
   const unsubscribe = subscribeSession(abort);
+  const unlocked = unlockVoicePlayback();
   if (signal.aborted) abort();
   try {
+    await unlocked;
     if (!controller.signal.aborted) await play(controller.signal);
     return controller.signal.aborted ? 'cancelled' : 'played';
   } catch (error) {
@@ -47,7 +50,7 @@ export function speakPadiReply(text: string, voiceId: string, rate: number, lang
     for (const passage of speechSegments(words)) {
       const audio = await synthesiseSpeech(session.token, passage, voiceId, rate, current, languageCode);
       if (current.aborted) return;
-      await playStandaloneSpeech(audio.audio_base64, current, onStart);
+      await playStandaloneSpeech(audio.audio_base64, current, onStart, voiceId);
       if (current.aborted) return;
     }
   });
@@ -57,14 +60,25 @@ export function speakPadiReply(text: string, voiceId: string, rate: number, lang
 export function speakPadiWelcome(voiceId: string, languageCode: string, signal: AbortSignal, onStart: () => void): Promise<SpeechOutcome> {
   return performSpeech(signal, async current => {
     const audio = await fetchVoiceSample('welcome', voiceId, languageCode, 1, current);
-    if (!current.aborted) await playStandaloneSpeech(audio.audio_base64, current, onStart);
+    if (!current.aborted) await playStandaloneSpeech(audio.audio_base64, current, onStart, voiceId);
   });
 }
 
-export function speakVoicePreview(voiceId: string, rate: number, signal: AbortSignal, onStart: () => void): Promise<SpeechOutcome> {
+export function speakVoicePreview(voiceId: string, rate: number, signal: AbortSignal, onStart: () => void, languageCode = 'en-NG', onText?: (text:string)=>void): Promise<SpeechOutcome> {
   return performSpeech(signal, async current => {
-    const audio = await fetchVoiceSample('preview', voiceId, 'en-NG', rate, current);
-    if (!current.aborted) await playStandaloneSpeech(audio.audio_base64, current, onStart);
+    const audio = await fetchVoiceSample('preview', voiceId, languageCode, rate, current);
+    if (!current.aborted && audio.text) onText?.(audio.text);
+    if (!current.aborted) await playStandaloneSpeech(audio.audio_base64, current, onStart, voiceId);
+  });
+}
+
+export function speakPortraitGreeting(voiceId:string,languageCode:string,rate:number,signal:AbortSignal,
+  onStart:()=>void,onText:(text:string)=>void):Promise<SpeechOutcome> {
+  return performSpeech(signal,async current=>{
+    const audio=await fetchVoiceSample('call',voiceId,languageCode,rate,current);
+    if(current.aborted)return;
+    onText(audio.text!);
+    await playStandaloneSpeech(audio.audio_base64,current,onStart,voiceId);
   });
 }
 

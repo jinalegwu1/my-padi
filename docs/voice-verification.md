@@ -150,6 +150,11 @@ Android echo-cancellation availability and quality depend on the device.
   earlier PCM response remains supported. Eight Python tests passed, including
   invalid/truncated WAV rejection and checks that directions remain outside
   spoken text. Launcher syntax and whitespace checks also passed.
+- An authenticated voice-service HTTP regression now carries an exact generated
+  reply through request validation, the real synthesis function, and the speech
+  payload builder; the external provider response is controlled in the test.
+  It confirms exact input text at the new model's outbound payload boundary,
+  not that a live provider acoustically speaks every word exactly as written.
 - Restarted the services and received HTTP 200 with real, valid speech from
   `/v1/voice/preview?style=baby&rate=1`. The connected short sample is at
   `/tmp/my-padi-original-nigerian-preview.wav`; the profile-design sample is at
@@ -286,3 +291,61 @@ Dedicated Nigerian voices, guaranteed local-language accuracy, wake words,
 voice-triggered phone actions, and the other Python engines remain planned.
 See [the Python roadmap](./python-roadmap.md). Calls/messages/emails require
 separate platform integrations and approval before each action.
+
+## Portrait and live speech checks (20 November 2026)
+
+The web portrait check (`node tests/portrait-browser.cjs`) verifies all six
+characters: a selection tap greets, the eyelid opacity peaks before audio
+starts, the mouth opens during voiced PCM, and it closes during silence and
+when stopped. It uses a public recorded speech fixture and appended silence,
+so this check does not spend speech-provider quota. Tapping the main portrait
+speaks a greeting separately from the `Tap to chat` microphone control.
+
+The real browser voice check passed greeting, transcription, chat, playback,
+interruption, returning to listening, and microphone cleanup. Its measured
+delay from public input ending to reply playback was 10.88 seconds after the
+Groq WAV header correction, compared with 21.82 seconds before the correction.
+Five-second replies have not been achieved in this development environment.
+
+Groq returns streaming WAV headers with `0xffffffff` RIFF/data sizes even after
+the HTTP response completes. The Python service now validates the bounded
+completed PCM and rewrites that known header form before normalization. It
+continues to reject ordinary truncated WAV files. Old Groq cache entries are
+invalidated because some contained slower Gemini fallback voices.
+
+The portrait animation is a 2D photo rig driven by played audio energy. These
+browser checks do not establish photorealistic video, phoneme-based lip sync,
+or physical microphone/speaker behavior on a native device.
+
+Validation: the voice/API/provider Go race tests, 17 Python speech tests,
+TypeScript check, focused portrait/voice tests, and real browser checks passed.
+The broader frontend suite passed 84 of 87 cases; three check-in/push tests
+remain failing in the concurrent notification work. Notification worker errors
+were also observed at startup. Those features were not changed as part of the
+portrait and speech fixes.
+
+## English voice and back navigation (21 November 2026)
+
+The active development configuration now uses expressive Gemini speech again
+after the user reported that the faster standard Groq voice felt less natural.
+The configured original PADI profile and working Gemini 2.5 fallback remain
+available. This choice prioritizes expressive delivery; the earlier 10.88s
+measurement was for the Groq configuration, not the restored voice.
+The restored expressive configuration passed the real browser conversation
+check, with a measured first reply of 17.66 seconds. A generated public PADI
+greeting was independently recognized as English with automatic language
+detection. Neither check establishes a five-second reply guarantee.
+
+English selection now travels through microphone transcription, chat, speech,
+and previews. Recognition uses the selected language, chat defaults to English
+for legacy voice clients, and speech instructions preserve the transcript
+without automatic translation. Tunde's preview respects the selected language
+instead of always using Pidgin. Public clip cache version three discards older
+clips generated before these delivery instructions.
+
+Voice, weather, authentication and onboarding back buttons check navigation
+history before dispatching back; direct links and refreshed screens replace
+with chat or their preceding onboarding step. The real browser regression
+passed all six routes without an unhandled `GO_BACK` action. The current 42
+focused frontend voice cases, 20 Python speech cases, Go voice/API race tests,
+and TypeScript check passed.

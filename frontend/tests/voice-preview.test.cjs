@@ -24,7 +24,7 @@ test('human voice catalog contains the six requested people and portraits', () =
     [['PADI', 'male'], ['Ada', 'female'], ['Chidi', 'female'], ['Zainab', 'female'], ['Tunde', 'male'], ['Amara', 'male']],
   );
   for (const voice of VOICES) {
-    assert.match(voice.imageUrl, /^https:\/\/images\.unsplash\.com\//);
+    assert.ok(['images.unsplash.com', 'images.pexels.com'].includes(new URL(voice.imageUrl).hostname));
     assert.ok(voice.imageDescription.length > 0);
   }
 });

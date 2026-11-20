@@ -237,7 +237,7 @@ export default function AuthScreen() {
                 disabled={busy}
               />
             )}
-            <Button title="Back to chat" variant="secondary" onPress={() => router.back()} />
+            <Button title="Back to chat" variant="secondary" onPress={() => { if (router.canGoBack()) router.back(); else router.replace('/(tabs)/chat'); }} />
           </View>
 
           <Text style={[styles.privacy, { color: colors.muted, fontSize: type.micro }]}>

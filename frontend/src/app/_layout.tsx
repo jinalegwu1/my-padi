@@ -6,20 +6,35 @@ import {
   PlusJakartaSans_800ExtraBold,
   useFonts,
 } from '@expo-google-fonts/plus-jakarta-sans';
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
+import * as Notifications from 'expo-notifications';
+import { DarkTheme, DefaultTheme, Stack, ThemeProvider, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useEffect } from 'react';
 import { ActivityIndicator, useColorScheme, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { palette } from '@/constants/theme';
-import { PreferencesProvider, usePreferences } from '@/hooks/use-preferences';
-import { MemoryProvider } from '@/state/memory-context';
+import { usePreferences } from '@/hooks/use-preferences';
+import { usePushDeviceLifecycle } from '@/hooks/use-push-device-lifecycle';
+import { PreferencesProvider } from '@/hooks/use-preferences';
 import { ChatProvider } from '@/state/chat-context';
+import { MemoryProvider } from '@/state/memory-context';
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
 
 /** Applies the user's appearance choice to the navigation theme. */
 function ThemedStack() {
+  const router = useRouter();
   const system = useColorScheme();
   const { preferences, status } = usePreferences();
+  usePushDeviceLifecycle(preferences.languageCode);
   const mode = preferences.appearance;
   const scheme = mode === 'system' ? (system === 'dark' ? 'dark' : 'light') : mode;
   const colors = palette[scheme];
@@ -36,6 +51,22 @@ function ThemedStack() {
       primary: colors.primary,
     },
   };
+
+  useEffect(() => {
+    let lastResponseID: string | null = null;
+    const openNotification = (response: Notifications.NotificationResponse) => {
+      const request = response.notification.request;
+      if (request.identifier === lastResponseID) return;
+      lastResponseID = request.identifier;
+      const data = request.content.data;
+      if (data?.kind === 'padi_check_in') router.push('/(tabs)/chat');
+    };
+    const subscription = Notifications.addNotificationResponseReceivedListener(openNotification);
+    void Notifications.getLastNotificationResponseAsync()
+      .then((response) => { if (response) openNotification(response); })
+      .catch(() => console.warn('PADI could not process the last notification response.'));
+    return () => subscription.remove();
+  }, [router]);
 
   if (status === 'loading') {
     return (

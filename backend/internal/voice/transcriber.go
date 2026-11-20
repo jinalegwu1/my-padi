@@ -98,6 +98,19 @@ func AudioFilename(audio []byte) (string, error) {
 }
 
 func (service *Transcriber) Transcribe(ctx context.Context, audio []byte) (string, error) {
+	return service.TranscribeLanguage(ctx, audio, "en-NG")
+}
+
+func (service *Transcriber) TranscribeLanguage(ctx context.Context, audio []byte, locale string) (string, error) {
+	language, valid := map[string]string{
+		"en-NG": "en", "en-GB": "en", "pcm-NG": "en",
+		"fr-FR": "fr", "pt-BR": "pt", "es-ES": "es", "ar-SA": "ar",
+		"sw-KE": "sw", "ha-NG": "ha", "yo-NG": "yo", "ig-NG": "",
+		"am-ET": "am", "hi-IN": "hi", "zh-CN": "zh",
+	}[locale]
+	if !valid {
+		return "", errors.New("unsupported speech language")
+	}
 	filename, err := AudioFilename(audio)
 	if err != nil {
 		return "", err
@@ -130,6 +143,22 @@ func (service *Transcriber) Transcribe(ctx context.Context, audio []byte) (strin
 	}
 	for name, value := range map[string]string{"model": Model, "response_format": "verbose_json", "temperature": "0"} {
 		if err := writer.WriteField(name, value); err != nil {
+			return "", err
+		}
+	}
+	if language != "" || strings.HasSuffix(service.endpoint, "/transcribe") {
+		if err := writer.WriteField("language", language); err != nil {
+			return "", err
+		}
+	}
+	// Igbo has no supported Whisper language code. A fixed vocabulary hint
+	// preserves that option without submitting an unsupported provider value.
+	if locale == "ig-NG" || locale == "pcm-NG" {
+		prompt := "Ndewo. Kedu ka ị mere taa?"
+		if locale == "pcm-NG" {
+			prompt = "How you dey? Na me be PADI. Make we gist."
+		}
+		if err := writer.WriteField("prompt", prompt); err != nil {
 			return "", err
 		}
 	}

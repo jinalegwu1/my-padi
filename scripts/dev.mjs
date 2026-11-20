@@ -160,6 +160,7 @@ try {
         const voiceEnv={PATH:process.env.PATH,PYTHONUNBUFFERED:'1',
           PADI_PYTHON_VOICE_PORT:String(voicePort),PADI_VOICE_SERVICE_TOKEN:backendEnv.PADI_VOICE_SERVICE_TOKEN,
           PADI_VOICE_MODEL:backendEnv.PADI_VOICE_MODEL||'gemini-3.1-flash-tts-preview',
+          ...(backendEnv.PADI_VOICE_FALLBACK_MODEL !== undefined ? {PADI_VOICE_FALLBACK_MODEL:backendEnv.PADI_VOICE_FALLBACK_MODEL} : {}),
           PADI_VOICE_DEFAULT_ID:backendEnv.PADI_VOICE_DEFAULT_ID||'',
           PADI_AI_FREE_ACCOUNT_CONFIRMED:backendEnv.PADI_AI_FREE_ACCOUNT_CONFIRMED,
           GEMINI_API_KEY:backendEnv.GEMINI_API_KEY,GROQ_API_KEY:backendEnv.GROQ_API_KEY};

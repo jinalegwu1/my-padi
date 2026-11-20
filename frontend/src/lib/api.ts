@@ -1,6 +1,6 @@
 import { API_URL } from '@/lib/config';
 import type { AppSession } from '@/lib/session';
-import type { MemoryCategory, MemoryItem, MemorySnapshot } from '@/types';
+import type { CheckInPreferences, CheckInPreferencesPatch, MemoryCategory, MemoryItem, MemorySnapshot, PersonalityPreferencePatch, PersonalityPreferences, ResponseRating } from '@/types';
 
 export class APIError extends Error {
   constructor(
@@ -101,6 +101,69 @@ export function revokeSession(token: string): Promise<void> {
   return requestJSON('/v1/auth/logout', {}, { token }).then(() => undefined);
 }
 
+export function submitResponseFeedback(token: string, messageID: string, rating: ResponseRating): Promise<void> {
+  return requestJSON('/v1/personality/feedback', { message_id: messageID, rating }, { token }).then(() => undefined);
+}
+
+export type PushDeviceRegistration = {
+  device_id: string;
+  expo_push_token: string;
+  platform: 'ios' | 'android';
+  language: string;
+};
+
+export function registerPushDevice(token: string, registration: PushDeviceRegistration): Promise<void> {
+  return requestJSON('/v1/push/devices', registration, { token }).then(() => undefined);
+}
+
+export function unregisterPushDevice(token: string, deviceID: string): Promise<void> {
+  return requestJSON('/v1/push/devices', { device_id: deviceID }, { token, method: 'DELETE' }).then(() => undefined);
+}
+
+function personalityPreferences(value: unknown): PersonalityPreferences {
+  if (!value || typeof value !== 'object') throw new Error('PADI returned invalid conversation preferences.');
+  const result = value as Partial<PersonalityPreferences>;
+  if (!['off', 'subtle', 'occasional', 'frequent'].includes(result.humour as string) ||
+      typeof result.humour_explicit !== 'boolean' ||
+      !['adaptive', 'playful', 'serious', 'gentle', 'direct'].includes(result.tone as string) ||
+      typeof result.learn_from_feedback !== 'boolean') {
+    throw new Error('PADI returned invalid conversation preferences.');
+  }
+  return result as PersonalityPreferences;
+}
+
+export async function fetchPersonalityPreferences(token: string): Promise<PersonalityPreferences> {
+  return personalityPreferences(await requestJSON('/v1/personality/preferences', undefined, { token, method: 'GET' }));
+}
+
+export async function updatePersonalityPreferences(token: string, patch: PersonalityPreferencePatch): Promise<PersonalityPreferences> {
+  return personalityPreferences(await requestJSON('/v1/personality/preferences', patch, { token, method: 'PATCH' }));
+}
+
+function checkInPreferences(value: unknown): CheckInPreferences {
+  if (!value || typeof value !== 'object') throw new Error('PADI returned invalid check-in preferences.');
+  const result = value as Partial<CheckInPreferences>;
+  const validTime = (clock: unknown): clock is string =>
+    typeof clock === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(clock);
+  if (typeof result.morning_enabled !== 'boolean' || !validTime(result.morning_time) ||
+      typeof result.afternoon_enabled !== 'boolean' || !validTime(result.afternoon_time) ||
+      typeof result.evening_enabled !== 'boolean' || !validTime(result.evening_time) ||
+      typeof result.timezone !== 'string' || result.timezone.length > 128 ||
+      typeof result.quiet_hours_enabled !== 'boolean' || !validTime(result.quiet_hours_start) ||
+      !validTime(result.quiet_hours_end)) {
+    throw new Error('PADI returned invalid check-in preferences.');
+  }
+  return result as CheckInPreferences;
+}
+
+export async function fetchCheckInPreferences(token: string): Promise<CheckInPreferences> {
+  return checkInPreferences(await requestJSON('/v1/check-ins/preferences', undefined, { token, method: 'GET' }));
+}
+
+export async function updateCheckInPreferences(token: string, patch: CheckInPreferencesPatch): Promise<CheckInPreferences> {
+  return checkInPreferences(await requestJSON('/v1/check-ins/preferences', patch, { token, method: 'PATCH' }));
+}
+
 export function sendChat(
   token: string,
   messages: { role: 'user' | 'assistant'; content: string }[],
@@ -108,33 +171,45 @@ export function sendChat(
   signal?: AbortSignal,
   delivery: 'text' | 'voice' = 'text',
   voiceContext?: { interrupted_reply: string; spoken_prefix: string },
+  languageCode?: string,
 ): Promise<{ reply: string; memory_revision: number }> {
-  return requestJSON('/v1/chat', { messages, memory_revision: memoryRevision, delivery, voice_context: voiceContext }, { token, timeoutMs: 155_000, signal });
+  return requestJSON('/v1/chat', { messages, memory_revision: memoryRevision, delivery, voice_context: voiceContext,
+    ...(delivery === 'voice' && voiceLanguageSupported && languageCode ? {language:languageCode} : {}),
+  }, { token, timeoutMs: 155_000, signal });
 }
 
-export async function getVoiceConfiguration(signal?: AbortSignal): Promise<{ enabled: boolean; max_seconds: number; natural_speech?: boolean }> {
-  const result = await requestJSON<{ enabled: boolean; max_seconds: number; natural_speech?: boolean }>('/v1/voice/config', undefined, { method: 'GET', signal });
+let liveSpeechSupported = false;
+let voiceLanguageSupported = false;
+
+export async function getVoiceConfiguration(signal?: AbortSignal): Promise<{ enabled: boolean; max_seconds: number; natural_speech?: boolean; live_speech?: boolean; language_selection?: boolean }> {
+  const result = await requestJSON<{ enabled: boolean; max_seconds: number; natural_speech?: boolean; live_speech?: boolean; language_selection?: boolean }>('/v1/voice/config', undefined, { method: 'GET', signal });
   if (typeof result?.enabled !== 'boolean' || result.max_seconds !== 60) throw new Error('PADI returned invalid voice settings.');
+  liveSpeechSupported = result.live_speech === true;
+  voiceLanguageSupported = result.language_selection === true;
   return result;
 }
 
-export async function synthesiseSpeech(token:string,text:string,style:string,rate:number,signal:AbortSignal,languageCode='en-NG'):Promise<{audio_base64:string;mime_type:string}> {
-  const result=await requestJSON<{audio_base64:string;mime_type:string}>('/v1/voice/speak',{text,style,rate,language:languageCode},{token,signal,timeoutMs:65_000});
+export async function synthesiseSpeech(token:string,text:string,style:string,rate:number,signal:AbortSignal,languageCode='en-NG',live=false):Promise<{audio_base64:string;mime_type:string}> {
+  const result=await requestJSON<{audio_base64:string;mime_type:string}>('/v1/voice/speak',{text,style,rate,language:languageCode,...(live&&liveSpeechSupported?{live:true}:{})},{token,signal,timeoutMs:65_000});
   if(result?.mime_type!=='audio/wav' || typeof result.audio_base64!=='string' || !result.audio_base64 || result.audio_base64.length>12*1024*1024) throw new Error('PADI returned invalid speech audio.');
   return result;
 }
 
-export async function fetchVoiceSample(kind: 'welcome' | 'preview', style: string, languageCode: string, rate: number, signal: AbortSignal): Promise<{audio_base64:string;mime_type:string}> {
+export async function fetchVoiceSample(kind: 'welcome' | 'preview' | 'call', style: string, languageCode: string, rate: number, signal: AbortSignal): Promise<{audio_base64:string;mime_type:string;text?:string}> {
   const language = languageCode === 'pcm-NG' ? 'pcm-NG' : languageCode.toLowerCase().startsWith('fr') ? 'fr' : 'en-NG';
   const pace = rate < 0.95 ? 0.85 : rate > 1.05 ? 1.15 : 1;
-  const query = kind === 'welcome' ? `style=${encodeURIComponent(style)}&language=${language}` : `style=${encodeURIComponent(style)}&rate=${pace}`;
-  const result = await requestJSON<{audio_base64:string;mime_type:string}>(`/v1/voice/${kind}?${query}`, undefined, {method:'GET',signal,timeoutMs:65_000});
+  const query = kind === 'welcome' ? `style=${encodeURIComponent(style)}&language=${language}`
+    : kind === 'call' ? `style=${encodeURIComponent(style)}&language=${encodeURIComponent(languageCode)}&rate=${pace}`
+    : `style=${encodeURIComponent(style)}&rate=${pace}${voiceLanguageSupported ? `&language=${encodeURIComponent(languageCode)}` : ''}`;
+  const result = await requestJSON<{audio_base64:string;mime_type:string;text?:string}>(`/v1/voice/${kind}?${query}`, undefined, {method:'GET',signal,timeoutMs:65_000});
   if(result?.mime_type!=='audio/wav'||typeof result.audio_base64!=='string'||!result.audio_base64||result.audio_base64.length>12*1024*1024) throw new Error('PADI returned invalid natural speech audio.');
+  if(kind === 'call' && (typeof result.text !== 'string' || !result.text.trim())) throw new Error('PADI’s live greeting could not load.');
   return result;
 }
 
-export async function transcribeAudio(token: string, audio: FormData, signal: AbortSignal): Promise<string> {
-  const result = await requestJSON<{ text: string }>('/v1/voice/transcribe', audio, { token, multipart: true, timeoutMs: 55_000, signal });
+export async function transcribeAudio(token: string, audio: FormData, signal: AbortSignal, languageCode?: string): Promise<string> {
+  const query = voiceLanguageSupported && languageCode ? `?language=${encodeURIComponent(languageCode)}` : '';
+  const result = await requestJSON<{ text: string }>(`/v1/voice/transcribe${query}`, audio, { token, multipart: true, timeoutMs: 55_000, signal });
   if (typeof result?.text !== 'string' || !result.text.trim()) throw new Error('PADI could not hear clear speech. Please try again.');
   return result.text.trim();
 }

@@ -12,7 +12,12 @@ async function fixture() {
   const listeners = new Set();
   const calls = [];
   let backend = async () => ({ reply: 'Real reply 😊', memory_revision: 7 });
-  const api = { APIError: class extends Error {}, sendChat: async (...args) => { calls.push(args); return backend(...args); } };
+  const feedbackCalls = [];
+  const api = {
+    APIError: class extends Error {},
+    sendChat: async (...args) => { calls.push(args); return backend(...args); },
+    submitResponseFeedback: async (...args) => { feedbackCalls.push(args); },
+  };
   let id = 0;
   const exported = loadTS('src/state/chat-context.tsx', {
     '@/data/mock-conversations': { WELCOME_MESSAGE: 'Welcome', nextId: prefix => `${prefix}-${++id}` },
@@ -29,7 +34,7 @@ async function fixture() {
   function VoiceProbe() { voice = exported.useChat(); return null; }
   await act(async () => { root = create(React.createElement(exported.ChatProvider, null, React.createElement(TextProbe), React.createElement(VoiceProbe))); });
   return {
-    calls, api, get text() { return text; }, get voice() { return voice; },
+    calls, feedbackCalls, api, get text() { return text; }, get voice() { return voice; },
     backend: fn => { backend = fn; },
     switchAccount: async () => act(async () => { session = { token: 'b-token', user: { id: 'b' } }; listeners.forEach(fn => fn()); }),
     close: async () => act(async () => root.unmount()),
@@ -46,11 +51,21 @@ test('text and voice share replies, consent revision, and conversation context',
       { role: 'user', content: 'What is our project?' },
     ]);
     assert.equal(f.calls[1][2], 7);
+    assert.equal(f.calls[1][6], 'en-NG');
     assert.equal(f.text.messages, f.voice.messages);
     assert.equal(f.text.messages.length, 4);
     assert.equal(f.text.messages[2].viaVoice, true);
     assert.equal(f.text.messages[3].backendUserID, 'a');
   } finally { await f.close(); }
+});
+
+test('voice turns preserve the explicitly selected language through shared chat',async()=>{
+  const f=await fixture();
+  try{
+    await act(async()=>{await f.voice.sendVoice('Hello','a',new AbortController().signal,'en-GB');});
+    assert.equal(f.calls.at(-1)[4],'voice');
+    assert.equal(f.calls.at(-1)[6],'en-GB');
+  }finally{await f.close();}
 });
 
 test('a pending voice send blocks competing text sends and cancellation removes both pending messages', async () => {
@@ -95,4 +110,20 @@ test('speech progress cannot annotate another account’s reply',async()=>{
     await act(async()=>{f.voice.delivered(result.messageID,'Real reply',true,'a');});
     assert.equal(f.voice.messages.at(-1).voiceSpokenText,'Real reply');
   }finally{await f.close();}
+});
+
+test('response feedback sends only a rating for the owning account and updates its reply', async () => {
+  const f = await fixture();
+  try {
+    let replyID;
+    await act(async () => { replyID = (await f.text.send('Hello', 'a')); });
+    const messageID = f.text.messages.at(-1).id;
+    await act(async () => { await f.text.rateResponse(messageID, 'liked_humour'); });
+    assert.deepEqual(f.feedbackCalls, [['a-token', messageID, 'liked_humour']]);
+    assert.equal(f.text.messages.at(-1).responseFeedback, 'liked_humour');
+    await f.switchAccount();
+    await assert.rejects(f.voice.rateResponse(messageID, 'not_helpful'), /Sign in to rate/);
+    assert.equal(f.feedbackCalls.length, 1);
+    assert.equal(replyID, 'sent');
+  } finally { await f.close(); }
 });

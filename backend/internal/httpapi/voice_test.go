@@ -20,6 +20,40 @@ type testSpeech struct {
 	err   error
 }
 
+type testLanguageSpeech struct {
+	testSpeech
+	language string
+}
+
+func (s *testLanguageSpeech) TranscribeLanguage(_ context.Context, _ []byte, language string) (string, error) {
+	s.calls++
+	s.language = language
+	return "Hello PADI", nil
+}
+
+func TestVoiceUploadPassesSelectedLanguageAndDefaultsToEnglish(t *testing.T) {
+	for _, test := range []struct {
+		query, language string
+		status          int
+	}{
+		{"", "en-NG", 200},
+		{"?language=en-GB", "en-GB", 200},
+		{"?language=fr-FR", "fr-FR", 200},
+		{"?language=unknown", "", 400},
+		{"?language=en-NG&language=fr-FR", "", 400},
+	} {
+		speech := &testLanguageSpeech{}
+		router := NewRouter(nil, Dependencies{Auth: testAuthAPI{}, Speech: speech})
+		request := audioRequest(t, []byte("RIFF0000WAVEdata"), "audio", false)
+		request.URL.RawQuery = strings.TrimPrefix(test.query, "?")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != test.status || speech.language != test.language {
+			t.Fatal("Selected transcription language was dropped or invalid language accepted")
+		}
+	}
+}
+
 func (s *testSpeech) Transcribe(context.Context, []byte) (string, error) {
 	s.calls++
 	return "Hello PADI", s.err

@@ -28,6 +28,10 @@ func NewRouter(readiness ReadinessChecker, dependencies ...Dependencies) http.Ha
 	}
 	registerAuthRoutes(mux, deps.Auth, logger)
 	registerMemoryRoutes(mux, deps.Auth, deps.Memory, logger)
+	registerResponseFeedbackRoute(mux, deps.Auth, deps.ResponseFeedback, logger)
+	registerPersonalityPreferencesRoute(mux, deps.Auth, deps.Personality, logger)
+	registerCheckInPreferencesRoute(mux, deps.Auth, deps.CheckIns, logger)
+	registerPushDeviceRoute(mux, deps.Auth, deps.PushDevices, logger)
 	registerVoiceRoutes(mux, deps)
 	mux.HandleFunc("/v1/auth/config", func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodGet) {
@@ -37,6 +41,9 @@ func NewRouter(readiness ReadinessChecker, dependencies ...Dependencies) http.Ha
 			OTPRequired bool `json:"otp_required"`
 		}{OTPRequired: !deps.DevelopmentOTPBypass})
 	})
-	mux.Handle("/v1/chat", chatHandler{auth: deps.Auth, chat: deps.Chat, logger: logger, memory: deps.Memory})
+	mux.Handle("/v1/chat", chatHandler{
+		auth: deps.Auth, chat: deps.Chat, logger: logger, memory: deps.Memory,
+		personality: deps.Personality, feedback: deps.ResponseFeedback,
+	})
 	return corsMiddleware(mux, deps.AllowedOrigins)
 }

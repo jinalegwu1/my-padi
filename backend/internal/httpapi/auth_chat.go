@@ -16,6 +16,7 @@ import (
 	"github.com/jinalegwu1/my-padi/backend/internal/ai"
 	"github.com/jinalegwu1/my-padi/backend/internal/auth"
 	"github.com/jinalegwu1/my-padi/backend/internal/memory"
+	"github.com/jinalegwu1/my-padi/backend/internal/personality"
 )
 
 const (
@@ -48,6 +49,10 @@ type Dependencies struct {
 	Memory               MemoryAPI
 	Speech               SpeechTranscriber
 	Synthesis            SpeechSynthesiser
+	ResponseFeedback     ResponseFeedbackAPI
+	Personality          PersonalityPreferencesAPI
+	CheckIns             CheckInPreferencesAPI
+	PushDevices          PushDeviceAPI
 }
 
 type authHandlers struct {
@@ -167,10 +172,12 @@ func (handlers authHandlers) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 type chatHandler struct {
-	auth   AuthAPI
-	chat   ChatGenerator
-	logger *slog.Logger
-	memory MemoryAPI
+	auth        AuthAPI
+	chat        ChatGenerator
+	logger      *slog.Logger
+	memory      MemoryAPI
+	personality PersonalityPreferencesAPI
+	feedback    ResponseFeedbackAPI
 }
 
 func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -197,6 +204,7 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Delivery     string `json:"delivery"`
+		Language     string `json:"language"`
 		VoiceContext *struct {
 			InterruptedReply string `json:"interrupted_reply"`
 			SpokenPrefix     string `json:"spoken_prefix"`
@@ -220,6 +228,10 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 400, "invalid_request", "Choose text or voice delivery.")
 		return
 	}
+	if body.Language != "" && !validSpeechLanguage(body.Language) {
+		writeAPIError(w, 400, "invalid_request", "Choose a supported conversation language.")
+		return
+	}
 	if body.VoiceContext != nil && (len(body.VoiceContext.InterruptedReply) > 8192 || len(body.VoiceContext.SpokenPrefix) > 8192 || !utf8.ValidString(body.VoiceContext.InterruptedReply) || !utf8.ValidString(body.VoiceContext.SpokenPrefix)) {
 		writeAPIError(w, 400, "invalid_request", "The voice continuation context is invalid.")
 		return
@@ -230,6 +242,28 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), chatRequestTimeout)
 	defer cancel()
+	personalityPreferences := personality.DefaultPreferences()
+	if handler.personality != nil {
+		personalityPreferences, err = handler.personality.Get(ctx, user.ID)
+		if err != nil {
+			if handler.logger != nil {
+				handler.logger.Warn("personality preferences unavailable", "class", "preferences_unavailable")
+			}
+			writeAPIError(w, http.StatusServiceUnavailable, "preferences_unavailable", "PADI could not load your conversation preferences. Please try again.")
+			return
+		}
+	}
+	if personalityPreferences.LearnFromFeedback && handler.feedback != nil {
+		trend, err := handler.feedback.RecentHumourFeedback(ctx, user.ID)
+		if err != nil {
+			if handler.logger != nil {
+				handler.logger.Warn("personality feedback trend unavailable", "class", "feedback_unavailable")
+			}
+			writeAPIError(w, http.StatusServiceUnavailable, "feedback_unavailable", "PADI could not load your saved conversation feedback. Please try again.")
+			return
+		}
+		personalityPreferences = personality.ApplyFeedbackTrend(personalityPreferences, trend)
+	}
 	var memoryRevision int64
 	memoryState := "unavailable"
 	if handler.memory != nil {
@@ -261,7 +295,12 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if body.Delivery == "voice" || body.VoiceContext != nil {
 		instruction := ""
 		if body.Delivery == "voice" {
-			instruction = `This is a spoken conversation with PADI. Speak naturally like a thoughtful friend, using everyday words, contractions, clear short sentences, and natural punctuation. For ordinary conversation, keep replies to a few sentences and give the user room to answer. Match the user's mood; do not force jokes, banter, questions, filler, or repeated introductions. Avoid headings, Markdown lists, tables, and essay-like answers unless the user asks for structured or detailed teaching. Preserve the shared PADI personality, honesty, memory permissions, and action approval rules.`
+			instruction = `This is a spoken conversation with PADI. Speak naturally like a thoughtful friend, using everyday words, contractions, clear short sentences, and natural punctuation. For ordinary conversation, answer directly in one or two short sentences, usually under 45 words, and give the user room to answer. Begin with the useful answer instead of a preamble. Match the user's mood; do not force jokes, banter, questions, filler, or repeated introductions. Avoid headings, Markdown lists, tables, and essay-like answers unless the user asks for structured or detailed teaching. Preserve the shared PADI personality, honesty, memory permissions, and action approval rules.`
+			language := body.Language
+			if language == "" {
+				language = "en-NG"
+			}
+			instruction += "\n" + voiceReplyLanguage(language)
 		}
 		if body.VoiceContext != nil {
 			matched := false
@@ -283,10 +322,22 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if context := accountProfileContext(user.FullName, memoryState); context != "" {
 		messages = append([]ai.Message{{Role: ai.RoleSystem, Content: context}}, messages...)
 	}
-	response, err := handler.chat.Generate(ctx, ai.Request{
-		Messages: messages,
-		Task:     ai.TaskConversation,
-	})
+	latestUserMessage := messages[len(messages)-1].Content
+	chatRequest := ai.Request{
+		Messages:      messages,
+		Task:          ai.TaskConversation,
+		StyleGuidance: personality.ResponseGuidance(latestUserMessage, personalityPreferences),
+	}
+	if body.Delivery == "voice" {
+		_, complexity := ai.InferTaskAndComplexity(messages)
+		if complexity != ai.ComplexityComplex {
+			// Ordinary live turns use the configured fast model. Detailed work
+			// keeps the normal reasoning route and output budget.
+			chatRequest.Complexity = ai.ComplexitySimple
+			chatRequest.MaxOutputTokens = 512
+		}
+	}
+	response, err := handler.chat.Generate(ctx, chatRequest)
 	if err != nil {
 		status, code, message := classifyChatError(err)
 		if handler.logger != nil {
@@ -303,6 +354,19 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Reply          string `json:"reply"`
 		MemoryRevision int64  `json:"memory_revision"`
 	}{Reply: response.Content, MemoryRevision: memoryRevision})
+}
+
+func voiceReplyLanguage(language string) string {
+	name := map[string]string{
+		"en-NG":  "English with natural Nigerian English phrasing",
+		"en-GB":  "English",
+		"pcm-NG": "Nigerian Pidgin",
+		"fr-FR":  "French", "pt-BR": "Portuguese", "es-ES": "Spanish",
+		"ar-SA": "Arabic", "sw-KE": "Swahili", "ha-NG": "Hausa",
+		"yo-NG": "Yoruba", "ig-NG": "Igbo", "am-ET": "Amharic",
+		"hi-IN": "Hindi", "zh-CN": "Mandarin Chinese",
+	}[language]
+	return "The selected conversation language is " + name + ". Write the spoken reply in this language. Do not automatically switch languages because of a name, location, old conversation, or a transcription that appears to be in another language. Explain requested translations in the selected language; include foreign words only when the user explicitly asks for them. A language change is made through the app's language selection."
 }
 
 func validateChatMessages(input []struct {

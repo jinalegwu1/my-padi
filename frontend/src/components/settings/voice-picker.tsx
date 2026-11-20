@@ -1,13 +1,12 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { Image } from 'expo-image';
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { Button } from '@/components/ui/button';
+import { ReactivePortrait } from '@/components/reactive-portrait';
 import { fonts, radius, spacing, useColors, useType } from '@/constants/theme';
 import { VOICES } from '@/data/languages';
 import { usePreferences } from '@/hooks/use-preferences';
-import { stopPadiSpeech } from '@/lib/speech';
+import { speakPortraitGreeting, stopPadiSpeech } from '@/lib/speech';
 import { previewVoice } from '@/lib/voice-preview';
 import { subscribeSession } from '@/lib/session';
 import type { VoiceOption } from '@/types';
@@ -34,23 +33,30 @@ export function VoicePicker({ labels }: Props) {
   const [previewError, setPreviewError] = useState('');
   const preview=useRef<AbortController|null>(null);
   const [hasStarted,setHasStarted]=useState(false);
+  const [playingWords,setPlayingWords]=useState('');
+  const [touch,setTouch]=useState({voiceId:'',version:0});
 
   useEffect(
     () => {
-      const unsubscribe=subscribeSession(()=>{preview.current?.abort();setPreviewing(null);setHasStarted(false);});
+      const unsubscribe=subscribeSession(()=>{preview.current?.abort();preview.current=null;setPreviewing(null);setHasStarted(false);});
       return () => {preview.current?.abort();void stopPadiSpeech();unsubscribe();};
     },
     [],
   );
 
-  const startPreview = (voice: VoiceOption) => {
+  const startPreview = (voice: VoiceOption, greeting=false) => {
     preview.current?.abort();
     const controller=new AbortController();preview.current=controller;
     setPreviewError('');
     setPreviewing(voice.id);
     setHasStarted(false);
+    setPlayingWords(voice.sample);
     void stopPadiSpeech();
-    void previewVoice(voice.sample,voice.id,preferences.voiceRate,controller.signal,()=>{if(preview.current===controller)setHasStarted(true);})
+    const started=()=>{if(!controller.signal.aborted&&preview.current===controller)setHasStarted(true);};
+    const words=(text:string)=>{if(!controller.signal.aborted&&preview.current===controller)setPlayingWords(text);};
+    const playback=greeting?speakPortraitGreeting(voice.id,preferences.languageCode,preferences.voiceRate,controller.signal,started,words)
+      :previewVoice(voice.sample,voice.id,preferences.voiceRate,controller.signal,started,preferences.languageCode,words);
+    void playback
       .catch(error=>{if(!controller.signal.aborted&&preview.current===controller)setPreviewError(error instanceof Error?error.message:'Voice preview failed.');})
       .finally(()=>{if(preview.current===controller){preview.current=null;setPreviewing(null);setHasStarted(false);}});
   };
@@ -59,6 +65,12 @@ export function VoicePicker({ labels }: Props) {
     preview.current?.abort();preview.current=null;setHasStarted(false);
     void stopPadiSpeech();
     setPreviewing(null);
+  };
+
+  const selectVoice = (voice: VoiceOption) => {
+    setTouch(previous=>({voiceId:voice.id,version:previous.version+1}));
+    update({ voiceId: voice.id });
+    startPreview(voice,true);
   };
 
   const renderVoice = (voice: VoiceOption) => {
@@ -78,31 +90,31 @@ export function VoicePicker({ labels }: Props) {
           accessibilityRole="radio"
           accessibilityState={{ selected }}
           accessibilityLabel={`${voice.name}, ${voice.gender} voice, ${voice.accent}. ${voice.description}`}
-          onPress={() => update({ voiceId: voice.id })}
+          onPress={() => selectVoice(voice)}
           style={({ pressed }) => [styles.voiceMain, pressed && { opacity: 0.75 }]}>
-          <View
-            style={[
-              styles.voiceIcon,
-              { backgroundColor: selected ? colors.primary : colors.cardMuted },
-            ]}>
-            <Image
-              source={{ uri: voice.imageUrl }}
-              contentFit="cover"
-              accessibilityLabel={voice.imageDescription}
-              style={styles.voicePortrait}
-            />
-          </View>
-          <View style={styles.voiceText}>
-            <Text style={[styles.voiceName, { color: colors.text, fontSize: type.body }]}>
-              {voice.name}
-            </Text>
-            <Text style={[styles.voiceMeta, { color: colors.muted, fontSize: type.caption }]}>
-              {voice.accent} · {voice.description}
-            </Text>
-          </View>
-          {selected ? (
-            <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
-          ) : null}
+          {({ pressed }) => (
+            <>
+              <ReactivePortrait
+                voiceId={voice.id}
+                size={64}
+                interactive={false}
+                pressed={pressed}
+                touchVersion={touch.voiceId===voice.id?touch.version:0}
+                state={isPreviewing ? hasStarted ? 'speaking' : 'thinking' : selected ? 'listening' : 'idle'}
+              />
+              <View style={styles.voiceText}>
+                <Text style={[styles.voiceName, { color: colors.text, fontSize: type.body }]}>
+                  {voice.name}
+                </Text>
+                <Text style={[styles.voiceMeta, { color: colors.muted, fontSize: type.caption }]}>
+                  {voice.accent} · {voice.description}
+                </Text>
+              </View>
+              {selected ? (
+                <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+              ) : null}
+            </>
+          )}
         </Pressable>
 
         <Pressable
@@ -140,9 +152,16 @@ export function VoicePicker({ labels }: Props) {
   const female = VOICES.filter((v) => v.gender === 'female');
   const male = VOICES.filter((v) => v.gender === 'male');
   const active = VOICES.find((v) => v.id === previewing);
+  const character = active ?? VOICES.find(v=>v.id===preferences.voiceId) ?? VOICES[0];
 
   return (
     <View style={styles.wrap}>
+      <View style={styles.characterStage}>
+        <ReactivePortrait voiceId={character.id} size={140} onPress={()=>selectVoice(character)}
+          touchVersion={touch.voiceId===character.id?touch.version:0}
+          state={active ? hasStarted?'speaking':'thinking':'listening'} />
+        <Text style={[styles.previewText,{color:colors.muted,fontSize:type.caption}]}>Tap a face to hear a greeting.</Text>
+      </View>
       {active && hasStarted ? (
         <View
           style={[
@@ -151,7 +170,7 @@ export function VoicePicker({ labels }: Props) {
           ]}>
           <PreviewBars />
           <Text style={[styles.nowPlayingText, { color: colors.text, fontSize: type.caption }]}>
-            “{active.sample}”
+            “{playingWords}”
           </Text>
         </View>
       ) : null}
@@ -283,6 +302,7 @@ function PreviewBars() {
 
 const styles = StyleSheet.create({
   wrap: { gap: spacing.sm },
+  characterStage: {alignItems:'center', gap:spacing.sm, paddingVertical:spacing.sm},
   groupLabel: {
     fontFamily: fonts.semibold,
     letterSpacing: 0.7,
@@ -300,15 +320,6 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   voiceMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  voiceIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-  },
-  voicePortrait: { width: '100%', height: '100%' },
   voiceText: { flex: 1, gap: 1 },
   voiceName: { fontFamily: fonts.semibold },
   voiceMeta: { fontFamily: fonts.regular },

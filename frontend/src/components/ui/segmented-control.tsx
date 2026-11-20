@@ -14,6 +14,7 @@ type Props<T extends string> = {
   value: T;
   onChange: (value: T) => void;
   accessibilityLabel: string;
+  disabled?: boolean;
 };
 
 /** Rounded segmented control used for appearance, filters and repeat rules. */
@@ -22,6 +23,7 @@ export function SegmentedControl<T extends string>({
   value,
   onChange,
   accessibilityLabel,
+  disabled = false,
 }: Props<T>) {
   const colors = useColors();
   const type = useType();
@@ -38,15 +40,17 @@ export function SegmentedControl<T extends string>({
           <Pressable
             key={option.value}
             accessibilityRole="radio"
-            accessibilityState={{ selected }}
+            accessibilityState={{ selected, disabled }}
             accessibilityLabel={option.label}
             onPress={() => onChange(option.value)}
+            disabled={disabled}
             onFocus={onFocus}
             onBlur={onBlur}
             style={({ pressed }) => [
               styles.segment,
               selected && { backgroundColor: colors.card, borderColor: colors.border },
-              pressed && !selected && { opacity: 0.7 },
+              disabled && { opacity: 0.55 },
+              pressed && !selected && !disabled && { opacity: 0.7 },
               focused && { borderColor: colors.focus, borderWidth: 2 },
             ]}>
             <Text

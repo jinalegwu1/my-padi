@@ -24,8 +24,10 @@ import { useTranslation } from '@/hooks/use-translation';
 import { revokeSession } from '@/lib/api';
 import { hasBackend } from '@/lib/config';
 import { visibleChatMessages } from '@/lib/chat-context';
+import { unregisterCurrentPushDevice } from '@/lib/push-notifications';
 import { clearSession, readSession, type AppSession } from '@/lib/session';
-import type { Message } from '@/types';
+import { unlockVoicePlayback } from '@/lib/voice-playback';
+import type { Message, ResponseRating } from '@/types';
 
 /**
  * The main conversation screen — the centre of the application.
@@ -40,12 +42,14 @@ export default function ConversationScreen() {
   const type = useType();
   const { t } = useTranslation();
   const { preferences } = usePreferences();
-  const { messages, status, isThinking, sendError, send, reset } = useChat();
+  const { messages, status, isThinking, sendError, send, rateResponse, reset } = useChat();
   const listRef = useRef<FlatList<Message>>(null);
   const [session, setSession] = useState<AppSession | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [signOutNotice, setSignOutNotice] = useState<string | null>(null);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
+  const [feedbackSavingID, setFeedbackSavingID] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -90,9 +94,29 @@ export default function ConversationScreen() {
     [router, scrollToEnd, send, session?.user.id],
   );
 
+  const handleFeedback = useCallback(async (messageID: string, rating: ResponseRating) => {
+    setFeedbackError(null);
+    setFeedbackSavingID(messageID);
+    try {
+      await rateResponse(messageID, rating);
+    } catch (error) {
+      setFeedbackError(error instanceof Error ? error.message : 'PADI could not save your feedback. Please try again.');
+    } finally {
+      setFeedbackSavingID(current => current === messageID ? null : current);
+    }
+  }, [rateResponse]);
+
   const handleSignOut = useCallback(async () => {
     const current = session;
     let revokeFailed = false;
+    let pushUnregisterFailed = false;
+    if (current) {
+      try {
+        await unregisterCurrentPushDevice(current.token);
+      } catch {
+        pushUnregisterFailed = true;
+      }
+    }
     try {
       await clearSession();
     } catch {
@@ -110,8 +134,12 @@ export default function ConversationScreen() {
         revokeFailed = true;
       }
     }
-    if (revokeFailed) {
-      setSignOutNotice('You are signed out on this device, but the server could not confirm session revocation. The session will expire automatically.');
+    if (revokeFailed || pushUnregisterFailed) {
+      const notices = [
+        pushUnregisterFailed ? 'Push notifications could not be disabled on the server.' : '',
+        revokeFailed ? 'The server could not confirm session revocation; the session will expire automatically.' : '',
+      ].filter(Boolean);
+      setSignOutNotice(`You are signed out on this device. ${notices.join(' ')}`);
     }
   }, [reset, session]);
 
@@ -209,6 +237,14 @@ export default function ConversationScreen() {
                   : item
               }
               voiceLabel={t('chat.voiceNote')}
+              feedbackLabels={{
+                helpful: t('chat.feedback.helpful'),
+                not_helpful: t('chat.feedback.notHelpful'),
+                liked_humour: t('chat.feedback.likedHumour'),
+                unwanted_humour: t('chat.feedback.unwantedHumour'),
+              }}
+              feedbackSaving={feedbackSavingID === item.id}
+              onFeedback={handleFeedback}
             />
           )}
           contentContainerStyle={styles.list}
@@ -232,16 +268,19 @@ export default function ConversationScreen() {
           />
         ) : null}
 
-        {sendError ? (
+        {sendError || feedbackError ? (
           <Text accessibilityRole="alert" style={[styles.error, { color: colors.danger }]}>
-            {sendError}
+            {sendError || feedbackError}
           </Text>
         ) : null}
 
         <Composer
           key={session.user.id}
           onSend={handleSend}
-          onOpenVoice={() => router.push('/voice')}
+          onOpenVoice={() => {
+            void unlockVoicePlayback().catch(() => undefined);
+            router.push({ pathname: '/voice', params: { connect: '1' } });
+          }}
           placeholder={t('chat.placeholder')}
           sendLabel={t('chat.send')}
           voiceLabel={t('chat.voice')}

@@ -13,12 +13,16 @@ import (
 )
 
 type speechLedger struct {
-	provider string
-	input    int
+	provider  string
+	input     int
+	requests  int
+	providers []string
 }
 
 func (l *speechLedger) Reserve(_ context.Context, provider string, _ int, _ ai.UsageLimits, _ time.Time) error {
 	l.provider = provider
+	l.requests++
+	l.providers = append(l.providers, provider)
 	return nil
 }
 func (l *speechLedger) RecordUsage(_ context.Context, _ string, usage ai.Usage, _ time.Time) error {
@@ -72,5 +76,111 @@ func TestPythonSpeechConfigurationRejectsInsecureRemoteTransport(t *testing.T) {
 		if _, err := LoadPythonSpeech(&speechLedger{}); err == nil {
 			t.Fatal("unsafe internal transport allowed")
 		}
+	}
+}
+
+func TestPythonSpeechFallsBackAndHonorsPrimaryCooldown(t *testing.T) {
+	data := make([]byte, 48)
+	copy(data, "RIFF")
+	binary.LittleEndian.PutUint32(data[4:], 40)
+	copy(data[8:], "WAVEfmt ")
+	binary.LittleEndian.PutUint32(data[16:], 16)
+	binary.LittleEndian.PutUint16(data[20:], 1)
+	binary.LittleEndian.PutUint16(data[22:], 1)
+	binary.LittleEndian.PutUint32(data[24:], 24000)
+	binary.LittleEndian.PutUint32(data[28:], 48000)
+	binary.LittleEndian.PutUint16(data[32:], 2)
+	binary.LittleEndian.PutUint16(data[34:], 16)
+	copy(data[36:], "data")
+	binary.LittleEndian.PutUint32(data[40:], 4)
+	var primary, fallback int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Text, Style, Language, Model string
+			Rate                         float64
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		if body.Text != "Hello" || body.Style != "ada" || body.Language != "en-NG" || body.Rate != 1 {
+			t.Error("Fallback lost the actual words or persona")
+		}
+		if body.Model == "" {
+			primary++
+			w.WriteHeader(429)
+			w.Write([]byte(`{"retry_after_seconds":3600}`))
+			return
+		}
+		if body.Model != "gemini-3.1-flash-tts-preview" {
+			t.Error("Unexpected fallback model")
+		}
+		fallback++
+		json.NewEncoder(w).Encode(Audio{Base64: base64.StdEncoding.EncodeToString(data), MIME: "audio/wav", InputTokens: 8})
+	}))
+	defer server.Close()
+	ledger := &speechLedger{}
+	speech := &PythonSpeech{endpoint: server.URL, client: server.Client(), limiter: ledger, fallbackModel: "gemini-3.1-flash-tts-preview"}
+	for range 2 {
+		if _, err := speech.Synthesise(context.Background(), "Hello", "ada", 1, "en-NG"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if primary != 1 || fallback != 2 || ledger.requests != 3 {
+		t.Fatal("Fallback retries or usage accounting were incorrect")
+	}
+	speech.cooldowns[""] = time.Now().Add(-time.Second)
+	if _, err := speech.Synthesise(context.Background(), "Hello", "ada", 1, "en-NG"); err != nil {
+		t.Fatal(err)
+	}
+	if primary != 2 {
+		t.Fatal("Primary was not reconsidered after quota reset")
+	}
+}
+
+func TestLiveSpeechUsesFastProviderAndRetainsWorkingFallback(t *testing.T) {
+	data := make([]byte, 48)
+	copy(data, "RIFF")
+	binary.LittleEndian.PutUint32(data[4:], 40)
+	copy(data[8:], "WAVEfmt ")
+	binary.LittleEndian.PutUint32(data[16:], 16)
+	binary.LittleEndian.PutUint16(data[20:], 1)
+	binary.LittleEndian.PutUint16(data[22:], 1)
+	binary.LittleEndian.PutUint32(data[24:], 24000)
+	binary.LittleEndian.PutUint32(data[28:], 48000)
+	binary.LittleEndian.PutUint16(data[32:], 2)
+	binary.LittleEndian.PutUint16(data[34:], 16)
+	copy(data[36:], "data")
+	binary.LittleEndian.PutUint32(data[40:], 4)
+	var selected []string
+	allowed := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Text, Style, Language, Model string
+			Rate                         float64
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		if body.Text != "Hey!" || body.Style != "ada" || body.Rate != 1 {
+			t.Error("Fast transport changed the reply or persona")
+		}
+		selected = append(selected, body.Model)
+		if body.Model == fastVoiceModel && !allowed {
+			w.WriteHeader(400)
+			w.Write([]byte(`{"error":"speech_terms_required"}`))
+			return
+		}
+		json.NewEncoder(w).Encode(Audio{Base64: base64.StdEncoding.EncodeToString(data), MIME: "audio/wav"})
+	}))
+	defer server.Close()
+	ledger := &speechLedger{}
+	speech := &PythonSpeech{endpoint: server.URL, client: server.Client(), limiter: ledger, fastVoice: true}
+	for _, language := range []string{"en-NG", "en-NG", "fr-FR"} {
+		if _, err := speech.SynthesiseLive(context.Background(), "Hey!", "ada", 1, language); err != nil {
+			t.Fatal(err)
+		}
+		allowed = false
+	}
+	if len(selected) != 4 || selected[0] != fastVoiceModel || selected[1] != fastVoiceModel || selected[2] != "" || selected[3] != "" {
+		t.Fatal("Fast voice or unsupported-language fallback was incorrect")
+	}
+	if len(ledger.providers) != 4 || ledger.providers[0] != "groq-voice" || ledger.providers[1] != "groq-voice" || ledger.providers[2] != "gemini-voice" || ledger.providers[3] != "gemini-voice" {
+		t.Fatal("Speech provider attempts were not accounted for separately")
 	}
 }

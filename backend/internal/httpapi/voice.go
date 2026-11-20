@@ -14,6 +14,10 @@ type SpeechTranscriber interface {
 	Transcribe(context.Context, []byte) (string, error)
 }
 
+type LanguageSpeechTranscriber interface {
+	TranscribeLanguage(context.Context, []byte, string) (string, error)
+}
+
 func registerVoiceRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerSpeechSamples(mux, deps.Synthesis, deps.Logger)
 	mux.HandleFunc("/v1/voice/speak", synthesisHandler(deps))
@@ -21,11 +25,14 @@ func registerVoiceRoutes(mux *http.ServeMux, deps Dependencies) {
 		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
+		_, liveSpeech := deps.Synthesis.(LiveSpeechSynthesiser)
 		writeJSON(w, http.StatusOK, struct {
-			Enabled       bool `json:"enabled"`
-			MaxSeconds    int  `json:"max_seconds"`
-			NaturalSpeech bool `json:"natural_speech"`
-		}{deps.Speech != nil && deps.Auth != nil && deps.Chat != nil, 60, deps.Synthesis != nil})
+			Enabled           bool `json:"enabled"`
+			MaxSeconds        int  `json:"max_seconds"`
+			NaturalSpeech     bool `json:"natural_speech"`
+			LiveSpeech        bool `json:"live_speech"`
+			LanguageSelection bool `json:"language_selection"`
+		}{deps.Speech != nil && deps.Auth != nil && deps.Chat != nil, 60, deps.Synthesis != nil, liveSpeech, true})
 	})
 	mux.HandleFunc("/v1/voice/transcribe", func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodPost) {
@@ -46,6 +53,20 @@ func registerVoiceRoutes(mux *http.ServeMux, deps Dependencies) {
 		}
 		if deps.Speech == nil {
 			writeAPIError(w, http.StatusServiceUnavailable, "voice_unavailable", "Voice transcription is not configured yet.")
+			return
+		}
+		language := r.URL.Query().Get("language")
+		if language == "" {
+			language = "en-NG"
+		}
+		for name, values := range r.URL.Query() {
+			if name != "language" || len(values) != 1 {
+				writeAPIError(w, 400, "invalid_request", "Choose one supported speech language.")
+				return
+			}
+		}
+		if !validSpeechLanguage(language) {
+			writeAPIError(w, 400, "invalid_request", "Choose a supported speech language.")
 			return
 		}
 		// Short recordings still need time to upload on slower mobile networks.
@@ -88,7 +109,12 @@ func registerVoiceRoutes(mux *http.ServeMux, deps Dependencies) {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 50*time.Second)
 		defer cancel()
-		text, err := deps.Speech.Transcribe(ctx, audio)
+		var text string
+		if transcriber, ok := deps.Speech.(LanguageSpeechTranscriber); ok {
+			text, err = transcriber.TranscribeLanguage(ctx, audio, language)
+		} else {
+			text, err = deps.Speech.Transcribe(ctx, audio)
+		}
 		if err != nil {
 			switch {
 			case errors.Is(err, voice.ErrNoSpeech):

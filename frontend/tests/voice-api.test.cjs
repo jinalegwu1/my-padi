@@ -47,3 +47,50 @@ test('external cancellation aborts both transcription and chat requests', async 
     }
   } finally { global.fetch = previous; }
 });
+
+test('live speech remains compatible with existing servers and enables routing only when advertised',async()=>{
+  const previous=global.fetch;
+  let supported=false;
+  let body;
+  global.fetch=async (url,request)=>{
+    const value=url.endsWith('/v1/voice/config')?{enabled:true,max_seconds:60,natural_speech:true,...(supported?{live_speech:true}:{})}:{audio_base64:'generated',mime_type:'audio/wav'};
+    if(url.endsWith('/v1/voice/speak'))body=JSON.parse(request.body);
+    return {ok:true,status:200,text:async()=>JSON.stringify(value)};
+  };
+  try {
+    await api.getVoiceConfiguration();
+    await api.synthesiseSpeech('token','Hello','ada',1,new AbortController().signal,'en-NG',true);
+    assert.equal(body.live,undefined);
+    supported=true;await api.getVoiceConfiguration();
+    await api.synthesiseSpeech('token','Hello','ada',1,new AbortController().signal,'en-NG',true);
+    assert.equal(body.live,true);
+  } finally {global.fetch=previous;}
+});
+
+test('selected voice language travels to transcription, chat and previews when supported',async()=>{
+  const previous=global.fetch;
+  let supported=false;
+  const calls=[];
+  global.fetch=async(url,request)=>{
+    calls.push({url,request});
+    const value=url.endsWith('/v1/voice/config')?{enabled:true,max_seconds:60,natural_speech:true,language_selection:supported}
+      :url.includes('/voice/preview')?{audio_base64:'audio',mime_type:'audio/wav',text:'Hello'}
+      :url.includes('/voice/transcribe')?{text:'Hello'}:{reply:'Hello',memory_revision:0};
+    return {ok:true,status:200,text:async()=>JSON.stringify(value)};
+  };
+  try {
+    await api.getVoiceConfiguration();
+    await api.sendChat('token',[{role:'user',content:'Bonjour'}],0,undefined,'voice',undefined,'en-GB');
+    assert.equal(JSON.parse(calls.at(-1).request.body).language,undefined,'Older servers keep their request format');
+    supported=true;await api.getVoiceConfiguration();
+    const form=new FormData();
+    await api.transcribeAudio('token',form,new AbortController().signal,'en-GB');
+    assert.equal(calls.at(-1).url,'https://padi.test/v1/voice/transcribe?language=en-GB');
+    assert.equal(calls.at(-1).request.body,form);
+    await api.sendChat('token',[{role:'user',content:'Bonjour'}],0,undefined,'voice',undefined,'en-GB');
+    assert.equal(JSON.parse(calls.at(-1).request.body).language,'en-GB');
+    await api.fetchVoiceSample('preview','tunde','en-GB',1,new AbortController().signal);
+    assert.ok(calls.at(-1).url.endsWith('&language=en-GB'));
+    supported=false;await api.getVoiceConfiguration();
+  }finally{global.fetch=previous;}
+});

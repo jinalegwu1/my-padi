@@ -221,7 +221,7 @@ export default function LocationStep() {
       stepLabel={t('onboarding.step', { current: 3, total: 3 })}
       title={t('onboarding.location.title')}
       subtitle={t('onboarding.location.subtitle')}
-      onBack={preferences.onboarded ? undefined : () => router.back()}
+      onBack={preferences.onboarded ? undefined : () => { if (router.canGoBack()) router.back(); else router.replace('/onboarding/language'); }}
       backLabel="Back"
       footer={
         <>

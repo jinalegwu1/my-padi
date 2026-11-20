@@ -19,6 +19,7 @@ import (
 	"github.com/jinalegwu1/my-padi/backend/internal/config"
 	"github.com/jinalegwu1/my-padi/backend/internal/database"
 	"github.com/jinalegwu1/my-padi/backend/internal/httpapi"
+	pushnotifications "github.com/jinalegwu1/my-padi/backend/internal/push"
 	"github.com/jinalegwu1/my-padi/backend/internal/voice"
 )
 
@@ -51,6 +52,11 @@ func run(logger *slog.Logger) error {
 	var readiness httpapi.ReadinessChecker
 	var authService *auth.Service
 	var memoryStore httpapi.MemoryAPI
+	var responseFeedbackStore httpapi.ResponseFeedbackAPI
+	var personalityPreferencesStore httpapi.PersonalityPreferencesAPI
+	var checkInPreferencesStore httpapi.CheckInPreferencesAPI
+	var pushDeviceStore httpapi.PushDeviceAPI
+	var persistentPushStore *database.PushStore
 	if cfg.DatabaseURL != "" {
 		openContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		openedDB, err := database.Open(openContext, cfg.DatabaseURL)
@@ -77,6 +83,35 @@ func run(logger *slog.Logger) error {
 			return fmt.Errorf("configure personal memory: %w", err)
 		}
 		memoryStore = store
+		feedbackContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		feedbackStore, err := database.NewResponseFeedbackStore(feedbackContext, db)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("configure response feedback: %w", err)
+		}
+		responseFeedbackStore = feedbackStore
+		personalityContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		preferencesStore, err := database.NewPersonalityPreferencesStore(personalityContext, db)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("configure personality preferences: %w", err)
+		}
+		personalityPreferencesStore = preferencesStore
+		checkInContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		checkInStore, err := database.NewCheckInPreferencesStore(checkInContext, db)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("configure check-in preferences: %w", err)
+		}
+		checkInPreferencesStore = checkInStore
+		pushContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		pushStore, err := database.NewPushStore(pushContext, db)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("configure push notifications: %w", err)
+		}
+		pushDeviceStore = pushStore
+		persistentPushStore = pushStore
 	} else {
 		logger.Warn("DATABASE_URL is not set; API will not be ready for data-backed requests")
 		if bypassOTP || hasAuthenticationConfiguration() {
@@ -145,6 +180,14 @@ func run(logger *slog.Logger) error {
 
 	signalContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if persistentPushStore != nil {
+		pushWorker := pushnotifications.NewWorker(
+			persistentPushStore,
+			pushnotifications.NewExpoSender(nil, os.Getenv("PADI_EXPO_ACCESS_TOKEN")),
+			logger,
+		)
+		go pushWorker.Run(signalContext, 30*time.Second)
+	}
 	var authAPI httpapi.AuthAPI
 	if authService != nil {
 		authAPI = authService
@@ -163,6 +206,10 @@ func run(logger *slog.Logger) error {
 			Logger:               logger,
 			DevelopmentOTPBypass: bypassOTP,
 			Memory:               memoryStore,
+			ResponseFeedback:     responseFeedbackStore,
+			Personality:          personalityPreferencesStore,
+			CheckIns:             checkInPreferencesStore,
+			PushDevices:          pushDeviceStore,
 			Speech:               speechAPI,
 			Synthesis:            synthesisAPI,
 		}),

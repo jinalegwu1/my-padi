@@ -6,12 +6,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jinalegwu1/my-padi/backend/internal/ai"
 	"github.com/jinalegwu1/my-padi/backend/internal/auth"
+	"github.com/jinalegwu1/my-padi/backend/internal/personality"
 )
 
 type testAuthAPI struct {
@@ -103,6 +105,45 @@ type testChatGenerator struct {
 
 type emptyChatGenerator struct{}
 
+type testConversationFeedback struct {
+	userID  string
+	ratings map[string]map[string]string
+	calls   int
+	err     error
+}
+
+func (store *testConversationFeedback) Submit(_ context.Context, userID string, feedback personality.Feedback) error {
+	if store.err != nil {
+		return store.err
+	}
+	if store.ratings == nil {
+		store.ratings = make(map[string]map[string]string)
+	}
+	if store.ratings[userID] == nil {
+		store.ratings[userID] = make(map[string]string)
+	}
+	store.ratings[userID][feedback.MessageID] = feedback.Rating
+	return nil
+}
+
+func (store *testConversationFeedback) RecentHumourFeedback(_ context.Context, userID string) (personality.FeedbackTrend, error) {
+	store.userID = userID
+	store.calls++
+	if store.err != nil {
+		return personality.FeedbackTrend{}, store.err
+	}
+	var trend personality.FeedbackTrend
+	for _, rating := range store.ratings[userID] {
+		switch rating {
+		case "liked_humour":
+			trend.LikedHumour++
+		case "unwanted_humour":
+			trend.UnwantedHumour++
+		}
+	}
+	return trend, nil
+}
+
 func (emptyChatGenerator) Generate(context.Context, ai.Request) (ai.Response, error) {
 	return ai.Response{}, nil
 }
@@ -111,6 +152,78 @@ func (generator *testChatGenerator) Generate(_ context.Context, request ai.Reque
 	generator.calls++
 	generator.request = request
 	return ai.Response{Content: "Real PADI response"}, generator.err
+}
+
+func TestChatLearnsFromFeedbackAcrossConversationsWithoutCrossingAccounts(t *testing.T) {
+	feedback := &testConversationFeedback{ratings: make(map[string]map[string]string)}
+	preferences := &testPersonalityPreferencesAPI{current: personality.DefaultPreferences()}
+	preferences.current.LearnFromFeedback = true
+	generator := &testChatGenerator{}
+	ownerRouter := NewRouter(nil, Dependencies{
+		Auth:             testAuthAPI{user: auth.User{ID: "owner"}},
+		Chat:             generator,
+		Personality:      preferences,
+		ResponseFeedback: feedback,
+	})
+	send := func(router http.Handler, method, path, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		request.Header.Set("Authorization", "Bearer valid")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response
+	}
+	for conversation := 1; conversation <= 3; conversation++ {
+		feedbackResponse := send(ownerRouter, http.MethodPost, "/v1/personality/feedback",
+			`{"message_id":"padi_reply_`+strconv.Itoa(conversation)+`","rating":"liked_humour"}`)
+		if feedbackResponse.Code != http.StatusNoContent {
+			t.Fatalf("conversation %d feedback status = %d, body = %s", conversation, feedbackResponse.Code, feedbackResponse.Body.String())
+		}
+		chatResponse := send(ownerRouter, http.MethodPost, "/v1/chat",
+			`{"messages":[{"role":"user","content":"Can you explain how rain forms?"}]}`)
+		wantHumour := conversation == 3
+		if chatResponse.Code != http.StatusOK || feedback.calls != conversation ||
+			feedback.userID != "owner" ||
+			strings.Contains(generator.request.StyleGuidance, "Humour is welcome") != wantHumour {
+			t.Fatalf("conversation %d: status=%d queries=%d user=%q guidance=%q",
+				conversation, chatResponse.Code, feedback.calls, feedback.userID, generator.request.StyleGuidance)
+		}
+	}
+
+	distressResponse := send(ownerRouter, http.MethodPost, "/v1/chat",
+		`{"messages":[{"role":"user","content":"My mother died and I feel lost."}]}`)
+	if distressResponse.Code != http.StatusOK ||
+		!strings.Contains(generator.request.StyleGuidance, "Humour is not appropriate") ||
+		strings.Contains(generator.request.StyleGuidance, "Humour is welcome") {
+		t.Fatalf("learned humour overrode distress guidance: status=%d guidance=%q",
+			distressResponse.Code, generator.request.StyleGuidance)
+	}
+
+	otherPreferences := &testPersonalityPreferencesAPI{current: personality.DefaultPreferences()}
+	otherPreferences.current.LearnFromFeedback = true
+	otherGenerator := &testChatGenerator{}
+	otherRouter := NewRouter(nil, Dependencies{
+		Auth:             testAuthAPI{user: auth.User{ID: "other"}},
+		Chat:             otherGenerator,
+		Personality:      otherPreferences,
+		ResponseFeedback: feedback,
+	})
+	otherResponse := send(otherRouter, http.MethodPost, "/v1/chat",
+		`{"messages":[{"role":"user","content":"Can you explain how rain forms?"}]}`)
+	if otherResponse.Code != http.StatusOK || feedback.userID != "other" ||
+		strings.Contains(otherGenerator.request.StyleGuidance, "Humour is welcome") {
+		t.Fatalf("another account inherited feedback: status=%d user=%q guidance=%q",
+			otherResponse.Code, feedback.userID, otherGenerator.request.StyleGuidance)
+	}
+
+	preferences.current.LearnFromFeedback = false
+	queriesBeforeOptOut := feedback.calls
+	optedOutResponse := send(ownerRouter, http.MethodPost, "/v1/chat",
+		`{"messages":[{"role":"user","content":"Can you explain how rain forms?"}]}`)
+	if optedOutResponse.Code != http.StatusOK || feedback.calls != queriesBeforeOptOut {
+		t.Fatalf("feedback queried without opt-in: status=%d calls=%d want=%d",
+			optedOutResponse.Code, feedback.calls, queriesBeforeOptOut)
+	}
 }
 
 func TestChatRequiresValidBearerSession(t *testing.T) {
@@ -161,6 +274,31 @@ func TestAuthenticatedChatCallsGeneratorAndReturnsResponse(t *testing.T) {
 		generator.request.Messages[0].Role != ai.RoleSystem || !strings.Contains(generator.request.Messages[0].Content, `"account_name":"Ada"`) ||
 		generator.request.Messages[3].Content != "How are you?" {
 		t.Fatalf("generator request = %+v", generator.request)
+	}
+}
+
+func TestChatAddsContextualPersonalityGuidanceWithoutLabelingUsers(t *testing.T) {
+	for _, test := range []struct {
+		message string
+		want    string
+	}{
+		{message: "I'm bored, please make me laugh.", want: "use a playful tone. Humour is welcome"},
+		{message: "My mother died and I feel lost.", want: "use an empathetic tone. Humour is not appropriate"},
+	} {
+		generator := &testChatGenerator{}
+		router := NewRouter(nil, Dependencies{
+			Auth: testAuthAPI{user: auth.User{ID: "user-1"}},
+			Chat: generator,
+		})
+		body, _ := json.Marshal(map[string]any{"messages": []map[string]string{{"role": "user", "content": test.message}}})
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/v1/chat", strings.NewReader(string(body)))
+		request.Header.Set("Authorization", "Bearer valid-session-token")
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusOK ||
+			!strings.Contains(generator.request.StyleGuidance, test.want) {
+			t.Fatalf("response = %d %s, guidance = %+v", response.Code, response.Body.String(), generator.request.Messages)
+		}
 	}
 }
 

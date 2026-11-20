@@ -12,6 +12,7 @@ type SettingRowProps = {
   subtitle?: string;
   value?: string;
   onPress?: () => void;
+  disabled?: boolean;
   right?: ReactNode;
   /** Tints the icon chip with the accent colour instead of the primary colour. */
   accent?: boolean;
@@ -26,6 +27,7 @@ export function SettingRow({
   subtitle,
   value,
   onPress,
+  disabled,
   right,
   accent,
   destructive,
@@ -77,6 +79,8 @@ export function SettingRow({
       accessibilityLabel={subtitle ? `${title}. ${subtitle}` : title}
       accessibilityHint={accessibilityHint}
       onPress={onPress}
+      disabled={disabled}
+      accessibilityState={disabled ? { disabled: true } : undefined}
       style={({ pressed }) => [styles.row, pressed && { opacity: 0.65 }]}>
       {content}
     </Pressable>

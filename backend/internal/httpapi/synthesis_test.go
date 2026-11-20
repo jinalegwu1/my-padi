@@ -33,3 +33,17 @@ func TestPersonalSpeechKeepsLanguageAndRejectsUnapprovedDelivery(t *testing.T) {
 		t.Fatal("unapproved speech reached generation or selected language was lost")
 	}
 }
+
+func TestPersonalSpeechPassesTheGeneratedReplyToVoiceWithoutRegeneratingIt(t *testing.T) {
+	reply := "I'm sorry you are carrying so much right now. I can listen, or we can work through one next step together."
+	speech := &sampleSpeech{}
+	router := NewRouter(nil, Dependencies{Auth: testAuthAPI{}, Synthesis: speech})
+	request := httptest.NewRequest("POST", "/v1/voice/speak",
+		strings.NewReader(`{"text":"`+reply+`","style":"ada","rate":1,"language":"en-NG"}`))
+	request.Header.Set("Authorization", "Bearer test")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != 200 || speech.calls != 1 || speech.texts[0] != reply {
+		t.Fatalf("voice did not synthesize the exact generated reply: status = %d, text = %q", response.Code, speech.texts)
+	}
+}

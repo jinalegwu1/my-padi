@@ -14,6 +14,10 @@ type SpeechSynthesiser interface {
 	Synthesise(context.Context, string, string, float64, string) (voice.Audio, error)
 }
 
+type LiveSpeechSynthesiser interface {
+	SynthesiseLive(context.Context, string, string, float64, string) (voice.Audio, error)
+}
+
 func validSpeechLanguage(language string) bool {
 	switch language {
 	case "en-NG", "pcm-NG", "en-GB", "fr-FR", "pt-BR", "es-ES", "ar-SA", "sw-KE", "ha-NG", "yo-NG", "ig-NG", "am-ET", "hi-IN", "zh-CN":
@@ -49,6 +53,7 @@ func synthesisHandler(deps Dependencies) http.HandlerFunc {
 			Style    string  `json:"style"`
 			Rate     float64 `json:"rate"`
 			Language string  `json:"language"`
+			Live     bool    `json:"live"`
 		}
 		if decodeRequest(w, r, 64*1024, &body) != nil || !utf8.ValidString(body.Text) || strings.TrimSpace(body.Text) == "" || len(body.Text) > 8192 || body.Rate < 0.5 || body.Rate > 1.5 {
 			writeAPIError(w, 400, "invalid_request", "The spoken reply is invalid.")
@@ -72,7 +77,13 @@ func synthesisHandler(deps Dependencies) http.HandlerFunc {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 		defer cancel()
-		audio, err := deps.Synthesis.Synthesise(ctx, body.Text, body.Style, body.Rate, body.Language)
+		var audio voice.Audio
+		var err error
+		if fast, ok := deps.Synthesis.(LiveSpeechSynthesiser); ok && body.Live {
+			audio, err = fast.SynthesiseLive(ctx, body.Text, body.Style, body.Rate, body.Language)
+		} else {
+			audio, err = deps.Synthesis.Synthesise(ctx, body.Text, body.Style, body.Rate, body.Language)
+		}
 		if err != nil {
 			status, code, _ := classifyChatError(err)
 			message := "PADI could not generate its natural voice right now. The reply is available as text."

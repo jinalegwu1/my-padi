@@ -43,8 +43,13 @@ func TestPublicSamplesKeepTheirSelectedVoiceAndLanguage(t *testing.T) {
 		{"/v1/voice/welcome?style=baby&language=en-NG", "baby", "en-NG"},
 		{"/v1/voice/welcome?style=ada&language=pcm-NG", "ada", "pcm-NG"},
 		{"/v1/voice/welcome?style=chidi&language=fr", "chidi", "fr-FR"},
-		{"/v1/voice/preview?style=tunde&rate=1", "tunde", "pcm-NG"},
+		{"/v1/voice/preview?style=tunde&rate=1", "tunde", "en-NG"},
+		{"/v1/voice/preview?style=tunde&rate=1&language=en-GB", "tunde", "en-GB"},
+		{"/v1/voice/preview?style=tunde&rate=1&language=pcm-NG", "tunde", "pcm-NG"},
 		{"/v1/voice/preview?style=baby&rate=1", "baby", "en-NG"},
+		{"/v1/voice/call?style=ada&language=en-NG&rate=1", "ada", "en-NG"},
+		{"/v1/voice/call?style=tunde&language=pcm-NG&rate=1.15", "tunde", "pcm-NG"},
+		{"/v1/voice/call?style=chidi&language=fr-FR&rate=0.85", "chidi", "fr-FR"},
 	} {
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, httptest.NewRequest("GET", sample.path, nil))
@@ -65,7 +70,10 @@ func TestPublicVoiceSamplesAcceptOnlyFixedPhrases(t *testing.T) {
 		"/v1/voice/welcome?style=ada&style=tunde",
 		"/v1/voice/welcome?rate=1",
 		"/v1/voice/preview?rate=2",
-		"/v1/voice/preview?language=en-NG",
+		"/v1/voice/preview?language=unknown",
+		"/v1/voice/call?text=private+message",
+		"/v1/voice/call?language=unknown",
+		"/v1/voice/call?rate=2",
 	} {
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, httptest.NewRequest("GET", path, nil))
@@ -80,6 +88,24 @@ func TestPublicVoiceSamplesAcceptOnlyFixedPhrases(t *testing.T) {
 	}
 	if speech.calls != 0 {
 		t.Fatal("unapproved public text reached speech generation")
+	}
+}
+
+func TestLiveGreetingIsCachedAndKeepsFixedWords(t *testing.T) {
+	speech := &sampleSpeech{}
+	router := NewRouter(nil, Dependencies{Synthesis: speech})
+	for range 2 {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest("GET", "/v1/voice/call?style=baby&language=en-NG&rate=1", nil))
+		var body struct {
+			Text string `json:"text"`
+		}
+		if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &body) != nil || body.Text != callWords["en-NG"] {
+			t.Fatal("Live greeting lost its fixed spoken words")
+		}
+	}
+	if speech.calls != 1 {
+		t.Fatal("Repeated calls regenerated the same public greeting")
 	}
 }
 

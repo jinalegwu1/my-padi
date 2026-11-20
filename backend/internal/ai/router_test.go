@@ -87,8 +87,8 @@ func TestRouterInjectsOneSharedPADIInstructionForAllProviders(t *testing.T) {
 		map[string]Provider{"test": provider},
 		RoutingConfig{PrimaryModel: "main"}, nil)
 
-	if _, err := router.Generate(context.Background(), Request{Messages: []Message{
-		{Role: RoleSystem, Content: "Respond in the user's selected language."},
+	if _, err := router.Generate(context.Background(), Request{StyleGuidance: "Use a friendly tone.", Messages: []Message{
+		{Role: RoleSystem, Content: "Respond in the user's selected language. The user prefers serious conversation."},
 		{Role: RoleUser, Content: "Hello"},
 	}}); err != nil {
 		t.Fatalf("Generate() error = %v", err)
@@ -100,8 +100,14 @@ func TestRouterInjectsOneSharedPADIInstructionForAllProviders(t *testing.T) {
 	if len(messages) != 2 || messages[0].Role != RoleSystem ||
 		!strings.Contains(messages[0].Content, "one consistent AI companion") ||
 		!strings.Contains(messages[0].Content, "selected language") ||
+		!strings.Contains(messages[0].Content, "response guidance, not fixed modes") ||
+		!strings.Contains(messages[0].Content, "Never joke about a user's suffering") ||
+		!strings.Contains(messages[0].Content, "stop joking") ||
+		!strings.Contains(messages[0].Content, "signals are uncertain, not diagnoses") ||
+		!strings.Contains(messages[0].Content, "Use a friendly tone.") ||
+		!strings.Contains(messages[0].Content, "Do not infer a lasting preference") ||
 		messages[1].Role != RoleUser {
-		t.Fatalf("provider request messages = %+v, want shared PADI instructions and user message", messages)
+		t.Fatalf("provider request messages = %+v, want shared personality guidance, application context, and user message", messages)
 	}
 }
 

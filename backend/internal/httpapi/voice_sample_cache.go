@@ -14,10 +14,10 @@ import (
 
 // Bump when speech delivery or style mappings change. Model, original voice,
 // phrase, language, and rate are included separately in each file's key.
-const publicSpeechCacheVersion = "padi-expressive-speech-2"
+const publicSpeechCacheVersion = "padi-expressive-speech-3"
 
 type speechFileCache struct {
-	directory, model, originalVoice string
+	directory, model, originalVoice, liveProvider string
 }
 
 type storedPublicSpeech struct {
@@ -30,11 +30,17 @@ func newSpeechFileCache() *speechFileCache {
 	if directory == "" {
 		return nil
 	}
-	return &speechFileCache{directory, os.Getenv("PADI_VOICE_MODEL"), os.Getenv("PADI_VOICE_DEFAULT_ID")}
+	return &speechFileCache{directory, os.Getenv("PADI_VOICE_MODEL"), os.Getenv("PADI_VOICE_DEFAULT_ID"), os.Getenv("PADI_LIVE_VOICE_PROVIDER")}
 }
 
 func (cache *speechFileCache) filename(key, text string) string {
-	digest := sha256.Sum256([]byte(strings.Join([]string{publicSpeechCacheVersion, cache.model, cache.originalVoice, key, text}, "\n")))
+	parts := []string{publicSpeechCacheVersion, cache.model, cache.originalVoice, key, text}
+	if cache.liveProvider == "groq" {
+		// Version one could contain Gemini fallback clips when streamed Groq
+		// WAV headers were rejected. Regenerate those with the working voice.
+		parts = append(parts, "groq-orpheus-2")
+	}
+	digest := sha256.Sum256([]byte(strings.Join(parts, "\n")))
 	return filepath.Join(cache.directory, hex.EncodeToString(digest[:])+".json")
 }
 

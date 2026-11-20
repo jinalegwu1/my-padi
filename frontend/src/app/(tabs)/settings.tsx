@@ -17,14 +17,28 @@ import { fonts, radius, spacing, useColors, useType } from '@/constants/theme';
 import { findCountry } from '@/data/countries';
 import { findVoice, languageLabel } from '@/data/languages';
 import { useMemory } from '@/hooks/use-memory';
+import { useCheckInPreferences } from '@/hooks/use-check-in-preferences';
+import { usePersonalityPreferences } from '@/hooks/use-personality-preferences';
 import { usePreferences } from '@/hooks/use-preferences';
 import { useTranslation } from '@/hooks/use-translation';
 import { formatTimeLabel, timeSlots } from '@/lib/date';
-import type { AppearanceMode } from '@/types';
+import type { AppearanceMode, CheckInPreferences, CheckInPreferencesPatch } from '@/types';
+
+type CheckInTimeTarget = 'morning_time' | 'afternoon_time' | 'evening_time' | 'quiet_hours_start' | 'quiet_hours_end';
+
+function checkInTimePatch(target: CheckInTimeTarget, time: string, preferences: CheckInPreferences): CheckInPreferencesPatch {
+  switch (target) {
+    case 'morning_time': return { morning_time: time };
+    case 'afternoon_time': return { afternoon_time: time };
+    case 'evening_time': return { evening_time: time };
+    case 'quiet_hours_start': return { quiet_hours_start: time, quiet_hours_end: preferences.quiet_hours_end };
+    case 'quiet_hours_end': return { quiet_hours_start: preferences.quiet_hours_start, quiet_hours_end: time };
+  }
+}
 
 /**
- * Settings: language, voice, appearance, memory, notifications, daily check-in
- * and accessibility. Every control is a frontend preference stored on the phone.
+ * Settings: device preferences stay local; memory, personality, and check-ins
+ * are account-scoped and synchronized with the backend.
  */
 export default function SettingsScreen() {
   const router = useRouter();
@@ -32,6 +46,8 @@ export default function SettingsScreen() {
   const type = useType();
   const { t } = useTranslation();
   const { preferences, update, reset } = usePreferences();
+  const checkIns = useCheckInPreferences(preferences.languageCode);
+  const personality = usePersonalityPreferences();
   const { accountID, counts, enabled: memoryEnabled, status: memoryStatus, busy: memoryBusy, error: memoryError, reload, setEnabled } = useMemory();
   const [memoryConsentOpen, setMemoryConsentOpen] = useState(false);
   const [memoryConsentAccount, setMemoryConsentAccount] = useState<string | null>(null);
@@ -41,7 +57,7 @@ export default function SettingsScreen() {
   const [languageOpen, setLanguageOpen] = useState(false);
   const [countryOpen, setCountryOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
-  const [checkInOpen, setCheckInOpen] = useState(false);
+  const [checkInTimeTarget, setCheckInTimeTarget] = useState<CheckInTimeTarget | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
 
   const country = findCountry(preferences.countryCode);
@@ -68,7 +84,7 @@ export default function SettingsScreen() {
           <Text style={[styles.subtitle, { color: colors.muted, fontSize: type.caption }]}>
             {preferences.displayName
               ? `PADI calls you ${preferences.displayName}.`
-              : 'Everything here is stored on this phone.'}
+              : t('settings.storage')}
           </Text>
         </View>
 
@@ -119,6 +135,75 @@ export default function SettingsScreen() {
             value={preferences.showVoiceTranscript}
             onValueChange={(value) => update({ showVoiceTranscript: value })}
           />
+        </SettingsGroup>
+
+        <SectionHeader
+          title={t('settings.personality')}
+          subtitle={t('settings.personality.hint')}
+        />
+        <SettingsGroup>
+          {personality.status === 'ready' && personality.preferences ? (
+            <>
+              <View style={styles.personalityControl}>
+                <Text style={[styles.personalityLabel, { color: colors.text, fontSize: type.body }]}>
+                  {t('settings.personality.humour')}
+                </Text>
+                <SegmentedControl
+                  accessibilityLabel={t('settings.personality.humour')}
+                  value={personality.preferences.humour}
+                  options={[
+                    { value: 'off', label: t('settings.personality.humour.off') },
+                    { value: 'subtle', label: t('settings.personality.humour.subtle') },
+                    { value: 'occasional', label: t('settings.personality.humour.occasional') },
+                    { value: 'frequent', label: t('settings.personality.humour.frequent') },
+                  ]}
+                  disabled={personality.saving}
+                  onChange={(humour) => { void personality.update({ humour }); }}
+                />
+              </View>
+              <View style={styles.personalityControl}>
+                <Text style={[styles.personalityLabel, { color: colors.text, fontSize: type.body }]}>
+                  {t('settings.personality.tone')}
+                </Text>
+                <SegmentedControl
+                  accessibilityLabel={t('settings.personality.tone')}
+                  value={personality.preferences.tone}
+                  options={[
+                    { value: 'adaptive', label: t('settings.personality.tone.adaptive') },
+                    { value: 'playful', label: t('settings.personality.tone.playful') },
+                    { value: 'gentle', label: t('settings.personality.tone.gentle') },
+                    { value: 'direct', label: t('settings.personality.tone.direct') },
+                    { value: 'serious', label: t('settings.personality.tone.serious') },
+                  ]}
+                  disabled={personality.saving}
+                  onChange={(tone) => { void personality.update({ tone }); }}
+                />
+              </View>
+              <SwitchRow
+                icon="sparkles-outline"
+                title={t('settings.personality.learn')}
+                subtitle={t('settings.personality.learn.hint')}
+                value={personality.preferences.learn_from_feedback}
+                disabled={personality.saving}
+                onValueChange={(learn_from_feedback) => { void personality.update({ learn_from_feedback }); }}
+              />
+            </>
+          ) : personality.status === 'loading' ? (
+            <Text style={[styles.personalityMessage, { color: colors.muted, fontSize: type.caption }]}>
+              {t('common.loading')}
+            </Text>
+          ) : (
+            <Text
+              accessibilityRole={personality.status === 'error' ? 'alert' : undefined}
+              style={[styles.personalityMessage, { color: personality.status === 'error' ? colors.danger : colors.muted, fontSize: type.caption }]}>
+              {personality.error ?? 'Sign in to manage your conversation style.'}
+            </Text>
+          )}
+          {personality.error && personality.status === 'ready' ? (
+            <Text accessibilityRole="alert" style={[styles.personalityMessage, { color: colors.danger, fontSize: type.caption }]}>
+              {personality.error}
+            </Text>
+          ) : null}
         </SettingsGroup>
 
         {/* Appearance */}
@@ -191,26 +276,93 @@ export default function SettingsScreen() {
         {memoryError ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{memoryError}</Text> : null}
         <SectionHeader title={t('settings.notifications')} subtitle={t('settings.notifications.hint')} />
         <SettingsGroup>
-          <SwitchRow
-            icon="notifications-outline"
-            title={t('settings.notifications')}
-            subtitle="Reminder and message alerts. Not switched on yet."
-            value={preferences.notificationsEnabled}
-            onValueChange={(value) => update({ notificationsEnabled: value })}
-          />
-          <SwitchRow
-            icon="sunny-outline"
-            title={t('settings.checkIn')}
-            subtitle={t('settings.checkIn.hint')}
-            value={preferences.dailyCheckIn}
-            onValueChange={(value) => update({ dailyCheckIn: value })}
-          />
-          <SettingRow
-            icon="time-outline"
-            title={t('settings.checkIn.time')}
-            value={formatTimeLabel(preferences.checkInTime)}
-            onPress={() => setCheckInOpen(true)}
-          />
+          {checkIns.status === 'ready' && checkIns.preferences ? (
+            <>
+              {([
+                ['morning', 'morning_enabled', 'morning_time'],
+                ['afternoon', 'afternoon_enabled', 'afternoon_time'],
+                ['evening', 'evening_enabled', 'evening_time'],
+              ] as const).map(([slot, enabledKey, timeKey]) => (
+                <View key={slot}>
+                  <SwitchRow
+                    icon={slot === 'morning' ? 'sunny-outline' : slot === 'afternoon' ? 'partly-sunny-outline' : 'moon-outline'}
+                    title={t(`settings.checkIn.${slot}`)}
+                    value={checkIns.preferences![enabledKey]}
+                    disabled={checkIns.saving}
+                    onValueChange={(value) => { void checkIns.update({ [enabledKey]: value }); }}
+                  />
+                  <SettingRow
+                    icon="time-outline"
+                    title={t(`settings.checkIn.${slot}`)}
+                    subtitle={t('settings.checkIn.time')}
+                    value={formatTimeLabel(checkIns.preferences![timeKey])}
+                    disabled={checkIns.saving}
+                    onPress={() => setCheckInTimeTarget(timeKey)}
+                  />
+                </View>
+              ))}
+              <SwitchRow
+                icon="moon-outline"
+                title={t('settings.checkIn.quietHours')}
+                subtitle={t('settings.checkIn.quietHours.hint')}
+                value={checkIns.preferences.quiet_hours_enabled}
+                disabled={checkIns.saving}
+                onValueChange={(quiet_hours_enabled) => {
+                  void checkIns.update({
+                    quiet_hours_enabled,
+                    quiet_hours_start: checkIns.preferences!.quiet_hours_start,
+                    quiet_hours_end: checkIns.preferences!.quiet_hours_end,
+                  });
+                }}
+              />
+              {checkIns.preferences.quiet_hours_enabled ? (
+                <>
+                  <SettingRow
+                    icon="time-outline"
+                    title={t('settings.checkIn.quietHours.start')}
+                    value={formatTimeLabel(checkIns.preferences.quiet_hours_start)}
+                    disabled={checkIns.saving}
+                    onPress={() => setCheckInTimeTarget('quiet_hours_start')}
+                  />
+                  <SettingRow
+                    icon="time-outline"
+                    title={t('settings.checkIn.quietHours.end')}
+                    value={formatTimeLabel(checkIns.preferences.quiet_hours_end)}
+                    disabled={checkIns.saving}
+                    onPress={() => setCheckInTimeTarget('quiet_hours_end')}
+                  />
+                </>
+              ) : null}
+              <Text style={[styles.personalityMessage, { color: colors.muted, fontSize: type.caption }]}>
+                {t('settings.checkIn.localTime')}: {checkIns.preferences.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time'}
+              </Text>
+            </>
+          ) : checkIns.status === 'loading' ? (
+            <Text style={[styles.personalityMessage, { color: colors.muted, fontSize: type.caption }]}>
+              {t('common.loading')}
+            </Text>
+          ) : (
+            <Text
+              accessibilityRole="alert"
+              style={[styles.personalityMessage, { color: checkIns.status === 'error' ? colors.danger : colors.muted, fontSize: type.caption }]}>
+              {checkIns.error ?? t('settings.checkIn.signIn')}
+            </Text>
+          )}
+          {checkIns.error && checkIns.status === 'ready' ? (
+            <Text accessibilityRole="alert" style={[styles.personalityMessage, { color: colors.danger, fontSize: type.caption }]}>
+              {checkIns.error}
+            </Text>
+          ) : null}
+          {checkIns.quietHoursWarning ? (
+            <Text accessibilityRole="alert" style={[styles.personalityMessage, { color: colors.muted, fontSize: type.caption }]}>
+              {checkIns.quietHoursWarning}
+            </Text>
+          ) : null}
+          {checkIns.deliveryWarning ? (
+            <Text accessibilityRole="alert" style={[styles.personalityMessage, { color: colors.warning, fontSize: type.caption }]}>
+              {checkIns.deliveryWarning}
+            </Text>
+          ) : null}
         </SettingsGroup>
 
         {/* Accessibility */}
@@ -365,12 +517,14 @@ export default function SettingsScreen() {
 
       {/* Check-in time sheet */}
       <Sheet
-        visible={checkInOpen}
-        title={t('settings.checkIn.time')}
-        onClose={() => setCheckInOpen(false)}>
+        visible={checkInTimeTarget !== null}
+        title={checkInTimeTarget?.startsWith('quiet_hours') ? t('settings.checkIn.quietHours') : t('settings.checkIn.time')}
+        onClose={() => setCheckInTimeTarget(null)}>
         <View style={styles.timeGrid}>
           {timeSlots().map((slot) => {
-            const selected = slot === preferences.checkInTime;
+            const selected = checkIns.preferences && checkInTimeTarget
+              ? slot === checkIns.preferences[checkInTimeTarget]
+              : false;
             return (
               <Pressable
                 key={slot}
@@ -378,8 +532,10 @@ export default function SettingsScreen() {
                 accessibilityState={{ selected }}
                 accessibilityLabel={formatTimeLabel(slot)}
                 onPress={() => {
-                  update({ checkInTime: slot });
-                  setCheckInOpen(false);
+                  if (checkInTimeTarget && checkIns.preferences) {
+                    void checkIns.update(checkInTimePatch(checkInTimeTarget, slot, checkIns.preferences));
+                  }
+                  setCheckInTimeTarget(null);
                 }}
                 style={({ pressed }) => [
                   styles.timeChip,
@@ -462,6 +618,9 @@ const styles = StyleSheet.create({
   textSizeLabel: { flex: 1, fontFamily: fonts.medium },
   textSizeValue: { fontFamily: fonts.semibold },
   textSizeButtons: { flexDirection: 'row', gap: spacing.sm },
+  personalityControl: { paddingHorizontal: spacing.base, paddingVertical: spacing.sm, gap: spacing.sm },
+  personalityLabel: { fontFamily: fonts.medium },
+  personalityMessage: { padding: spacing.base, fontFamily: fonts.regular },
   textSizeButton: {
     flex: 1,
     height: 44,

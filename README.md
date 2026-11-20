@@ -55,6 +55,34 @@ still stored on the phone, not PostgreSQL. Personal memory now stores explicitly
 approved facts against accounts in PostgreSQL, with opt-in use in relevant AI
 replies and review, correction, pause, and deletion controls. See the
 [personal-memory verification](./docs/personal-memory-verification.md).
+PADI's current-turn personality guidance and account-scoped humour/tone
+preferences are implemented; mood labels are not persisted, and learning from
+response feedback is opt-in. Users can also configure account-synced morning,
+afternoon, and evening check-ins. Native apps can register for account-backed
+remote push delivery through the Go API, PostgreSQL, and Expo Push Service;
+local notifications remain the fallback when remote setup is unavailable.
+Quiet hours, saved timezones, delivery deduplication, and notification-tap
+routing are implemented. Expo ticket acceptance is recorded, but does not
+confirm delivery to a device. See the [push notification setup and status](./docs/push-notifications.md).
+Reminders, event alerts, and conversation follow-ups are not part of this
+check-in-only push implementation. Targeted regression tests exercise feedback
+adaptation across three chat turns, distress overriding learned humour, account
+boundaries, and the shared instructions serialized for all eight Go AI provider
+adapters. Check-in tests cover reload and timezone resynchronization, quiet-hour
+boundaries, permission denial, and duplicate replacement. A voice HTTP test
+carries exact generated text through the authenticated Python endpoint and
+speech-payload builder with only the external provider stubbed.
+
+These are controlled unit/HTTP fixtures, not live PostgreSQL or live AI-provider
+tests. A fresh client mount reloading server preferences does not prove that a
+device delivers notifications after an actual app restart or timezone change;
+physical-device verification remains needed. Backend `go test ./...` passes
+after the push changes. This environment does not provide Node.js or npm, so the
+frontend typecheck and new push tests could not be rerun; editor diagnostics
+reported no TypeScript errors in the changed application files. The full
+frontend suite previously had unrelated portrait/voice test failures because
+its test loader could not resolve `@/lib/portrait-speech` and a bundled portrait
+asset was missing.
 Automatic memory extraction and the other Python intelligence engines remain planned.
 
 ## Run frontend and backend

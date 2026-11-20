@@ -275,6 +275,30 @@ emotional awareness, privacy, uncertainty, safety, and honest reporting of
 application actions. The user should not see a different assistant persona
 when the route changes.
 
+The shared personality foundation guides PADI to move naturally between
+playful, friendly, encouraging, empathetic, serious, informative, celebratory,
+and reflective replies. It treats emotional cues as uncertain conversational
+signals, respects direct requests about tone, and prohibits humour that
+dismisses suffering or sensitive experiences. Humour remains optional and
+context-dependent. This foundation is shared across provider routes; it is not
+a diagnosis or a persistent mood classifier.
+
+Go assesses lightweight signals from the current user turn and adds private
+response guidance without storing mood labels. Signed-in users can save
+account-scoped humour and tone preferences. Response ratings are also
+account-scoped and store only a message ID and rating, not reply text. Learning
+from humour feedback is off by default, requires at least three consistent
+recent ratings, and cannot override an explicit humour choice. Regression
+scenarios cover invited humour, grief, rejected humour, celebrations, Pidgin
+distress, explicit tone choices, and spoken empathy.
+
+Users may separately opt into morning, afternoon, and evening PADI check-ins.
+Schedule preferences are account-scoped in PostgreSQL; notifications are
+scheduled locally by the mobile app only after device permission is granted.
+Quiet hours suppress conflicting local schedules. This is not a server push
+notification service, does not schedule the separate personal reminders, and
+still needs physical-device verification.
+
 Friendly chat replies are guided to use one or two context-appropriate Unicode
 emojis. Emojis supplement clear wording, use restraint in sensitive discussions,
 and are omitted when users request plain text, no emojis, or formal documents.
@@ -467,11 +491,27 @@ AI model should interpret it, not invent it.
   through protected Go endpoints, with server-side keys and usage tracking.
   See [voice verification](voice-verification.md). Speech models are not added
   to the conversational/text model registry.
+- Current-turn personality guidance, user-controlled tone and humour settings,
+  privacy-minimized feedback, and opt-in adaptation are implemented in Go and
+  covered by regression tests. Tests exercise three separate chat turns before
+  adaptation, distress overriding a learned humour preference, and account
+  separation at authenticated API boundaries. A local HTTP fixture sends the
+  router-composed system guidance through all eight registered Go provider
+  adapters and checks that the serialized instructions match. These fixtures
+  do not test live model behavior or PostgreSQL persistence.
+- Account-backed check-in preferences can use the Go/PostgreSQL scheduler and
+  Expo Push Service for native devices; local scheduling remains the fallback.
+  The worker applies saved timezone and quiet-hour settings and deduplicates
+  delivery attempts. Regression tests cover schedule boundaries, permission
+  denial, and local schedule replacement. Expo ticket acceptance is not proof
+  of device delivery, which still needs EAS/APNs/FCM setup and physical-device
+  verification. This push integration currently covers check-ins only.
 - The application does not automatically monitor future provider pricing.
-  The other Python engines, PostgreSQL conversation storage, and production
-  reminder/notification integrations remain planned. Chat payloads are bounded and minimized
-  to the current conversation; the app tells users that submitted messages are
-  forwarded to the configured AI provider and displays quota/provider errors.
+The Python memory/context and quality/evaluation engines, PostgreSQL
+conversation storage, reminder scheduling, and push integrations beyond
+check-ins remain planned. Chat payloads are bounded and minimized to the current
+  conversation; the app tells users that submitted messages are forwarded to
+  the configured AI provider and displays quota/provider errors.
 
 The responsibility descriptions above define product direction. They do not
 represent completed or verified capabilities unless the implementation status

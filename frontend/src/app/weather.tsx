@@ -83,7 +83,7 @@ export default function WeatherScreen() {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Go back"
-            onPress={() => router.back()}
+            onPress={() => { if (router.canGoBack()) router.back(); else router.replace('/(tabs)/chat'); }}
             hitSlop={10}
             style={({ pressed }) => [
               styles.back,

@@ -25,7 +25,7 @@ the backend environment. It listens on loopback port 8090 and receives only
 its required server-side credentials. Restart the development servers after
 changing Python source or backend configuration.
 
-`PADI_VOICE_MODEL` selects `gemini-3.1-flash-tts-preview`,
+`PADI_VOICE_MODEL` selects `gemini-2.5-flash-preview-tts`, `gemini-3.1-flash-tts-preview`,
 `gemini-3.8-flash-tts`, or `gemini-3.8-flash-lite-tts`. The configured development
 workspace now uses Flash-Lite TTS, with published free-tier pricing, account
 access, and a real audio-generation request checked.
@@ -42,6 +42,43 @@ names, personal greetings and conversation speech are not stored there.
 Gemini 3.5 Flash produces text and cannot generate these voice replies. Both
 3.8 TTS variants support the same original voice profile and speech metadata.
 Changing the speech model does not remove the provider's account quotas.
+
+When a newer model is rate-limited or unavailable, Go tries the supported
+`gemini-2.5-flash-preview-tts` fallback. `PADI_VOICE_FALLBACK_MODEL` selects a
+supported alternative; an empty value disables fallback. Each provider attempt
+reserves usage through Go. Provider retry timing prevents repeated requests to
+an exhausted model until its quota resets. The earlier model uses the selected
+persona's prebuilt voice, since it cannot use an original 3.8 voice profile.
+
+The app's **Tap to chat** entry connects the microphone and plays a short,
+localized greeting, then keeps listening and replying automatically. Greetings
+use fixed public phrases at `/v1/voice/call` and share the public clip cache;
+personal replies remain authenticated and uncached. Pause closes capture and
+Resume reconnects without repeating the greeting. Speaking interrupts playback.
+Ordinary voice turns use short replies and the fast model route; long spoken
+answers can start their first sentence while the next passage is generated.
+The five-second response goal still depends on network and provider latency.
+
+`PADI_LIVE_VOICE_PROVIDER=groq` enables the separate Orpheus speech model for
+English/Pidgin at normal pace. The chat model still generates the words; Python
+passes those same words to speech without generating a second answer. The Groq
+organization admin must first accept the Orpheus model terms in its console.
+Until then, keep the default Gemini setting. Unsupported languages or paces
+and unavailable fast speech fall back to Gemini. Both providers retain their
+own usage reservations, and no device speech is substituted. Public preview
+cache keys include the live provider so previews follow the selected engine.
+
+For expressive delivery and the configured Nigerian English voice, use
+`PADI_LIVE_VOICE_PROVIDER=gemini` (the default). Orpheus uses a different set of
+standard English voices and does not carry Gemini's custom voice profile or
+accent directions. Choosing it for speed changes how PADI sounds.
+
+The voice configuration advertises `language_selection`. Supported clients
+pass the selected language to recognition, chat and previews. English capture
+uses Whisper's `en` language instead of automatic detection; chat receives an
+explicit selected-language instruction and speech does not add translations
+or unsolicited language switches. Existing clients default to English. Voice
+identity no longer forces a Pidgin preview when English is selected.
 
 With the services running, `npm run verify:voice` checks real authenticated
 transcription, silence rejection, AI replies, and playable Python-generated
