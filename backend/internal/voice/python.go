@@ -25,6 +25,25 @@ type Audio struct {
 	AudioTokens int    `json:"audio_tokens,omitempty"`
 }
 
+// Python supplies canonical 24 kHz mono PCM WAV. Validate stored public clips
+// with the same boundary checks as freshly generated speech.
+func ValidSpeechAudio(audio Audio) bool {
+	if audio.MIME != "audio/wav" || len(audio.Base64) > base64.StdEncoding.EncodedLen(MaxAudioBytes) {
+		return false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(audio.Base64)
+	if err != nil || len(decoded) < 46 || len(decoded) > MaxAudioBytes {
+		return false
+	}
+	return bytes.Equal(decoded[:4], []byte("RIFF")) && int(binary.LittleEndian.Uint32(decoded[4:8])) == len(decoded)-8 &&
+		bytes.Equal(decoded[8:16], []byte("WAVEfmt ")) && binary.LittleEndian.Uint32(decoded[16:20]) == 16 &&
+		binary.LittleEndian.Uint16(decoded[20:22]) == 1 && binary.LittleEndian.Uint16(decoded[22:24]) == 1 &&
+		binary.LittleEndian.Uint32(decoded[24:28]) == 24000 && binary.LittleEndian.Uint32(decoded[28:32]) == 48000 &&
+		binary.LittleEndian.Uint16(decoded[32:34]) == 2 && binary.LittleEndian.Uint16(decoded[34:36]) == 16 &&
+		bytes.Equal(decoded[36:40], []byte("data")) && int(binary.LittleEndian.Uint32(decoded[40:44])) == len(decoded)-44 &&
+		(len(decoded)-44)%2 == 0
+}
+
 type PythonSpeech struct {
 	endpoint, token string
 	client          *http.Client
@@ -70,12 +89,12 @@ func LoadPythonSpeech(limiter ai.UsageLimiter) (*PythonSpeech, error) {
 	return &PythonSpeech{endpoint: endpoint + "/synthesise", token: token, limiter: limiter, client: &http.Client{Timeout: 55 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
-func (service *PythonSpeech) Synthesise(ctx context.Context, text, style string, rate float64) (Audio, error) {
+func (service *PythonSpeech) Synthesise(ctx context.Context, text, style string, rate float64, language string) (Audio, error) {
 	reservedAt := time.Now()
 	if err := service.limiter.Reserve(ctx, "gemini-voice", 1, ai.FreeUsageLimits(), reservedAt); err != nil {
 		return Audio{}, err
 	}
-	body, err := json.Marshal(map[string]any{"text": text, "style": style, "rate": rate})
+	body, err := json.Marshal(map[string]any{"text": text, "style": style, "rate": rate, "language": language})
 	if err != nil {
 		return Audio{}, err
 	}
@@ -104,8 +123,7 @@ func (service *PythonSpeech) Synthesise(ctx context.Context, text, style string,
 	if json.Unmarshal(data, &audio) != nil || audio.MIME != "audio/wav" || audio.InputTokens < 0 || audio.InputTokens > 1_000_000 || audio.AudioTokens < 0 || audio.AudioTokens > 1_000_000 {
 		return Audio{}, errors.New("invalid Python speech response")
 	}
-	decoded, err := base64.StdEncoding.DecodeString(audio.Base64)
-	if err != nil || len(decoded) < 46 || len(decoded) > MaxAudioBytes || !bytes.Equal(decoded[:4], []byte("RIFF")) || !bytes.Equal(decoded[8:16], []byte("WAVEfmt ")) || binary.LittleEndian.Uint32(decoded[24:28]) != 24000 || binary.LittleEndian.Uint16(decoded[22:24]) != 1 || binary.LittleEndian.Uint16(decoded[34:36]) != 16 || !bytes.Equal(decoded[36:40], []byte("data")) || int(binary.LittleEndian.Uint32(decoded[40:44])) != len(decoded)-44 {
+	if !ValidSpeechAudio(audio) {
 		return Audio{}, errors.New("invalid Python speech audio")
 	}
 	// Output is audio tokens, not text tokens. Only input text usage enters the

@@ -118,9 +118,18 @@ export async function getVoiceConfiguration(signal?: AbortSignal): Promise<{ ena
   return result;
 }
 
-export async function synthesiseSpeech(token:string,text:string,style:string,rate:number,signal:AbortSignal):Promise<{audio_base64:string;mime_type:string}> {
-  const result=await requestJSON<{audio_base64:string;mime_type:string}>('/v1/voice/speak',{text,style,rate},{token,signal,timeoutMs:65_000});
+export async function synthesiseSpeech(token:string,text:string,style:string,rate:number,signal:AbortSignal,languageCode='en-NG'):Promise<{audio_base64:string;mime_type:string}> {
+  const result=await requestJSON<{audio_base64:string;mime_type:string}>('/v1/voice/speak',{text,style,rate,language:languageCode},{token,signal,timeoutMs:65_000});
   if(result?.mime_type!=='audio/wav' || typeof result.audio_base64!=='string' || !result.audio_base64 || result.audio_base64.length>12*1024*1024) throw new Error('PADI returned invalid speech audio.');
+  return result;
+}
+
+export async function fetchVoiceSample(kind: 'welcome' | 'preview', style: string, languageCode: string, rate: number, signal: AbortSignal): Promise<{audio_base64:string;mime_type:string}> {
+  const language = languageCode === 'pcm-NG' ? 'pcm-NG' : languageCode.toLowerCase().startsWith('fr') ? 'fr' : 'en-NG';
+  const pace = rate < 0.95 ? 0.85 : rate > 1.05 ? 1.15 : 1;
+  const query = kind === 'welcome' ? `style=${encodeURIComponent(style)}&language=${language}` : `style=${encodeURIComponent(style)}&rate=${pace}`;
+  const result = await requestJSON<{audio_base64:string;mime_type:string}>(`/v1/voice/${kind}?${query}`, undefined, {method:'GET',signal,timeoutMs:65_000});
+  if(result?.mime_type!=='audio/wav'||typeof result.audio_base64!=='string'||!result.audio_base64||result.audio_base64.length>12*1024*1024) throw new Error('PADI returned invalid natural speech audio.');
   return result;
 }
 

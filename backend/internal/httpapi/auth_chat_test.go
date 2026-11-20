@@ -157,8 +157,9 @@ func TestAuthenticatedChatCallsGeneratorAndReturnsResponse(t *testing.T) {
 	if body.Reply != "Real PADI response" || generator.calls != 1 {
 		t.Fatalf("response = %+v, calls = %d", body, generator.calls)
 	}
-	if generator.request.Task != ai.TaskConversation || len(generator.request.Messages) != 3 ||
-		generator.request.Messages[2].Content != "How are you?" {
+	if generator.request.Task != ai.TaskConversation || len(generator.request.Messages) != 4 ||
+		generator.request.Messages[0].Role != ai.RoleSystem || !strings.Contains(generator.request.Messages[0].Content, `"account_name":"Ada"`) ||
+		generator.request.Messages[3].Content != "How are you?" {
 		t.Fatalf("generator request = %+v", generator.request)
 	}
 }

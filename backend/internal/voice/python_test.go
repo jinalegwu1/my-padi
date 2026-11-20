@@ -35,6 +35,8 @@ func TestPythonSpeechPrivateTransportAndUsage(t *testing.T) {
 	binary.LittleEndian.PutUint16(data[20:], 1)
 	binary.LittleEndian.PutUint16(data[22:], 1)
 	binary.LittleEndian.PutUint32(data[24:], 24000)
+	binary.LittleEndian.PutUint32(data[28:], 48000)
+	binary.LittleEndian.PutUint16(data[32:], 2)
 	binary.LittleEndian.PutUint16(data[34:], 16)
 	copy(data[36:], "data")
 	binary.LittleEndian.PutUint32(data[40:], 4)
@@ -43,19 +45,19 @@ func TestPythonSpeechPrivateTransportAndUsage(t *testing.T) {
 			t.Error("internal authentication missing")
 		}
 		var body struct {
-			Text, Style string
-			Rate        float64
+			Text, Style, Language string
+			Rate                  float64
 		}
 		json.NewDecoder(r.Body).Decode(&body)
-		if body.Text != "Hello" || body.Style != "ada" {
-			t.Error("wrong speech text")
+		if body.Text != "How you dey?" || body.Style != "tunde" || body.Language != "pcm-NG" || body.Rate != 1.15 {
+			t.Error("speech words or selected delivery preferences were lost")
 		}
 		json.NewEncoder(w).Encode(Audio{Base64: base64.StdEncoding.EncodeToString(data), MIME: "audio/wav", InputTokens: 15, AudioTokens: 200})
 	}))
 	defer server.Close()
 	ledger := &speechLedger{}
 	speech := &PythonSpeech{endpoint: server.URL, token: "internal-test-token", client: server.Client(), limiter: ledger}
-	result, err := speech.Synthesise(context.Background(), "Hello", "ada", 1)
+	result, err := speech.Synthesise(context.Background(), "How you dey?", "tunde", 1.15, "pcm-NG")
 	if err != nil || result.Base64 == "" || ledger.provider != "gemini-voice" || ledger.input != 15 {
 		t.Fatal("Python speech or input usage not retained")
 	}

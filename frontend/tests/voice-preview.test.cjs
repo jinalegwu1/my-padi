@@ -1,22 +1,30 @@
-const test=require('node:test');
-const assert=require('node:assert/strict');
-const {loadTS}=require('./helpers/load-ts.cjs');
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { loadTS } = require('./helpers/load-ts.cjs');
 
-test('natural voice preview uses the selected Python style and cleans cached audio on interruption',async()=>{
-  let removed=0,released=0,started=0,callback,received;
-  const player={addListener:(_name,fn)=>{callback=fn;return {remove(){}};},play(){callback({playing:true});},pause(){},release(){released++;}};
-  const preview=loadTS('src/lib/voice-preview.ts',{
-    'expo-audio':{createAudioPlayer:()=>player},
-    'expo-file-system':{Paths:{cache:'cache'},File:class{exists=true;uri='file://preview.wav';create(){}write(value,options){assert.equal(value,'generated-audio');assert.equal(options.encoding,'base64');}delete(){removed++;}}},
-    'react-native':{Platform:{OS:'android'}},
-    '@/lib/api':{synthesiseSpeech:async(...args)=>{received=args;return {audio_base64:'generated-audio'};}},
-    '@/lib/session':{readSession:async()=>({token:'test-token'})},
-    '@/lib/voice-playback':{playVoice(){assert.fail('preview must not open native microphone playback');}},
+test('every human voice preview delegates the selected style and pace to the expressive service', async () => {
+  const calls = [];
+  const preview = loadTS('src/lib/voice-preview.ts', {
+    '@/lib/speech': { speakVoicePreview: async (...args) => { calls.push(args); args[3](); return 'played'; } },
   });
-  const controller=new AbortController();
-  const playing=preview.previewVoice('Hello','ada',1,controller.signal,()=>{started++;});
-  for(let index=0;index<10;index++)await Promise.resolve();
-  assert.equal(started,1);assert.equal(received[2],'ada');
-  controller.abort();await playing;
-  assert.equal(removed,1);assert.equal(released,1);
+  const controller = new AbortController();
+  for (const style of ['baby', 'ada', 'chidi', 'zainab', 'tunde', 'amara']) {
+    let started = false;
+    await preview.previewVoice('Public sample', style, 1.15, controller.signal, () => { started = true; });
+    assert.equal(started, true); assert.equal(calls.at(-1)[0], style);
+    assert.equal(calls.at(-1)[1], 1.15); assert.equal(calls.at(-1)[2], controller.signal);
+  }
+});
+
+test('human voice catalog contains the six requested people and portraits', () => {
+  const { VOICES } = loadTS('src/data/languages.ts');
+  assert.deepEqual(VOICES.map((voice) => voice.id), ['baby', 'ada', 'chidi', 'zainab', 'tunde', 'amara']);
+  assert.deepEqual(
+    VOICES.map((voice) => [voice.name, voice.gender]),
+    [['PADI', 'male'], ['Ada', 'female'], ['Chidi', 'female'], ['Zainab', 'female'], ['Tunde', 'male'], ['Amara', 'male']],
+  );
+  for (const voice of VOICES) {
+    assert.match(voice.imageUrl, /^https:\/\/images\.unsplash\.com\//);
+    assert.ok(voice.imageDescription.length > 0);
+  }
 });

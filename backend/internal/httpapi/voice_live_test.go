@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -33,7 +34,7 @@ func TestVoiceLiveTranscriptionAndChat(t *testing.T) {
 	if err != nil {
 		t.Fatal("public WAV fixture is unavailable")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	db, err := database.Open(ctx, config.Load().DatabaseURL)
 	if err != nil {
@@ -82,6 +83,10 @@ func TestVoiceLiveTranscriptionAndChat(t *testing.T) {
 	if err != nil || speech == nil {
 		t.Fatal("real transcription configuration unavailable")
 	}
+	synthesis, err := voice.LoadPythonSpeech(limiter)
+	if err != nil || synthesis == nil {
+		t.Fatal("real Python speech configuration unavailable")
+	}
 	configuration, err := ai.LoadEnvironment()
 	if err != nil {
 		t.Fatal("AI configuration unavailable")
@@ -94,7 +99,7 @@ func TestVoiceLiveTranscriptionAndChat(t *testing.T) {
 	if err != nil {
 		t.Fatal("memory store unavailable")
 	}
-	router := NewRouter(db, Dependencies{Auth: service, Chat: generator, Speech: speech, Memory: memories})
+	router := NewRouter(db, Dependencies{Auth: service, Chat: generator, Speech: speech, Synthesis: synthesis, Memory: memories})
 	transcribe := func(data []byte, status int) string {
 		t.Helper()
 		var body bytes.Buffer
@@ -143,7 +148,7 @@ func TestVoiceLiveTranscriptionAndChat(t *testing.T) {
 	copy(silence[36:], "data")
 	binary.LittleEndian.PutUint32(silence[40:], 32000)
 	transcribe(silence, 422)
-	requestBody, _ := json.Marshal(map[string]any{"messages": []ai.Message{{Role: ai.RoleUser, Content: "In one short sentence, summarise this recognised speech: " + text}}, "memory_revision": 0})
+	requestBody, _ := json.Marshal(map[string]any{"messages": []ai.Message{{Role: ai.RoleUser, Content: "In one short sentence, summarise this recognised speech: " + text}}, "memory_revision": 0, "delivery": "voice"})
 	request := httptest.NewRequest("POST", "/v1/chat", bytes.NewReader(requestBody)).WithContext(ctx)
 	request.Header.Set("Authorization", "Bearer "+session.Token)
 	response := httptest.NewRecorder()
@@ -154,9 +159,25 @@ func TestVoiceLiveTranscriptionAndChat(t *testing.T) {
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &reply) != nil || strings.TrimSpace(reply.Reply) == "" {
 		t.Fatal("recognised speech did not receive a real chat reply")
 	}
+	spokenBody, _ := json.Marshal(map[string]any{"text": reply.Reply, "style": "ada", "rate": 1})
+	spokenRequest := httptest.NewRequest("POST", "/v1/voice/speak", bytes.NewReader(spokenBody)).WithContext(ctx)
+	spokenRequest.Header.Set("Authorization", "Bearer "+session.Token)
+	spokenResponse := httptest.NewRecorder()
+	router.ServeHTTP(spokenResponse, spokenRequest)
+	var spoken struct {
+		AudioBase64 string `json:"audio_base64"`
+		MIME        string `json:"mime_type"`
+	}
+	if spokenResponse.Code != 200 || json.Unmarshal(spokenResponse.Body.Bytes(), &spoken) != nil || spoken.MIME != "audio/wav" {
+		t.Fatalf("real spoken reply failed with HTTP %d; response omitted", spokenResponse.Code)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(spoken.AudioBase64)
+	if err != nil || len(decoded) < 46 || string(decoded[:4]) != "RIFF" || binary.LittleEndian.Uint32(decoded[24:28]) != 24000 {
+		t.Fatal("spoken reply was not playable 24 kHz PCM audio")
+	}
 	var count, tokens int64
 	if err := db.QueryRowContext(ctx, `SELECT request_count,input_tokens+output_tokens FROM ai_provider_usage_periods WHERE provider='groq-speech' AND period_type='day' AND period_start=CURRENT_DATE`).Scan(&count, &tokens); err != nil || count < 1 || tokens != 0 {
 		t.Fatal("speech ledger missing or audio counted as text tokens")
 	}
-	t.Log("Public speech matched; silence rejected; authenticated AI reply received; speech requests persisted with zero text tokens.")
+	t.Log("Public speech matched; silence rejected; authenticated AI reply and real PCM speech received; usage persisted.")
 }

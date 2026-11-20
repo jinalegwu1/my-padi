@@ -9,18 +9,16 @@ This is the agreed roadmap, not a statement that all engines already exist.
 Each engine will have its own interface, dependencies, tests, and deployment
 boundary. We will implement and verify one focused feature at a time.
 
+Python's approved scope consists of these three engines:
+
 | Engine | Python responsibilities | Status |
 | --- | --- | --- |
-| Memory Engine | Extract candidate memories; categorise and organise information; generate embeddings; semantic search; retrieve relevant history; summarise conversations; rank relevance/importance; detect duplicates and conflicts; recommend updates and expiration. | Planned |
-| Voice Engine | Process incoming audio; detect speech and turn boundaries; speech recognition; analyse signal quality, noise, pace and pauses; reduce noise where appropriate; segment speech; convert/prepare audio; integrate specialised speech models for natural conversations. | Building / Testing |
-| Language Engine | Clean and process text; detect languages; multilingual processing; spelling/grammar patterns; extract entities and dates; classify intent; identify topics/themes; prepare text collections for retrieval. | Planned |
-| Document Engine | Extract text from supported documents/PDFs; split sections; generate embeddings; semantic search and retrieval; compare documents; prepare knowledge sources for learning. | Planned |
-| Personalisation Engine | Analyse permitted preferences and recurring interests; rank recommendations; personalise learning; content discovery; analyse permitted interaction patterns; identify opportunities relevant to user goals. | Planned |
-| Evaluation Engine | Compare models; test accuracy, relevance, instruction following, personality, emotional sensitivity, humour and culture; measure latency/resources; detect model/prompt regressions; produce reports. | Planned |
-| Data Intelligence Engine | Structured data analysis; patterns/trends; statistics; justified prediction/forecasting models; recommendations; evaluate prediction performance. | Planned |
-| Research & Model Lab | Experiment with ML models; justified fine-tuning; evaluate retrieval/embeddings; research specialist techniques; benchmark technologies; prepare validated models for production. | Planned |
+| Memory and Context Intelligence Engine | Process and organise memories; generate embeddings; perform semantic search and relevant retrieval; rank memories; detect duplicates and conflicts; summarise long conversations; prepare useful context for AI models. | Planned |
+| Voice and Audio Intelligence Engine | Process and convert audio; detect voice activity; reduce noise; recognise speech; process transcripts; integrate specialist speech and voice models; analyse voice signals. | Testing |
+| AI Quality and Evaluation Engine | Compare AI models; test reasoning and accuracy; evaluate Nigerian English and Pidgin, PADI's personality and humour; measure response speed and cost; run quality regression checks after changes. | Planned |
 
-The current Voice Engine lives in `services/voice`. Other engines will be added
+The current Voice and Audio Intelligence Engine lives in `services/voice`. The
+memory/context and quality/evaluation engines will be added
 as separate services when their feature requirements are agreed. They are not
 empty endpoints or simulated implementations in the current application.
 
@@ -32,6 +30,7 @@ Python recommendations cannot grant permissions, send messages, change memory
 consent, or claim application actions succeeded. Go verifies and coordinates
 those operations.
 
+Go enforces consent and account ownership before supplying data to Python.
 Specialist services receive only the information needed for an authorised
 request. Internal credentials never go to the mobile application. New engines
 must preserve account boundaries, consent, deletion, and PADI's consistent

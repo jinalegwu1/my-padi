@@ -10,6 +10,10 @@ export type VoiceOption = {
   gender: VoiceGender;
   accent: string;
   description: string;
+  /** Human portrait shown during the voice conversation. */
+  imageUrl: string;
+  /** Short description of the portrait used by screen readers. */
+  imageDescription: string;
   /** Short line used by the natural voice preview. */
   sample: string;
 };

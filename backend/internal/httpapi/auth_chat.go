@@ -231,6 +231,7 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), chatRequestTimeout)
 	defer cancel()
 	var memoryRevision int64
+	memoryState := "unavailable"
 	if handler.memory != nil {
 		snapshot, err := handler.memory.Snapshot(ctx, user.ID)
 		if err != nil {
@@ -238,6 +239,10 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		memoryRevision = snapshot.Revision
+		memoryState = "off"
+		if snapshot.Enabled {
+			memoryState = "on"
+		}
 		clientRevision := int64(0)
 		if body.MemoryRevision != nil {
 			clientRevision = *body.MemoryRevision
@@ -274,6 +279,9 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if instruction != "" {
 			messages = append([]ai.Message{{Role: ai.RoleSystem, Content: instruction}}, messages...)
 		}
+	}
+	if context := accountProfileContext(user.FullName, memoryState); context != "" {
+		messages = append([]ai.Message{{Role: ai.RoleSystem, Content: context}}, messages...)
 	}
 	response, err := handler.chat.Generate(ctx, ai.Request{
 		Messages: messages,

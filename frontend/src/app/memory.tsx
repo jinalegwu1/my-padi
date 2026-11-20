@@ -173,7 +173,7 @@ export default function MemoryScreen() {
         </View>
 
         <Text style={[styles.consentBody, { color: colors.textSecondary, fontSize: type.caption }]}>
-          Only facts you explicitly save are kept. After a memory change, PADI starts fresh with the saved facts currently allowed. Previous messages stay visible. Changes affect the next request.
+          PADI uses your account name to recognise you. Personal memories are saved and used with your approval. After a memory change, PADI starts fresh with the saved facts currently allowed. Previous messages stay visible. Changes affect the next request.
         </Text>
         {error ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{error}</Text> : null}
         {error && status === 'ready' ? <Button title="Reload memory" variant="secondary" disabled={busy} onPress={() => { void reload(); }} /> : null}

@@ -80,3 +80,33 @@ func TestMemoryContextEncodesFactsAsData(t *testing.T) {
 		t.Fatal("memory content escaped its data record")
 	}
 }
+
+func TestEverydayPersonalQuestionsRecallApprovedFactsWithoutGuessingOrigin(t *testing.T) {
+	snapshot := Snapshot{Enabled: true, Items: []Item{
+		{ID: "project", Category: "plans", Label: "Current project", Value: "Building My PADI"},
+		{ID: "origin", Category: "relationships", Label: "State of origin", Value: "Ogun"},
+		{ID: "paused", Category: "relationships", Label: "Birthplace", Value: "Hidden birthplace", Paused: true},
+		{ID: "other", Category: "relationships", Label: "Favourite cousin", Value: "Bola"},
+	}}
+	for _, query := range []string{"Do you know me?", "You remember me?", "Who am I?", "You sabi me?", "Wetin you know about me?"} {
+		items := Relevant(snapshot, query)
+		if len(items) != 3 || strings.Contains(Context(items), "Hidden birthplace") {
+			t.Fatalf("personal recall did not use active approved facts for %q", query)
+		}
+	}
+	for _, query := range []string{"Where am I from?", "Where am I coming from?", "Where are my coming from?", "Where I dey come from?"} {
+		items := Relevant(snapshot, query)
+		if len(items) != 1 || items[0].ID != "origin" {
+			t.Fatalf("origin query returned unrelated facts for %q", query)
+		}
+	}
+	snapshot.Enabled = false
+	if len(Relevant(snapshot, "Do you know me?")) != 0 || len(Relevant(snapshot, "Where am I coming from?")) != 0 {
+		t.Fatal("personal questions bypassed memory consent")
+	}
+	snapshot.Enabled = true
+	snapshot.Items = nil
+	if len(Relevant(snapshot, "Where am I from?")) != 0 {
+		t.Fatal("an origin was invented without approved facts")
+	}
+}

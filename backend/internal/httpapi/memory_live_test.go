@@ -111,19 +111,46 @@ func TestPersonalMemoryLiveAI(t *testing.T) {
 		}
 		return response.Body.Bytes()
 	}
+	var identified struct {
+		Reply string `json:"reply"`
+	}
+	nameQuery := "But I created an account before chatting. What is the full name on my account? Reply with the name if supplied; otherwise say unknown."
+	if err := json.Unmarshal(call("POST", "/v1/chat", map[string]any{"memory_revision": 0, "messages": []ai.Message{
+		{Role: ai.RoleUser, Content: "Do you know me?"},
+		{Role: ai.RoleAssistant, Content: "I don't have any profile info about you. Every chat starts fresh."},
+		{Role: ai.RoleUser, Content: nameQuery},
+	}}, 200), &identified); err != nil || !strings.Contains(identified.Reply, session.User.FullName) {
+		t.Fatal("live AI failed to use the authenticated account name or correct the old denial")
+	}
+	var friendly struct {
+		Reply string `json:"reply"`
+	}
+	if err := json.Unmarshal(call("POST", "/v1/chat", map[string]any{"memory_revision": 0, "messages": []ai.Message{{Role: ai.RoleUser, Content: "Do you have a friend? Use my known account name and answer naturally in one short sentence."}}}, 200), &friendly); err != nil || !strings.Contains(friendly.Reply, "Memory") || strings.Contains(strings.ToLower(friendly.Reply), "other ais") {
+		t.Fatal("live companion reply did not use the known name or invented AI friendships")
+	}
 	call("PATCH", "/v1/memory/settings", map[string]bool{"enabled": true}, 200)
 	marker := "MarigoldLamp451"
 	var saved memory.Snapshot
 	if err := json.Unmarshal(call("POST", "/v1/memory", memory.Draft{Category: "plans", Label: "Project codename", Value: marker, Approved: true}, 201), &saved); err != nil || len(saved.Items) != 1 {
 		t.Fatal("approved fact was not saved")
 	}
-	query := "What is my current project codename? Reply only with the codename if you know it; otherwise say unknown."
+	query := "Do you know me?"
 	var active struct {
 		Reply    string `json:"reply"`
 		Revision int64  `json:"memory_revision"`
 	}
-	if err := json.Unmarshal(call("POST", "/v1/chat", map[string]any{"memory_revision": saved.Revision, "messages": []ai.Message{{Role: ai.RoleUser, Content: query}}}, 200), &active); err != nil || !strings.Contains(active.Reply, marker) {
+	if err := json.Unmarshal(call("POST", "/v1/chat", map[string]any{"memory_revision": saved.Revision, "messages": []ai.Message{{Role: ai.RoleUser, Content: query}}}, 200), &active); err != nil || !strings.Contains(active.Reply, marker) || !strings.Contains(active.Reply, "Memory") {
 		t.Fatal("live AI did not recall the explicitly approved fact")
+	}
+	var originSnapshot memory.Snapshot
+	if err := json.Unmarshal(call("POST", "/v1/memory", memory.Draft{Category: "relationships", Label: "State of origin", Value: "Ogun", Approved: true}, 201), &originSnapshot); err != nil {
+		t.Fatal("approved origin was not saved")
+	}
+	var origin struct {
+		Reply string `json:"reply"`
+	}
+	if err := json.Unmarshal(call("POST", "/v1/chat", map[string]any{"memory_revision": originSnapshot.Revision, "messages": []ai.Message{{Role: ai.RoleUser, Content: "Where am I coming from?"}}}, 200), &origin); err != nil || !strings.Contains(origin.Reply, "Ogun") {
+		t.Fatal("live AI failed to retrieve an approved origin for the everyday personal question")
 	}
 	call("PATCH", "/v1/memory/"+saved.Items[0].ID, map[string]bool{"paused": true}, 200)
 	var paused struct {
@@ -132,5 +159,5 @@ func TestPersonalMemoryLiveAI(t *testing.T) {
 	if err := json.Unmarshal(call("POST", "/v1/chat", map[string]any{"memory_revision": active.Revision, "messages": []ai.Message{{Role: ai.RoleAssistant, Content: active.Reply}, {Role: ai.RoleUser, Content: query}}}, 200), &paused); err != nil || strings.TrimSpace(paused.Reply) == "" || strings.Contains(paused.Reply, marker) {
 		t.Fatal("paused fact or stale recalled reply leaked into the next live response")
 	}
-	t.Logf("Synthetic approved fact recalled: %s; after pause: %s", active.Reply, paused.Reply)
+	t.Logf("Synthetic account recognised: %s; friendly reply: %s; approved fact recalled: %s; origin recalled: %s; after pause: %s", identified.Reply, friendly.Reply, active.Reply, origin.Reply, paused.Reply)
 }

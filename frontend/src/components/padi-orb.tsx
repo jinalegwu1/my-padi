@@ -1,8 +1,10 @@
 import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'expo-image';
 import { useEffect, useMemo, useRef } from 'react';
 import { Animated, Easing, StyleSheet, View } from 'react-native';
 
 import { useColors } from '@/constants/theme';
+import { findVoice } from '@/data/languages';
 import { usePreferences } from '@/hooks/use-preferences';
 
 export type OrbState = 'idle' | 'listening' | 'thinking' | 'speaking';
@@ -10,23 +12,43 @@ export type OrbState = 'idle' | 'listening' | 'thinking' | 'speaking';
 type Props = {
   state: OrbState;
   size?: number;
+  /** Portrait style selected in Settings. */
+  voiceId?: string;
 };
 
 /**
- * PADI's animated AI Orb.
- *
- * Only ever rendered on the voice screen — never on the main conversation screen.
- * The animation is driven by React Native's Animated API (no extra dependency) and
- * is reduced to a gentle static glow when the user turns on "Reduce motion".
+ * Renders the selected human PADI portrait and visually responds to listening,
+ * thinking, and speaking states. It is only used on the voice conversation screen.
  */
-export function PadiOrb({ state, size = 220 }: Props) {
+export function PadiOrb({ state, size = 220, voiceId }: Props) {
   const colors = useColors();
   const { preferences } = usePreferences();
   const reduceMotion = preferences.reduceMotion;
+  const voice = findVoice(voiceId ?? preferences.voiceId);
 
   const pulse = useRef(new Animated.Value(0)).current;
   const spin = useRef(new Animated.Value(0)).current;
   const breathe = useRef(new Animated.Value(0)).current;
+  const mouth = useRef(new Animated.Value(0)).current;
+
+  /** Animate the portrait's mouth only while PADI is speaking. */
+  useEffect(() => {
+    if (reduceMotion || state !== 'speaking') {
+      mouth.stopAnimation();
+      mouth.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(mouth, { toValue: 1, duration: 180, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(mouth, { toValue: 0.25, duration: 220, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(mouth, { toValue: 0.75, duration: 160, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(mouth, { toValue: 0, duration: 200, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [mouth, reduceMotion, state]);
 
   // Outer pulse: fast while listening, slow while speaking, still when idle.
   useEffect(() => {
@@ -103,6 +125,7 @@ export function PadiOrb({ state, size = 220 }: Props) {
   const ringOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.42, 0.05] });
   const coreScale = breathe.interpolate({ inputRange: [0, 1], outputRange: [0.97, 1.05] });
   const rotation = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+  const mouthScale = mouth.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1.45] });
 
   const ringSize = size * 1.5;
   const midSize = size * 1.22;
@@ -124,7 +147,7 @@ export function PadiOrb({ state, size = 220 }: Props) {
     <View
       accessible
       accessibilityRole="image"
-      accessibilityLabel={`PADI orb, ${stateLabel}`}
+      accessibilityLabel={`${voice.imageDescription}, PADI ${stateLabel}`}
       style={[styles.wrap, { width: ringSize, height: ringSize }]}>
       {/* Outer pulse ring */}
       <Animated.View
@@ -185,28 +208,37 @@ export function PadiOrb({ state, size = 220 }: Props) {
               shadowColor: colors.orbCore,
             },
           ]}>
+          <Image
+            source={{ uri: voice.imageUrl }}
+            contentFit="cover"
+            transition={reduceMotion ? 0 : 220}
+            style={styles.portrait}
+            accessibilityLabel={voice.imageDescription}
+          />
           <View
+            pointerEvents="none"
             style={[
-              styles.gloss,
+              styles.listeningShade,
               {
-                width: size * 0.3,
-                height: size * 0.3,
-                borderRadius: size * 0.15,
-                top: size * 0.14,
-                left: size * 0.18,
+                backgroundColor: state === 'listening' ? 'rgba(82, 109, 255, 0.18)' : state === 'thinking' ? 'rgba(12, 18, 35, 0.28)' : 'rgba(12, 18, 35, 0.08)',
               },
             ]}
           />
-          <View
-            style={[
-              styles.innerGlow,
-              {
-                width: size * 0.62,
-                height: size * 0.62,
-                borderRadius: size * 0.31,
-              },
-            ]}
-          />
+          {state === 'speaking' ? (
+            <Animated.View
+              pointerEvents="none"
+              accessibilityElementsHidden
+              style={[
+                styles.mouth,
+                {
+                  width: size * 0.055,
+                  height: size * 0.018,
+                  borderRadius: size * 0.02,
+                  transform: [{ scaleY: mouthScale }],
+                },
+              ]}
+            />
+          ) : null}
         </LinearGradient>
       </Animated.View>
     </View>
@@ -226,6 +258,14 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 12 },
     elevation: 12,
   },
-  gloss: { position: 'absolute', backgroundColor: 'rgba(255,255,255,0.5)' },
-  innerGlow: { backgroundColor: 'rgba(255,255,255,0.12)' },
+  portrait: { width: '100%', height: '100%' },
+  listeningShade: { ...StyleSheet.absoluteFillObject },
+  mouth: {
+    position: 'absolute',
+    left: '47.25%',
+    top: '68%',
+    backgroundColor: '#7A2F35',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.7)',
+  },
 });

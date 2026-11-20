@@ -138,6 +138,7 @@ export default function AuthScreen() {
                 <>
                   <TextField
                     label="Full name"
+                    hint="PADI uses your name to recognise your signed-in account."
                     placeholder="Your name"
                     value={fullName}
                     onChangeText={setFullName}

@@ -21,7 +21,7 @@ func TestHandsfreeBrowser(t *testing.T) {
 	if os.Getenv("PADI_ENV") != "development" {
 		t.Fatal("browser test requires development mode")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 	db, err := database.Open(ctx, config.Load().DatabaseURL)
 	if err != nil {
@@ -63,6 +63,14 @@ func TestHandsfreeBrowser(t *testing.T) {
 	file.Close()
 	command := exec.CommandContext(ctx, "node", os.Getenv("PADI_VOICE_BROWSER_SCRIPT"), file.Name())
 	command.Env = []string{"PATH=" + os.Getenv("PATH")}
+	// The browser receives public test settings and its synthetic session only.
+	// Backend provider keys, database credentials, and the internal voice token
+	// stay in Go; none are inherited by the browser driver.
+	for _, name := range []string{"PADI_VOICE_TEST_AUDIO_PATH", "PADI_VOICE_API_URL", "PADI_VOICE_FRONTEND_URL", "PADI_VOICE_BROWSER_EXECUTABLE", "PADI_VOICE_BROWSER_FAILURES_ONLY", "SystemRoot", "WINDIR", "TMP", "TEMP"} {
+		if value := os.Getenv(name); value != "" {
+			command.Env = append(command.Env, name+"="+value)
+		}
+	}
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("browser verification failed: %s", output)

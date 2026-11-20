@@ -159,6 +159,8 @@ try {
         if(!existsSync(python)) throw new Error('Prepare services/voice/.venv and install services/voice/requirements.txt before starting Python voice.');
         const voiceEnv={PATH:process.env.PATH,PYTHONUNBUFFERED:'1',
           PADI_PYTHON_VOICE_PORT:String(voicePort),PADI_VOICE_SERVICE_TOKEN:backendEnv.PADI_VOICE_SERVICE_TOKEN,
+          PADI_VOICE_MODEL:backendEnv.PADI_VOICE_MODEL||'gemini-3.1-flash-tts-preview',
+          PADI_VOICE_DEFAULT_ID:backendEnv.PADI_VOICE_DEFAULT_ID||'',
           PADI_AI_FREE_ACCOUNT_CONFIRMED:backendEnv.PADI_AI_FREE_ACCOUNT_CONFIRMED,
           GEMINI_API_KEY:backendEnv.GEMINI_API_KEY,GROQ_API_KEY:backendEnv.GROQ_API_KEY};
         for(const name of ['SystemRoot','WINDIR','SSL_CERT_FILE','SSL_CERT_DIR','HTTPS_PROXY','HTTP_PROXY','NO_PROXY']) {

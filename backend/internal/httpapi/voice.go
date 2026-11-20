@@ -15,6 +15,7 @@ type SpeechTranscriber interface {
 }
 
 func registerVoiceRoutes(mux *http.ServeMux, deps Dependencies) {
+	registerSpeechSamples(mux, deps.Synthesis, deps.Logger)
 	mux.HandleFunc("/v1/voice/speak", synthesisHandler(deps))
 	mux.HandleFunc("/v1/voice/config", func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodGet) {

@@ -13,6 +13,7 @@ import hmac
 import io
 import json
 import os
+import re
 import threading
 import urllib.error
 import urllib.request
@@ -28,17 +29,37 @@ import uuid
 import webrtcvad
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-MODEL = "gemini-3.1-flash-tts-preview"
+LEGACY_MODEL = "gemini-3.1-flash-tts-preview"
+NATURAL_MODEL = "gemini-3.8-flash-tts"
+NATURAL_MODELS = frozenset((NATURAL_MODEL, "gemini-3.8-flash-lite-tts"))
+MODEL = os.environ.get("PADI_VOICE_MODEL", LEGACY_MODEL)
+DEFAULT_VOICE_ID = os.environ.get("PADI_VOICE_DEFAULT_ID", "")
 MAX_AUDIO_BYTES = 8 * 1024 * 1024
 MAX_TEXT_BYTES = 8192
 VOICE_STYLES = {
-    "baby": ("Zephyr", "bright and gently playful, with a natural adult voice; do not imitate a child"),
+    # Keep the stored default ID so existing preferences continue to work.
+    "baby": ("Orus", "a full, resonant adult male voice, confident, charismatic and warm"),
     "ada": ("Sulafat", "warm, relaxed, friendly and thoughtful"),
     "chidi": ("Achird", "calm, friendly and reassuring"),
     "zainab": ("Laomedeia", "bright and encouraging"),
     "tunde": ("Zubenelgenubi", "relaxed and conversational"),
     "amara": ("Vindemiatrix", "gentle, soft and thoughtful"),
-    "daniel": ("Schedar", "steady, clear and reassuring"),
+}
+LANGUAGE_DELIVERY = {
+    "en-NG": "Speak English with a natural Nigerian English accent and everyday Nigerian cadence.",
+    "pcm-NG": "Speak the provided Nigerian Pidgin with natural Naija pronunciation, rhythm and emphasis.",
+    "en-GB": "Use natural standard English pronunciation and conversational rhythm.",
+    "fr-FR": "Use natural French pronunciation and conversational rhythm.",
+    "pt-BR": "Use natural Brazilian Portuguese pronunciation and conversational rhythm.",
+    "es-ES": "Use natural Spanish pronunciation and conversational rhythm.",
+    "ar-SA": "Use natural Arabic pronunciation and conversational rhythm.",
+    "sw-KE": "Use natural Swahili pronunciation and conversational rhythm.",
+    "ha-NG": "Use natural Nigerian Hausa pronunciation and conversational rhythm.",
+    "yo-NG": "Use natural Yoruba pronunciation, respecting its tones and conversational rhythm.",
+    "ig-NG": "Use natural Igbo pronunciation, respecting its tones and conversational rhythm.",
+    "am-ET": "Use natural Amharic pronunciation and conversational rhythm.",
+    "hi-IN": "Use natural Hindi pronunciation and conversational rhythm.",
+    "zh-CN": "Use natural Mandarin pronunciation, respecting its tones and conversational rhythm.",
 }
 
 
@@ -49,15 +70,47 @@ class SpeechError(Exception):
         self.code = code
 
 
-def speech_payload(text: str, style: str, rate: float) -> dict:
+def speech_payload(text: str, style: str, rate: float, language: str = "en-NG", model: str = MODEL, default_voice_id: str = "") -> dict:
     voice, delivery = VOICE_STYLES[style]
     pace = "comfortable" if 0.95 <= rate <= 1.05 else "slightly slower" if rate < 0.95 else "slightly quicker"
+    if model in NATURAL_MODELS:
+        if style == "baby":
+            voice = default_voice_id or voice
+            delivery = "warm, confident, relaxed and expressive"
+        # The newer model speaks text verbatim. Directions belong in metadata,
+        # otherwise profile headings and instructions can be read aloud.
+        return {
+            "contents": [{"parts": [{
+                "text": text,
+                "speech_metadata": {"style": (
+                    f"{delivery}. {LANGUAGE_DELIVERY[language]} "
+                    f"{pace.capitalize()} conversational pace, connected phrasing and naturally varied emphasis. "
+                    "Match the emotional tone of the words."
+                )},
+            }]}],
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}},
+            },
+        }
+    if model != LEGACY_MODEL or default_voice_id:
+        raise SpeechError(400, "invalid_speech_configuration")
     instructions = (
-        f"Read the transcript verbatim. Sound {delivery}, like a friend in a real conversation. "
-        f"Use a {pace} conversational pace, natural breath and pauses, varied intonation, and a normal pitch. "
-        "Match the language and emotional tone of the transcript. Do not add words, laughs, filler, "
-        "sound effects, or an exaggerated accent. Do not read these directions aloud.\n"
-        "TRANSCRIPT (words to speak):\n" + text
+        "AUDIO PROFILE: PADI, an original personal companion.\n"
+        f"Voice character: {delivery}. Keep this voice's normal pitch.\n"
+        "SCENE: A friendly, spontaneous conversation with one person, close and comfortable.\n"
+        "DIRECTOR'S NOTES:\n"
+        f"{LANGUAGE_DELIVERY[language]} Follow any language switches in the actual words; do not translate them. "
+        f"Use a {pace} conversational pace. Connect words into flowing phrases rather than pronouncing "
+        "each word separately. Vary pitch, emphasis and timing with the meaning. Give important words "
+        "clear, confident emphasis; let sentence endings settle naturally. Use brief, purposeful pauses "
+        "and easy breaths. Sound engaged and expressive when the words are playful or positive; "
+        "be gentle and grounded when they are serious or sensitive. Keep energy warm and believable. "
+        "Avoid a flat robotic rhythm, a formal recital, a broadcast voice, shouting, or a caricature of an accent. "
+        "Keep PADI's own identity; do not imitate or impersonate a real person. "
+        "Speak only the transcript below, faithfully, including names and numbers. "
+        "Do not add filler words, laughs, sound effects or these directions.\n"
+        "TRANSCRIPT:\n" + text
     )
     return {
         "contents": [{"parts": [{"text": instructions}]}],
@@ -76,14 +129,31 @@ def decode_audio(result: dict) -> dict:
     inline = next((part.get("inlineData") for part in parts if part.get("inlineData")), None)
     mime = Message()
     mime["Content-Type"] = inline.get("mimeType", "") if isinstance(inline, dict) else ""
-    if not isinstance(inline, dict) or mime.get_content_type().lower() != "audio/l16" or mime.get_param("rate") != "24000" or mime.get_param("channels", "1") != "1" or mime.get_param("codec", "pcm") != "pcm":
+    if not isinstance(inline, dict) or mime.get_content_type().lower() not in ("audio/l16", "audio/wav"):
         raise SpeechError(502, "invalid_speech_audio")
     try:
-        pcm = base64.b64decode(inline.get("data", ""), validate=True)
+        decoded = base64.b64decode(inline.get("data", ""), validate=True)
     except (binascii.Error, ValueError, TypeError):
         raise SpeechError(502, "invalid_speech_audio") from None
+    if not decoded or len(decoded) > MAX_AUDIO_BYTES:
+        raise SpeechError(502, "invalid_speech_audio")
+    if mime.get_content_type().lower() == "audio/l16":
+        if mime.get_param("rate") != "24000" or mime.get_param("channels", "1") != "1" or mime.get_param("codec", "pcm") != "pcm":
+            raise SpeechError(502, "invalid_speech_audio")
+        pcm = decoded
+    else:
+        try:
+            with wave.open(io.BytesIO(decoded), "rb") as wav:
+                if wav.getframerate() != 24000 or wav.getnchannels() != 1 or wav.getsampwidth() != 2 or wav.getcomptype() != "NONE" or wav.getnframes() * 2 > MAX_AUDIO_BYTES - 44:
+                    raise SpeechError(502, "invalid_speech_audio")
+                pcm = wav.readframes(wav.getnframes())
+                if len(pcm) != wav.getnframes() * 2:
+                    raise SpeechError(502, "invalid_speech_audio")
+        except (wave.Error, EOFError):
+            raise SpeechError(502, "invalid_speech_audio") from None
     if not pcm or len(pcm) % 2 or len(pcm) > MAX_AUDIO_BYTES - 44:
         raise SpeechError(502, "invalid_speech_audio")
+    # Canonical PCM WAV keeps Go and both app playback paths unchanged.
     out = io.BytesIO()
     with wave.open(out, "wb") as wav:
         wav.setnchannels(1)
@@ -101,10 +171,10 @@ def decode_audio(result: dict) -> dict:
     }
 
 
-def synthesise(key: str, text: str, style: str, rate: float) -> dict:
+def synthesise(key: str, text: str, style: str, rate: float, language: str = "en-NG") -> dict:
     request = urllib.request.Request(
         f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent",
-        data=json.dumps(speech_payload(text, style, rate)).encode(),
+        data=json.dumps(speech_payload(text, style, rate, language, MODEL, DEFAULT_VOICE_ID)).encode(),
         headers={"Content-Type": "application/json", "x-goog-api-key": key, "User-Agent": "MyPADI-Voice/1.0"},
         method="POST",
     )
@@ -278,12 +348,15 @@ def make_handler(token: str, key: str, generate=synthesise, groq_key="", transcr
                 if len(raw) != length:
                     raise ValueError()
                 body = json.loads(raw)
-                if not isinstance(body, dict) or set(body) - {"text", "style", "rate"}:
+                if not isinstance(body, dict) or set(body) - {"text", "style", "rate", "language"}:
                     raise ValueError()
                 text, style, rate = body.get("text"), body.get("style", "ada"), body.get("rate", 1.0)
+                language = body.get("language", "en-NG")
                 if not isinstance(text, str) or not text.strip() or len(text.encode()) > MAX_TEXT_BYTES:
                     raise ValueError()
                 if not isinstance(style, str) or style not in VOICE_STYLES or type(rate) not in (int, float) or not 0.5 <= rate <= 1.5:
+                    raise ValueError()
+                if not isinstance(language, str) or language not in LANGUAGE_DELIVERY:
                     raise ValueError()
             except (ValueError, TypeError, UnicodeError, TimeoutError):
                 self.respond(400, {"error": "invalid_request"})
@@ -292,7 +365,7 @@ def make_handler(token: str, key: str, generate=synthesise, groq_key="", transcr
                 self.respond(429, {"error": "speech_busy"})
                 return
             try:
-                self.respond(200, generate(key, text, style, rate))
+                self.respond(200, generate(key, text, style, rate, language))
             except SpeechError as error:
                 self.respond(error.status, {"error": error.code})
             except Exception:
@@ -304,6 +377,10 @@ def make_handler(token: str, key: str, generate=synthesise, groq_key="", transcr
 
 
 def main():
+    if MODEL != LEGACY_MODEL and MODEL not in NATURAL_MODELS:
+        raise SystemExit("Choose a verified, supported PADI voice model.")
+    if DEFAULT_VOICE_ID and (MODEL not in NATURAL_MODELS or re.fullmatch(r"voice_[A-Za-z0-9_-]+", DEFAULT_VOICE_ID) is None):
+        raise SystemExit("The original PADI voice profile requires the newer speech model and a valid voice ID.")
     token = os.environ.get("PADI_VOICE_SERVICE_TOKEN", "")
     key = os.environ.get("GEMINI_API_KEY", "")
     groq_key=os.environ.get("GROQ_API_KEY", "")

@@ -98,8 +98,8 @@ func Relevant(snapshot Snapshot, query string) []Item {
 		return nil
 	}
 	words := terms(query)
-	query = strings.ToLower(query)
-	profileQuery := strings.Contains(query, "about me") && (strings.Contains(query, "remember") || strings.Contains(query, "know"))
+	profileQuery := selfRecallQuery(query)
+	originQuery := originRecallQuery(query)
 	type candidate struct {
 		item  Item
 		score int
@@ -129,6 +129,9 @@ func Relevant(snapshot Snapshot, query string) []Item {
 		if profileQuery {
 			score++
 		}
+		if originQuery && originLabel(item.Label) {
+			score += 5
+		}
 		if score > 0 {
 			candidates = append(candidates, candidate{item, score})
 		}
@@ -145,6 +148,45 @@ func Relevant(snapshot Snapshot, query string) []Item {
 		bytes += len(encoded)
 	}
 	return result
+}
+
+func selfRecallQuery(query string) bool {
+	normalized := normalizedQuery(query)
+	for _, phrase := range []string{"know me", "remember me", "recognise me", "recognize me", "who am i", "you sabi me"} {
+		if strings.Contains(normalized, " "+phrase+" ") {
+			return true
+		}
+	}
+	return strings.Contains(normalized, " about me ") &&
+		(strings.Contains(normalized, " know ") || strings.Contains(normalized, " remember "))
+}
+
+func normalizedQuery(query string) string {
+	words := strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})
+	return " " + strings.Join(words, " ") + " "
+}
+
+func originRecallQuery(query string) bool {
+	normalized := normalizedQuery(query)
+	for _, phrase := range []string{"where am i from", "where am i coming from", "where are my coming from", "where do i come from", "where i come from", "where i dey come from", "which country am i from", "my hometown", "my home town", "my state of origin", "where i grew up"} {
+		if strings.Contains(normalized, " "+phrase+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+func originLabel(label string) bool {
+	words := terms(label)
+	for _, word := range []string{"origin", "hometown", "birthplace", "nationality", "country", "background", "roots"} {
+		if words[word] {
+			return true
+		}
+	}
+	return words["home"] && words["town"] || strings.Contains(normalizedQuery(label), " grew up ") ||
+		strings.Contains(normalizedQuery(label), " where i m from ")
 }
 
 func Context(items []Item) string {

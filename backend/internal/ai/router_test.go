@@ -190,6 +190,9 @@ func TestRouterRoutesByTaskAndComplexity(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			// These routing cases are independent; shared usage budgets must not
+			// trigger fallback as the common personality instructions evolve.
+			router.limiter = newMemoryUsageLimiter()
 			response, err := router.Generate(context.Background(), test.request)
 			if err != nil {
 				t.Fatalf("Generate() error = %v", err)

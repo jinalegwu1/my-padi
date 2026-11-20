@@ -13,7 +13,10 @@ import { usePreferences } from '@/hooks/use-preferences';
 import { useTranslation } from '@/hooks/use-translation';
 import { useVoiceSession } from '@/hooks/use-voice-session';
 
-/** Hands-free microphone → Python speech intelligence → shared chat → natural voice. */
+/**
+ * Runs the human-portrait hands-free conversation: microphone capture, transcription,
+ * chat reply, listening/thinking/speaking portrait state, and natural voice playback.
+ */
 export default function VoiceScreen() {
   const router = useRouter();
   const colors = useColors();
@@ -51,7 +54,7 @@ export default function VoiceScreen() {
       </View>
       <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
         <View style={[styles.orbArea, { minHeight: 250 }]}>
-          <PadiOrb state={state} size={190} />
+          <PadiOrb state={state} voiceId={preferences.voiceId} size={190} />
           <VoiceStatePill state={state} label={label} />
         </View>
         <View style={styles.captionArea}>

@@ -1,7 +1,10 @@
 # Hands-free Python Voice Engine verification
 
-Date: 2026-11-18. Status: **Testing**, pending native compilation and physical
-Android/iPhone checks. JavaScript bundle export is not native compilation.
+Date: 2026-11-20. Status: **Testing**, pending iOS native compilation, physical
+Android/iPhone checks, and human review of voice naturalness. Android's local
+development APK build passed and includes the PadiVoice module. Revised voice
+quality still needs listening review. The newer speech connection now returns
+real preview audio after the earlier model exhausted its provider allowance.
 
 ## Implemented
 
@@ -65,13 +68,151 @@ Android echo-cancellation availability and quality depend on the device.
   Standard application User-Agent headers fixed the API connection; no provider
   authentication or quota restrictions were bypassed.
 
+### November 20 checks and voice-quality changes
+
+- Prepared Python's virtual environment and pinned dependency. Corrected broken
+  lines, duplicate assignments, and overriding placeholder model IDs in local
+  configuration; the documented free models and existing credentials now start
+  a database-ready Go/Python/Expo stack.
+- A live API test matched public JFK speech, rejected silence, obtained an AI
+  reply and real PCM speech, recorded usage, and cleaned its synthetic account.
+- Browser checks exercised text → voice → text context, automatic speech
+  recognition/replies/playback, interruption and continuation, plus capture
+  closure on Pause, End and navigation. Microphone denial and a controlled
+  transcription-service outage also passed.
+- Later full browser reruns received HTTP 429 from natural speech. These are
+  failed live runs; earlier successes do not guarantee provider availability
+  or subjective voice quality.
+- Removed browser/device speech synthesis from all application source paths.
+  Introductions and all seven previews use cached, fixed Go/Python voice clips.
+  Personal weather greetings use authenticated natural speech; signed-out
+  users retain their greeting as text until they sign in.
+- Public clips accept fixed phrases and known sample settings only. They
+  cannot proxy arbitrary unauthenticated personal text. Concurrent requests
+  share generation; failed samples are briefly cached to avoid repeated calls.
+- Delivery now requests connected conversational phrasing, natural emphasis
+  and normal pitch. Typical replies remain in one coherent passage, and
+  interruption tracking counts only fully completed passages.
+- Every voice selection uses the expressive engine. The default style is
+  labelled PADI while retaining the stored `baby` identifier for compatibility.
+  Preview phrases always retain PADI's identity, including the Amara option.
+- 45 frontend tests, six Python tests, TypeScript, backend voice regressions,
+  and Go HTTP/API race checks passed. Android compilation found missing local
+  module version metadata; adding it made PadiVoice Kotlin compilation pass.
+  Apple autolinking resolves PadiVoice.
+
+### Nigerian delivery revision after listening feedback
+
+- The user rejected the previous speech as unnatural. Voice quality remains
+  **Testing**; automated playback checks do not override that feedback.
+- PADI's default stored `baby` style now uses Orus with a fuller, confident,
+  expressive adult male character. The existing named voice choices remain.
+  Delivery uses PADI's own identity without copying a real person's voice.
+- All styles receive connected conversational phrasing, varied emphasis and
+  emotionally appropriate pacing. Nigerian English and Pidgin now have explicit
+  pronunciation and cadence directions. Other selected languages receive their
+  own pronunciation directions; transcripts are not translated by speech.
+- Selected language now reaches Python from personal greetings and voice
+  conversations. Go and Python validate language codes before generation.
+  Fixed introductions keep their selected language, including French. Tunde's
+  public preview receives Pidgin directions; other previews use Nigerian English.
+- 46 frontend tests, six Python tests, TypeScript, all Go package tests and
+  `go vet ./...` passed after this revision. The added checks cover language
+  transport and rejection of unapproved delivery inputs; they do not evaluate
+  how natural or authentically Nigerian the generated audio sounds.
+- Restarted Go, Python and Expo to load the revision. One fresh default PADI
+  preview attempt returned HTTP 429 from the speech provider. No revised audio
+  sample was obtained, and no further live generation attempts were made in
+  this revision. Earlier sample files contain the previous delivery.
+- Browser failure checks passed after the revision: denied microphone permission,
+  transcription failure, and unavailable introduction/all seven previews were
+  reported accurately, with no device speech or fake playback. This run generated
+  no AI replies or speech and does not verify the revised sound.
+
+### Original Nigerian voice and newer speech connection
+
+- A controlled diagnostic identified the earlier model's provider limit as
+  10 free speech generations per project per day. The provider returned a
+  51,520-second retry delay. This was a provider allowance, not PADI's own caps.
+- At the user's request, quota changes were left aside. The existing
+  `PADI_DEV_BYPASS_AI_USAGE_LIMITS=true` development setting remains active.
+  No counters, provider allowances, or billing settings were reset or changed.
+- Checked the provider's published free-tier pricing and the account's model
+  listing for `gemini-3.8-flash-tts`. Created one original Nigerian adult male
+  PADI profile through Voice design, without a reference recording or a
+  real-person imitation. Its generated sample is available for listening review.
+- The development backend now selects the newer model and original profile
+  through server-only `PADI_VOICE_MODEL` and `PADI_VOICE_DEFAULT_ID` settings.
+  All named choices use the newer engine; the default uses the original profile.
+  Existing app style IDs, authentication and playback formats remain supported.
+- The newer model receives exact transcript text with separate delivery metadata.
+  Its WAV response is validated and normalised to 24 kHz mono, 16-bit PCM; the
+  earlier PCM response remains supported. Eight Python tests passed, including
+  invalid/truncated WAV rejection and checks that directions remain outside
+  spoken text. Launcher syntax and whitespace checks also passed.
+- Restarted the services and received HTTP 200 with real, valid speech from
+  `/v1/voice/preview?style=baby&rate=1`. The connected short sample is at
+  `/tmp/my-padi-original-nigerian-preview.wav`; the profile-design sample is at
+  `/tmp/my-padi-original-nigerian-voice.wav`. These temporary artifacts are outside
+  Git. The new voice has not yet been approved as natural by the user.
+
+Provider allowances remain external constraints. A successful preview does not
+establish unlimited access, verify every voice's sound, or replace physical
+Android/iPhone voice checks.
+
+### Daniel preview and persistent public clips
+
+- Daniel's current normal-speed preview returned HTTP 200 with real WAV audio
+  during investigation of the reported rate-limit error.
+- Successful fixed introductions and previews can now be stored in Go's
+  `PADI_VOICE_SAMPLE_CACHE_DIR`. Files are keyed by speech version, model,
+  original profile, selected style/language/rate and exact public phrase.
+  Invalid audio, changed phrases and changed voice profiles are rejected.
+- Stored clips survive backend restarts and can play while generation is
+  unavailable. Account-linked greetings and arbitrary personal speech are not
+  stored in this cache. Failed generation is never stored as audio.
+- Enabled the ignored `.voice-samples` directory for development and preserved
+  the existing successful PADI and Daniel previews before restarting the app.
+  Both returned HTTP 200 after restart with exactly the same audio and text.
+  Unit tests passed for reuse across restarts, malformed cache rejection,
+  profile invalidation and refusal of unapproved public text. Concurrency
+  checks also passed. PADI's development usage-limit bypass remains active.
+- Account recognition and the approved Nigerian companion behaviour were
+  connected to the shared chat context. See
+  [personal-memory verification](./personal-memory-verification.md).
+
+### Flash-Lite TTS switch
+
+- The user approved the current sound and selected `gemini-3.8-flash-lite-tts`
+  to replace `gemini-3.8-flash-tts`. Gemini 3.5 Flash was checked against the
+  provider's model documentation: it produces text, has no audio generation,
+  and is deprecated. It was not substituted as a speech model.
+- Added the compatible Flash-Lite TTS variant to the Python model checks while
+  retaining the original PADI voice profile, selected styles and delivery
+  metadata. Nine Python tests passed, including both variants across all styles
+  and rejection of a text model as a working speech model.
+- A controlled Flash-Lite request with the existing original PADI profile
+  returned HTTP 200 and valid WAV speech. Its review sample is at
+  `/tmp/my-padi-flash-lite-preview.wav`.
+- Updated the development voice-model setting and restarted services. The
+  existing original voice ID, billing configuration and development usage
+  bypass were preserved. Four existing successful public clips were carried
+  forward to retain the sound already reviewed by the user. Those clips were
+  generated with the earlier full TTS model; fresh generation now uses Lite.
+- Provider quotas still apply. One successful generation verifies access and
+  transport, not unlimited availability or identical delivery on every request.
+
+Generation and playable audio are software checks. Naturalness, accent quality,
+echo rejection, and microphone/speaker behavior still need human listening and
+physical devices. A speech-service failure keeps text available and is reported
+instead of being replaced with a robotic fallback.
+
 ## Setup
 
 From the project root:
 
 ```sh
-python3 -m venv services/voice/.venv
-services/voice/.venv/bin/python -m pip install -r services/voice/requirements.txt
+npm run setup:voice
 npm run dev
 ```
 
@@ -85,13 +226,33 @@ Python endpoints are internal and token-protected. Go exposes authenticated
 `/v1/voice/transcribe` and `/v1/voice/speak`, plus public capability configuration.
 Voice defaults disabled in committed example configuration.
 
+With the services running:
+
+```sh
+npm run verify:voice
+npm run verify:voice:browser
+# Failure checks without generating AI replies or speech:
+npm run verify:voice:browser -- --failures-only
+```
+
+Fixed introductions/previews are served by `/v1/voice/welcome` and
+`/v1/voice/preview`. They contain no personal information and are cached by Go.
+Personal speech and conversations remain authenticated. Provider limits still
+apply; missing connections, accounts, or voice quota are reported clearly.
+
 ## Native build and physical verification still required
 
 Expo Go cannot load the new echo-cancelled microphone module. Use an Expo
 **development build** containing PadiVoice and expo-dev-client. Android needs
 Java/Android SDK; iPhone compilation needs macOS/Xcode or a configured EAS build.
-Those native toolchains are absent from this workspace, so native compilation
-and actual microphone/speaker/echo behavior have not been verified here.
+Android's temporary Java/SDK toolchain is under
+`/tmp/my-padi-voice-native-tools`. The full ARM64 development APK build passed
+with the installed animation libraries. Signature verification and APK inspection
+confirmed `com.mypadi.app.voicetest`, the **My PADI Voice Test** label, microphone
+permission, and the PadiVoice module. A copy is at `/tmp/my-padi-voice-test.apk`;
+this debug development build needs Metro and Go services and is outside Git.
+iOS needs a macOS/Xcode or EAS build. No Android phone is connected here, and
+actual microphone/speaker/echo behavior remains unverified.
 
 On a machine with the required toolchain:
 

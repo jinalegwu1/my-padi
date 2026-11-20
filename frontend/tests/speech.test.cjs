@@ -21,32 +21,63 @@ test('spoken text preserves words, numbers and maths while removing decorative M
   assert.ok(!spoken.includes('😊') && !spoken.includes('**') && !spoken.includes('https://') && !spoken.includes('console.log'));
 });
 
-test('speech resolves from callbacks and abort stops playback without waiting for completion', async () => {
-  const calls = [];
-  let stopped = 0, started = 0;
-  const speech = loadTS('src/lib/speech.ts', {
-    'expo-speech': { maxSpeechInputLength: 4000, getAvailableVoicesAsync: async () => [{ language: 'en-US', identifier: 'device-en' }],
-      speak: (text, options) => calls.push({ text, options }), stop: async () => { stopped++; } },
-    '@/data/languages': { findVoice: () => ({ id: 'ada', gender: 'female' }) },
+
+function expressive(overrides = {}) {
+  return loadTS('src/lib/speech.ts', {
+    '@/lib/api': { synthesiseSpeech: async () => ({ audio_base64: 'real-audio' }), fetchVoiceSample: async () => ({ audio_base64: 'sample-audio' }), ...overrides.api },
+    '@/lib/session': { readSession: async () => ({ token: 'account-token' }), subscribeSession: () => () => {}, ...overrides.session },
+    '@/lib/voice-audio': { speechSegments: text => [text] },
     '@/lib/spoken-text': { spokenText },
+    '@/lib/standalone-speech': { playStandaloneSpeech: async () => {}, ...overrides.playback },
+    'expo-speech': { speak: () => assert.fail('PADI must not use device speech') },
   });
-  const controller = new AbortController();
-  const playing = speech.speakPadiReply('**Hi** 😊', 'ada', 1, 'en-NG', controller.signal, () => { started++; });
-  await Promise.resolve();
-  assert.equal(calls[0].text, 'Hi');
-  assert.equal(calls[0].options.voice, 'device-en');
-  assert.equal(started, 0);
-  calls[0].options.onStart();
-  assert.equal(started, 1);
-  controller.abort();
-  await playing;
-  assert.equal(stopped, 1);
+}
+
+test('personal greetings use the expressive service and wait for actual playback', async () => {
+  let request, playback, started = 0;
+  const speech = expressive({
+    api: { synthesiseSpeech: async (...args) => { request = args; return { audio_base64: 'generated' }; } },
+    playback: { playStandaloneSpeech: (audio, signal, onStart) => new Promise(resolve => { playback = { audio, signal, onStart, resolve }; }) },
+  });
+  const result = speech.speakPadiReply('**Hi** 😊', 'ada', 1, 'pcm-NG', new AbortController().signal, () => { started++; });
+  await new Promise(setImmediate);
+  assert.equal(request[0], 'account-token'); assert.equal(request[1], 'Hi'); assert.equal(request[2], 'ada');
+  assert.equal(request[5], 'pcm-NG');
+  assert.equal(playback.audio, 'generated'); assert.equal(started, 0);
+  playback.onStart(); playback.resolve();
+  assert.equal(await result, 'played'); assert.equal(started, 1);
+  assert.equal(speech.padiVoiceOptions('baby', 1).pitch, 1);
 });
 
-test('missing installed voice reports failure instead of pretending to speak', async () => {
-  const speech = loadTS('src/lib/speech.ts', {
-    'expo-speech': { getAvailableVoicesAsync: async () => [], stop: async () => {}, speak: () => assert.fail('unsupported voice should not play') },
-    '@/data/languages': { findVoice: () => ({ id: 'ada', gender: 'female' }) }, '@/lib/spoken-text': { spokenText },
+test('account changes discard pending speech and cannot report it played', async () => {
+  let change, finish, closed = 0;
+  const speech = expressive({
+    api: { synthesiseSpeech: () => new Promise(resolve => { finish = resolve; }) },
+    session: { subscribeSession: callback => { change = callback; return () => { closed++; }; } },
+    playback: { playStandaloneSpeech: () => assert.fail('old account speech must not play') },
   });
-  await assert.rejects(speech.speakPadiReply('Hello', 'ada', 1, 'yo-NG', new AbortController().signal, () => {}), /No device speech voice/);
+  const result = speech.speakPadiReply('Private greeting', 'chidi', 1, 'en-NG', new AbortController().signal, () => assert.fail('stale speech must not start'));
+  await new Promise(setImmediate);
+  change(); finish({ audio_base64: 'late-audio' });
+  assert.equal(await result, 'cancelled'); assert.equal(closed, 1);
+});
+
+test('unavailable natural speech reports failure without a robotic fallback', async () => {
+  const speech = expressive({
+    api: { synthesiseSpeech: async () => { throw new Error('Natural voice unavailable'); } },
+    playback: { playStandaloneSpeech: () => assert.fail('failed audio must not play') },
+  });
+  await assert.rejects(speech.speakPadiReply('Hello', 'ada', 1, 'en-NG', new AbortController().signal, () => {}), /Natural voice unavailable/);
+});
+
+test('unsigned personal text stays private while fixed introductions and previews are available', async () => {
+  const requests = [];
+  const speech = expressive({
+    api: { synthesiseSpeech: () => assert.fail('unsigned personal text must not reach speech'), fetchVoiceSample: async (...args) => { requests.push(args); return { audio_base64: 'fixed-public-sample' }; } },
+    session: { readSession: async () => null },
+  });
+  await assert.rejects(speech.speakPadiReply('Private weather greeting', 'ada', 1, 'en-NG', new AbortController().signal, () => {}), /Sign in/);
+  assert.equal(await speech.speakPadiWelcome('ada', 'fr-FR', new AbortController().signal, () => {}), 'played');
+  assert.equal(await speech.speakVoicePreview('tunde', 1.15, new AbortController().signal, () => {}), 'played');
+  assert.deepEqual(requests.map(args => [args[0], args[1]]), [['welcome', 'ada'], ['preview', 'tunde']]);
 });

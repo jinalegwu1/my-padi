@@ -21,7 +21,7 @@ implementation status are documented in the
 [AI provider and technology responsibility agreement](./docs/ai-provider-responsibilities.md).
 
 The [Python specialist-service roadmap](./docs/python-roadmap.md) defines the
-eight planned intelligence engines and their boundaries with Go.
+three approved intelligence engines and their boundaries with Go.
 
 ## Current status
 
@@ -64,6 +64,7 @@ From the repository root:
 
 ```sh
 npm ci --prefix frontend
+npm run setup:voice
 npm run migrate
 npm run dev
 ```

@@ -1,6 +1,5 @@
 import { useRouter } from 'expo-router';
-import * as Speech from 'expo-speech';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 
 import { OnboardingShell } from '@/components/onboarding/onboarding-shell';
@@ -9,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { fonts, radius, spacing, useColors, useType } from '@/constants/theme';
 import { usePreferences } from '@/hooks/use-preferences';
 import { useTranslation } from '@/hooks/use-translation';
-import { padiSpeechLanguage, padiVoiceOptions, stopPadiSpeech } from '@/lib/speech';
+import { speakPadiWelcome } from '@/lib/speech';
 
 /**
  * Step 1 — PADI's warm introduction.
@@ -22,23 +21,26 @@ export default function WelcomeStep() {
   const { t } = useTranslation();
   const { preferences } = usePreferences();
   const [speechError, setSpeechError] = useState('');
+  const [preparingVoice, setPreparingVoice] = useState(false);
+  const speech = useRef<AbortController | null>(null);
 
   const speakIntroduction = useCallback(() => {
+    speech.current?.abort();
+    const controller = new AbortController(); speech.current = controller;
     setSpeechError('');
-    Speech.speak(`${t('onboarding.welcome.title')} ${t('onboarding.welcome.body')}`, {
-      language: padiSpeechLanguage(preferences.languageCode),
-      ...padiVoiceOptions(preferences.voiceId, preferences.voiceRate),
-      onError: (error) => {
-        setSpeechError(
-          error instanceof Error ? error.message : 'PADI could not speak on this device.',
-        );
-      },
+    setPreparingVoice(true);
+    void speakPadiWelcome(preferences.voiceId, preferences.languageCode, controller.signal, () => {
+      if (speech.current === controller && !controller.signal.aborted) setPreparingVoice(false);
+    }).catch(error => {
+      if (speech.current === controller && !controller.signal.aborted) setSpeechError(error instanceof Error ? error.message : 'PADI’s natural voice is unavailable. You can continue with text.');
+    }).finally(() => {
+      if (speech.current === controller) { speech.current = null; setPreparingVoice(false); }
     });
-  }, [preferences.languageCode, preferences.voiceId, preferences.voiceRate, t]);
+  }, [preferences.languageCode, preferences.voiceId]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') speakIntroduction();
-    return () => void stopPadiSpeech();
+    return () => { speech.current?.abort(); speech.current = null; };
   }, [speakIntroduction]);
 
   return (
@@ -55,8 +57,10 @@ export default function WelcomeStep() {
               variant="secondary"
               onPress={speakIntroduction}
               icon="volume-high"
+              disabled={preparingVoice}
             />
           ) : null}
+          {preparingVoice ? <Text accessibilityLiveRegion="polite" style={{ color: colors.muted }}>Preparing PADI’s voice…</Text> : null}
           {speechError ? (
             <Text accessibilityRole="alert" style={[styles.speechError, { color: colors.danger }]}>
               {speechError}

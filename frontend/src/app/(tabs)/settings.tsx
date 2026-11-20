@@ -359,7 +359,6 @@ export default function SettingsScreen() {
             preview: t('settings.voice.preview'),
             stop: t('settings.voice.stop'),
             speed: t('settings.voice.speed'),
-            simulated: 'Uses your device’s speech voice with a pitch and speed adjustment.',
           }}
         />
       </Sheet>

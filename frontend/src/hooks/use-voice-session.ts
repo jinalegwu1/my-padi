@@ -8,10 +8,10 @@ import { readSession, subscribeSession } from '@/lib/session';
 import { VoiceCapture } from '@/lib/voice-capture';
 import { audioUpload } from '@/lib/voice-audio';
 import { speakNaturally } from '@/lib/natural-speech';
-import { stopPadiSpeech } from '@/lib/speech';
 import type { VoiceSnapshot } from '@/lib/voice-session';
 import { HandsfreeSession } from '@/lib/handsfree-session';
 
+/** Coordinates the full voice turn and exposes one snapshot to the voice screen. */
 export function useVoiceSession() {
   const chat = useChat();
   const { preferences } = usePreferences();
@@ -35,7 +35,7 @@ export function useVoiceSession() {
     send: (text, accountID, signal) => current.current.chat.sendVoice(text, accountID, signal),
     speak: (text, signal, onStart, completed) => {
       const p = current.current.preferences;
-      return speakNaturally(text, p.voiceId, p.voiceRate, signal, onStart, completed);
+      return speakNaturally(text, p.voiceId, p.voiceRate, signal, onStart, completed, p.languageCode);
     },
     delivered: (id, words, interrupted, accountID) => current.current.chat.delivered(id, words, interrupted, accountID),
     changed: next => { if (mounted.current) setSnapshot(next); },

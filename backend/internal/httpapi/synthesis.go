@@ -11,7 +11,15 @@ import (
 )
 
 type SpeechSynthesiser interface {
-	Synthesise(context.Context, string, string, float64) (voice.Audio, error)
+	Synthesise(context.Context, string, string, float64, string) (voice.Audio, error)
+}
+
+func validSpeechLanguage(language string) bool {
+	switch language {
+	case "en-NG", "pcm-NG", "en-GB", "fr-FR", "pt-BR", "es-ES", "ar-SA", "sw-KE", "ha-NG", "yo-NG", "ig-NG", "am-ET", "hi-IN", "zh-CN":
+		return true
+	}
+	return false
 }
 
 func synthesisHandler(deps Dependencies) http.HandlerFunc {
@@ -37,9 +45,10 @@ func synthesisHandler(deps Dependencies) http.HandlerFunc {
 			return
 		}
 		var body struct {
-			Text  string  `json:"text"`
-			Style string  `json:"style"`
-			Rate  float64 `json:"rate"`
+			Text     string  `json:"text"`
+			Style    string  `json:"style"`
+			Rate     float64 `json:"rate"`
+			Language string  `json:"language"`
 		}
 		if decodeRequest(w, r, 64*1024, &body) != nil || !utf8.ValidString(body.Text) || strings.TrimSpace(body.Text) == "" || len(body.Text) > 8192 || body.Rate < 0.5 || body.Rate > 1.5 {
 			writeAPIError(w, 400, "invalid_request", "The spoken reply is invalid.")
@@ -47,6 +56,13 @@ func synthesisHandler(deps Dependencies) http.HandlerFunc {
 		}
 		if body.Style == "" {
 			body.Style = "ada"
+		}
+		if body.Language == "" {
+			body.Language = "en-NG"
+		}
+		if !validSpeechLanguage(body.Language) {
+			writeAPIError(w, 400, "invalid_request", "Choose a supported speech language.")
+			return
 		}
 		switch body.Style {
 		case "baby", "ada", "chidi", "zainab", "tunde", "amara", "daniel":
@@ -56,10 +72,14 @@ func synthesisHandler(deps Dependencies) http.HandlerFunc {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 		defer cancel()
-		audio, err := deps.Synthesis.Synthesise(ctx, body.Text, body.Style, body.Rate)
+		audio, err := deps.Synthesis.Synthesise(ctx, body.Text, body.Style, body.Rate, body.Language)
 		if err != nil {
 			status, code, _ := classifyChatError(err)
-			writeAPIError(w, status, code, "PADI could not generate speech right now. The reply is still available in chat.")
+			message := "PADI could not generate its natural voice right now. The reply is available as text."
+			if status == 429 {
+				message = "PADI's natural voice is temporarily busy or rate-limited. Please try again later; your reply is available as text."
+			}
+			writeAPIError(w, status, code, message)
 			return
 		}
 		writeJSON(w, 200, map[string]string{"audio_base64": audio.Base64, "mime_type": audio.MIME})

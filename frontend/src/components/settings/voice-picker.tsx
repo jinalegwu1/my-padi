@@ -1,4 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { Image } from 'expo-image';
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -18,12 +19,12 @@ type Props = {
     preview: string;
     stop: string;
     speed: string;
-    simulated: string;
   };
 };
 
 /**
- * Voice styles with actual Python-generated speech previews.
+ * Selects a human PADI voice/persona and previews its natural spoken style.
+ * The picked identity is reused by the listening and reply voice screen.
  */
 export function VoicePicker({ labels }: Props) {
   const colors = useColors();
@@ -84,10 +85,11 @@ export function VoicePicker({ labels }: Props) {
               styles.voiceIcon,
               { backgroundColor: selected ? colors.primary : colors.cardMuted },
             ]}>
-            <Ionicons
-              name={voice.gender === 'female' ? 'woman' : 'man'}
-              size={17}
-              color={selected ? colors.onPrimary : colors.muted}
+            <Image
+              source={{ uri: voice.imageUrl }}
+              contentFit="cover"
+              accessibilityLabel={voice.imageDescription}
+              style={styles.voicePortrait}
             />
           </View>
           <View style={styles.voiceText}>
@@ -216,7 +218,7 @@ export function VoicePicker({ labels }: Props) {
       <View style={styles.notice}>
         <Ionicons name="information-circle-outline" size={14} color={colors.muted} />
         <Text style={[styles.noticeText, { color: colors.muted, fontSize: type.micro }]}>
-          {labels.simulated}
+          Previews use the same expressive voice as conversations. An internet connection is needed.
         </Text>
       </View>
     </View>
@@ -304,7 +306,9 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
+  voicePortrait: { width: '100%', height: '100%' },
   voiceText: { flex: 1, gap: 1 },
   voiceName: { fontFamily: fonts.semibold },
   voiceMeta: { fontFamily: fonts.regular },

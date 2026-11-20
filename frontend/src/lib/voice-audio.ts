@@ -20,7 +20,7 @@ export function speechSegments(text: string): string[] {
   const segments:string[]=[];
   let current='';
   for(const sentence of sentences) {
-    if(current && current.length+sentence.length>220) {segments.push(current);current='';}
+    if(current && current.length+sentence.length>650) {segments.push(current);current='';}
     current=[current,sentence].filter(Boolean).join(' ');
   }
   if(current)segments.push(current);

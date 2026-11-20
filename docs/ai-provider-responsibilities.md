@@ -308,7 +308,8 @@ Go coordinates these services. PostgreSQL remains the source of truth for
 persistent application data. The independent Python Voice Engine now exists in
 `services/voice`, with VAD, audio preparation, speech recognition, and expressive
 speech generation. Browser conversation/interruption checks pass; native phone
-compilation and device verification remain pending. The other seven specialist
+compilation and device verification remain pending. The memory/context and
+quality/evaluation specialist
 engines are planned in the [Python roadmap](python-roadmap.md).
 
 ## Free API and billing protection

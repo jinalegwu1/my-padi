@@ -1,6 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Location from 'expo-location';
-import * as Speech from 'expo-speech';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Linking, Platform, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -12,7 +11,7 @@ import { fonts, spacing, useColors, useType } from '@/constants/theme';
 import { usePreferences } from '@/hooks/use-preferences';
 import { useChat } from '@/hooks/use-chat';
 import { useTranslation } from '@/hooks/use-translation';
-import { padiSpeechLanguage, padiVoiceOptions, stopPadiSpeech } from '@/lib/speech';
+import { speakPadiReply, stopPadiSpeech } from '@/lib/speech';
 import {
   buildSpokenGreeting,
   fetchWeatherForCoordinates,
@@ -39,28 +38,26 @@ export default function LocationStep() {
   const [awaitingPlayback, setAwaitingPlayback] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [speechError, setSpeechError] = useState('');
+  const [preparingVoice, setPreparingVoice] = useState(false);
+  const speech = useRef<AbortController | null>(null);
   const processing = useRef(false);
   const autoAttempted = useRef(false);
 
   const speakGreeting = useCallback(
     (text: string) => {
+      speech.current?.abort();
+      const controller = new AbortController(); speech.current = controller;
       setAwaitingPlayback(false);
-      setSpeaking(true);
-      Speech.speak(text, {
-        language: padiSpeechLanguage(preferences.languageCode),
-        ...padiVoiceOptions(preferences.voiceId, preferences.voiceRate),
-        onDone: () => {
-          setSpeaking(false);
-          router.replace('/(tabs)/chat');
-        },
-        onError: (speechFailure) => {
-          setSpeaking(false);
-          setSpeechError(
-            speechFailure instanceof Error
-              ? speechFailure.message
-              : 'PADI could not play the spoken greeting on this device.',
-          );
-        },
+      setSpeaking(false);
+      setPreparingVoice(true);
+      void speakPadiReply(text, preferences.voiceId, preferences.voiceRate, preferences.languageCode, controller.signal, () => {
+        if (speech.current === controller && !controller.signal.aborted) { setPreparingVoice(false); setSpeaking(true); }
+      }).then(outcome => {
+        if (outcome === 'played' && speech.current === controller && !controller.signal.aborted) router.replace('/(tabs)/chat');
+      }).catch(speechFailure => {
+        if (speech.current === controller && !controller.signal.aborted) setSpeechError(speechFailure instanceof Error ? speechFailure.message : 'PADI’s natural voice is unavailable. Your greeting is available as text.');
+      }).finally(() => {
+        if (speech.current === controller) { speech.current = null; setPreparingVoice(false); setSpeaking(false); }
       });
     },
     [preferences.languageCode, preferences.voiceId, preferences.voiceRate, router],
@@ -175,7 +172,7 @@ export default function LocationStep() {
 
   useEffect(
     () => () => {
-      void stopPadiSpeech();
+      speech.current?.abort(); speech.current = null;
     },
     [],
   );
@@ -200,6 +197,7 @@ export default function LocationStep() {
   };
 
   const continueWithoutVoice = () => {
+    speech.current?.abort(); speech.current = null;
     void stopPadiSpeech();
     router.replace('/(tabs)/chat');
   };
@@ -227,6 +225,7 @@ export default function LocationStep() {
       backLabel="Back"
       footer={
         <>
+          {preparingVoice ? <Text accessibilityLiveRegion="polite" style={{ color: colors.muted }}>Preparing PADI’s voice…</Text> : null}
           {loading ? (
             <Text style={[styles.status, { color: colors.muted, fontSize: type.caption }]}>
               {t('onboarding.location.loading')}

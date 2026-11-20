@@ -1,6 +1,6 @@
 # Personal memory
 
-Date: 2026-11-18. Status: **Verified for backend, PostgreSQL, and automated web checks**.
+Date: 2026-11-20. Status: **Verified for backend, PostgreSQL, and automated web checks**.
 Native device validation remains pending.
 
 ## Using memory
@@ -17,6 +17,27 @@ Memory is off by default for each account. Old local demo entries and the old
 device-local memory switch are not imported as facts or treated as consent.
 Saving is manual; automatic extraction or saving from conversation is not
 implemented. PADI's shared instructions explain this limitation.
+
+## Account recognition and everyday questions
+
+The authenticated account name now reaches AI replies. This is basic account
+profile data, separate from opt-in personal memory. The name remains available
+when memory is off; other registration fields are not added to AI context.
+Sign-up and Memory screens explain this distinction.
+
+PADI recognises personal questions such as “Do you know me?”, “What is my name?”,
+“You sabi me?”, and “Where am I coming from?”. Relevant active approved facts
+are retrieved for these questions. Approved hometown, country, birthplace and
+state-of-origin labels receive appropriate relevance for origin questions.
+PADI must ask when the information is missing, rather than infer origin from
+someone's name, phone number, or current location.
+
+Shared companion instructions encourage warm replies using the known name,
+including friendly Nigerian banter. They do not permit invented human feelings,
+personal experiences, other AI friendships, or exclusive relationships. Old
+assistant replies denying all profile/memory access are corrected using the
+current retrieved context. The full earlier conversation history is not fetched
+from PostgreSQL; current chat context remains the app's bounded recent history.
 
 ## Storage and permission rules
 
@@ -76,6 +97,16 @@ to enforce consent boundaries across follow-up turns.
   codename `MarigoldLamp451`, then replied `Unknown.` after the fact was paused,
   despite the request containing an old recalled reply. Its test account and
   records were removed afterward; no SMS was sent.
+- November 20 checks passed for authenticated account-name retrieval, the exact
+  “Do you know me?” question, a friendly named companion reply, and
+  “Where am I coming from?” against an explicitly approved Ogun origin.
+  Pausing the saved project prevented it appearing in the next AI reply, while
+  the account name and separately approved origin remained available. All
+  synthetic accounts and their records were removed.
+- 49 frontend tests, TypeScript, all Go tests, Go vet and concurrency checks
+  passed. A browser check confirmed Enter sends once, Shift+Enter adds a line,
+  and pending or failed sends preserve the draft. Its chat responses were
+  controlled for keyboard verification; real AI behaviour was checked separately.
 
 Run routine checks from the repository root:
 

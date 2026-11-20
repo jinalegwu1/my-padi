@@ -32,7 +32,7 @@ import type { Message } from '@/types';
  *
  * PADI's animated Orb is deliberately NOT here: it belongs to the voice screen
  * and only appears once the user activates voice. Chat replies come from the
- * authenticated Go API; voice is still a separate simulated feature.
+ * authenticated Go API; the dedicated voice screen shares this conversation.
  */
 export default function ConversationScreen() {
   const router = useRouter();

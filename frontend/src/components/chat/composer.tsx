@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useState } from 'react';
-import { Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { useRef, useState } from 'react';
+import { Platform, Pressable, StyleSheet, TextInput, View, type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
 
 import { fonts, radius, shadow, spacing, useColors, useType } from '@/constants/theme';
 
@@ -28,12 +28,40 @@ export function Composer({
   const colors = useColors();
   const type = useType();
   const [text, setText] = useState('');
-  const canSend = text.trim().length > 0 && !disabled;
+  const draft = useRef('');
+  const submitting = useRef(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const canSend = text.trim().length > 0 && !disabled && !isSubmitting;
+
+  const changeText = (value: string) => {
+    draft.current = value;
+    setText(value);
+  };
 
   const handleSend = async () => {
-    if (!canSend) return;
-    const accepted = await onSend(text);
-    if (accepted !== false) setText('');
+    const submitted = draft.current;
+    if (!submitted.trim() || disabled || submitting.current) return;
+    submitting.current = true;
+    setIsSubmitting(true);
+    try {
+      const accepted = await onSend(submitted);
+      if (accepted !== false && draft.current === submitted) changeText('');
+    } catch {
+      // The chat provider reports the failure. Keep the draft available to retry.
+    } finally {
+      submitting.current = false;
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleKeyPress = (event: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
+    if (Platform.OS !== 'web') return;
+    const key = event.nativeEvent as TextInputKeyPressEventData & {
+      shiftKey?: boolean; isComposing?: boolean; keyCode?: number; repeat?: boolean;
+    };
+    if (key.key !== 'Enter' || key.shiftKey || key.isComposing || key.keyCode === 229) return;
+    event.preventDefault();
+    if (!key.repeat) void handleSend();
   };
 
   return (
@@ -49,14 +77,17 @@ export function Composer({
         ]}>
         <TextInput
           value={text}
-          onChangeText={setText}
+          onChangeText={changeText}
           placeholder={placeholder}
           placeholderTextColor={colors.muted}
           accessibilityLabel={placeholder}
+          accessibilityHint={Platform.OS === 'web' ? 'Enter sends your message. Shift plus Enter starts a new line.' : undefined}
           multiline
           maxLength={2000}
-          onSubmitEditing={handleSend}
-          blurOnSubmit={false}
+          onKeyPress={handleKeyPress}
+          onSubmitEditing={Platform.OS === 'web' ? undefined : handleSend}
+          returnKeyType="send"
+          submitBehavior={Platform.OS === 'web' ? undefined : 'submit'}
           style={[
             styles.input,
             { color: colors.text, fontSize: type.body, fontFamily: fonts.regular },

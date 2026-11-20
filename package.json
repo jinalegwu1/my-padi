@@ -5,6 +5,9 @@
     "dev": "node scripts/dev.mjs",
     "start": "node scripts/dev.mjs",
     "migrate": "node scripts/dev.mjs --migrate",
+    "setup:voice": "node scripts/setup-voice.mjs",
+    "verify:voice": "node scripts/verify-voice.mjs",
+    "verify:voice:browser": "node scripts/verify-voice.mjs --browser",
     "typecheck": "npm --prefix frontend run typecheck"
   },
   "engines": {
