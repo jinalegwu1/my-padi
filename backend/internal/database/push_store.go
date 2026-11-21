@@ -173,7 +173,7 @@ func (store *PushStore) ClaimPending(ctx context.Context, now time.Time, limit i
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE padi_push_deliveries SET
 		status = 'failed', last_error_code = 'worker_timeout', updated_at = $1
-		WHERE status = 'sending' AND attempts >= 5 AND updated_at < $1 - interval '10 minutes'`, now); err != nil {
+		WHERE status = 'sending' AND attempts >= 5 AND updated_at < ($1::timestamptz - interval '10 minutes')`, now); err != nil {
 		return nil, fmt.Errorf("expire stalled push deliveries: %w", err)
 	}
 	rows, err := store.db.QueryContext(ctx, `WITH available AS (
@@ -181,7 +181,7 @@ func (store *PushStore) ClaimPending(ctx context.Context, now time.Time, limit i
 		JOIN padi_push_devices p ON p.device_id = d.device_id AND p.user_id = d.user_id
 		WHERE d.attempts < 5 AND (
 			(d.status = 'pending' AND d.next_attempt_at <= $1) OR
-			(d.status = 'sending' AND d.updated_at < $1 - interval '5 minutes')
+			(d.status = 'sending' AND d.updated_at < ($1::timestamptz - interval '5 minutes'))
 		)
 		ORDER BY d.scheduled_for, d.id
 		LIMIT $2

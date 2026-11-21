@@ -3,6 +3,7 @@
 export type AppearanceMode = 'system' | 'light' | 'dark';
 
 export type VoiceGender = 'female' | 'male';
+export type UserGender = 'female' | 'male' | 'prefer_not_to_say';
 
 export type VoiceOption = {
   id: string;
@@ -181,6 +182,15 @@ export type Preferences = {
   dailyCheckIn: boolean;
   checkInTime: string;
   showVoiceTranscript: boolean;
+  wakeWordEnabled: boolean;
+  age: number | null;
+  gender: UserGender | null;
+  deviceActionsEnabled: boolean;
+  devicePhoneCallsEnabled: boolean;
+  deviceMessagesEnabled: boolean;
+  deviceEmailEnabled: boolean;
+  deviceMusicEnabled: boolean;
+  deviceVideosEnabled: boolean;
 };
 
 export type ChatSuggestion = {

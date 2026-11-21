@@ -12,12 +12,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ChatHeader } from '@/components/chat/chat-header';
+import { ChatSidebar } from '@/components/chat/chat-sidebar';
 import { Composer } from '@/components/chat/composer';
 import { MessageBubble } from '@/components/chat/message-bubble';
-import { SuggestionChips } from '@/components/chat/suggestion-chips';
 import { EmptyState } from '@/components/ui/empty-state';
 import { fonts, spacing, useColors, useType } from '@/constants/theme';
-import { SUGGESTIONS } from '@/data/mock-conversations';
 import { useChat } from '@/hooks/use-chat';
 import { usePreferences } from '@/hooks/use-preferences';
 import { useTranslation } from '@/hooks/use-translation';
@@ -50,6 +49,7 @@ export default function ConversationScreen() {
   const [signOutNotice, setSignOutNotice] = useState<string | null>(null);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [feedbackSavingID, setFeedbackSavingID] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -143,9 +143,7 @@ export default function ConversationScreen() {
     }
   }, [reset, session]);
 
-  const greeting = preferences.displayName
-    ? `Hey ${preferences.displayName}! 😊 Good to see you. What are we talking about today?`
-    : undefined;
+  const greeting = buildPadiGreeting(preferences.displayName, preferences.age, preferences.gender);
 
   if (status === 'loading') {
     return (
@@ -211,14 +209,26 @@ export default function ConversationScreen() {
       <ChatHeader
         name={t('chat.title')}
         status={t('chat.status')}
-        onOpenSettings={() => router.push('/(tabs)/settings')}
-        settingsLabel={t('chat.settings')}
-        onNewChat={reset}
-        newChatLabel={t('chat.newChat')}
-        onOpenWeather={() => router.push('/weather')}
-        weatherLabel="Check local weather"
-        onSignOut={handleSignOut}
-        signOutLabel="Sign out"
+        onOpenMenu={() => setSidebarOpen(true)}
+        menuLabel="Open PADI menu"
+        onSwitchToVoice={() => {
+          void unlockVoicePlayback().catch(() => undefined);
+          router.push({ pathname: '/voice', params: { connect: '1' } });
+        }}
+        voiceLabel="Switch to voice"
+      />
+
+      <ChatSidebar
+        visible={sidebarOpen}
+        displayName={preferences.displayName}
+        onClose={() => setSidebarOpen(false)}
+        onNewChat={() => { setSidebarOpen(false); reset(); }}
+        onSettings={() => { setSidebarOpen(false); router.push('/(tabs)/settings'); }}
+        onMemory={() => { setSidebarOpen(false); router.push('/memory'); }}
+        onDeviceActions={() => { setSidebarOpen(false); router.push('/device-actions'); }}
+        onReminders={() => { setSidebarOpen(false); router.push('/(tabs)/reminders'); }}
+        onWeather={() => { setSidebarOpen(false); router.push('/weather'); }}
+        onSignOut={() => { setSidebarOpen(false); void handleSignOut(); }}
       />
 
       <KeyboardAvoidingView
@@ -251,22 +261,7 @@ export default function ConversationScreen() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           onContentSizeChange={scrollToEnd}
-          ListFooterComponent={
-            <View style={styles.footer}>
-              <Text style={[styles.notice, { color: colors.muted, fontSize: type.micro }]}>
-                {t('chat.mockNotice')}
-              </Text>
-            </View>
-          }
         />
-
-        {messages.length <= 2 ? (
-          <SuggestionChips
-            suggestions={SUGGESTIONS.slice(0, 5)}
-            onPick={handleSend}
-            title={t('chat.suggestions')}
-          />
-        ) : null}
 
         {sendError || feedbackError ? (
           <Text accessibilityRole="alert" style={[styles.error, { color: colors.danger }]}>
@@ -289,6 +284,30 @@ export default function ConversationScreen() {
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
+}
+
+function buildPadiGreeting(
+  displayName: string,
+  age: number | null,
+  gender: 'female' | 'male' | 'prefer_not_to_say' | null,
+): string {
+  const hour = new Date().getHours();
+  const timeGreeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const name = displayName.trim();
+  let title = 'Boss';
+
+  if (gender === 'male') {
+    title = age !== null && age >= 60 ? 'My Lord' : age !== null && age >= 25 ? 'Mr' : age !== null && age >= 18 ? 'Oga' : 'Boss';
+  } else if (gender === 'female') {
+    title = age !== null && age >= 60 ? 'My Lord' : age !== null && age >= 25 ? 'Mrs' : age !== null && age >= 18 ? 'Ma' : 'Boss';
+  } else if (age !== null && age >= 60) {
+    title = 'My Lord';
+  } else if (age !== null && age >= 18) {
+    title = 'Oga';
+  }
+
+  const address = name ? `${title} ${name}` : title;
+  return `${timeGreeting}, ${address}! 😊 I’m PADI. What would you like to talk about today?`;
 }
 
 const styles = StyleSheet.create({

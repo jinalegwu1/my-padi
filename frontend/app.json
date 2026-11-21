@@ -11,12 +11,18 @@
       "bundleIdentifier": "com.mypadi.app",
       "supportsTablet": true,
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": ["audio"]
       }
     },
     "android": {
       "package": "com.mypadi.app",
-      "permissions": [],
+      "permissions": [
+        "android.permission.CALL_PHONE",
+        "android.permission.ANSWER_PHONE_CALLS",
+        "android.permission.READ_PHONE_STATE",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ],
       "predictiveBackGestureEnabled": false
     },
     "web": {

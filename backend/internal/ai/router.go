@@ -8,6 +8,7 @@ import (
 	"math"
 	"net"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -24,14 +25,15 @@ const (
 )
 
 type Router struct {
-	models    map[string]ModelConfig
-	providers map[string]Provider
-	routing   RoutingConfig
-	observer  Observer
-	limiter   UsageLimiter
-	breakers  map[string]*circuitBreaker
-	breakerMu sync.Mutex
-	now       func() time.Time
+	models        map[string]ModelConfig
+	providers     map[string]Provider
+	routing       RoutingConfig
+	observer      Observer
+	limiter       UsageLimiter
+	breakers      map[string]*circuitBreaker
+	breakerMu     sync.Mutex
+	now           func() time.Time
+	disableLimits bool
 }
 
 func containsModel(models []string, model string) bool {
@@ -122,13 +124,14 @@ func newRouter(models []ModelConfig, providers map[string]Provider, routing Rout
 	}
 
 	return &Router{
-		models:    registered,
-		providers: providers,
-		routing:   routing,
-		observer:  observer,
-		limiter:   limiter,
-		breakers:  make(map[string]*circuitBreaker),
-		now:       time.Now,
+		models:        registered,
+		providers:     providers,
+		routing:       routing,
+		observer:      observer,
+		limiter:       limiter,
+		breakers:      make(map[string]*circuitBreaker),
+		now:           time.Now,
+		disableLimits: os.Getenv("PADI_DISABLE_ALL_LIMITS") == "true",
 	}, nil
 }
 
@@ -210,7 +213,7 @@ func (router *Router) generateWithModel(ctx context.Context, modelID string, req
 	breaker := router.breaker(modelID)
 	var lastErr error
 	for attempt := 0; attempt <= model.Retries; attempt++ {
-		if !breaker.allow(router.now()) {
+		if !router.disableLimits && !breaker.allow(router.now()) {
 			return Response{}, ErrCircuitOpen
 		}
 		reservedAt := router.now()
@@ -242,10 +245,13 @@ func (router *Router) generateWithModel(ctx context.Context, modelID string, req
 		}
 
 		if err != nil {
-			breaker.recordFailure(router.now(), retryable(err))
+			if !router.disableLimits {
+				breaker.recordFailure(router.now(), retryable(err))
+			}
 			router.observe(model, duration, false, classifyError(err), Usage{})
 			lastErr = err
-			if retryable(err) && !shouldFallbackImmediately(err) {
+			if retryable(err) && !shouldFallbackImmediately(err) &&
+				!(request.Voice && shouldVoiceFallbackImmediately(err)) {
 				continue
 			}
 			return Response{}, err
@@ -271,6 +277,13 @@ func shouldFallbackImmediately(err error) bool {
 	var providerErr *ProviderError
 	return errors.As(err, &providerErr) &&
 		(providerErr.Status == 404 || providerErr.Status == 429)
+}
+
+func shouldVoiceFallbackImmediately(err error) bool {
+	var providerErr *ProviderError
+	return errors.As(err, &providerErr) &&
+		(providerErr.Status == 408 || providerErr.Status == 429 ||
+			providerErr.Status == 503 || providerErr.Status == 504)
 }
 
 func estimateTokenUnits(request Request) int {
@@ -300,6 +313,23 @@ func isFastTask(task Task) bool {
 }
 
 func (router *Router) candidates(request Request) []string {
+	if request.Voice {
+		candidates := []string{
+			router.routing.PrimaryModel,
+			router.routing.FastModel,
+		}
+		seen := make(map[string]bool, len(candidates))
+		unique := candidates[:0]
+		for _, modelID := range candidates {
+			if modelID == "" || seen[modelID] {
+				continue
+			}
+			seen[modelID] = true
+			unique = append(unique, modelID)
+		}
+		return unique
+	}
+
 	preferred := router.routing.PrimaryModel
 	switch {
 	case isReasoningTask(request.Task) && router.routing.ReasoningModel != "":

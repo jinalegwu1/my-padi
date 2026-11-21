@@ -118,6 +118,23 @@ export default function SettingsScreen() {
           />
         </SettingsGroup>
 
+        <SectionHeader
+          title="Device actions"
+          subtitle="Let PADI prepare actions that always open with your confirmation."
+        />
+        <SettingsGroup>
+          <SettingRow
+            icon="phone-portrait-outline"
+            title="Manage device permissions"
+            subtitle={preferences.deviceActionsEnabled
+              ? 'Device actions are enabled with category controls.'
+              : 'Device actions are off.'}
+            value={preferences.deviceActionsEnabled ? 'Enabled' : 'Off'}
+            onPress={() => router.push('/device-actions')}
+            accent
+          />
+        </SettingsGroup>
+
         {/* Voice */}
         <SectionHeader title={t('settings.voice')} subtitle={t('settings.voice.hint')} />
         <SettingsGroup>
@@ -134,6 +151,14 @@ export default function SettingsScreen() {
             subtitle="Display what PADI says as text while speaking."
             value={preferences.showVoiceTranscript}
             onValueChange={(value) => update({ showVoiceTranscript: value })}
+          />
+          <SwitchRow
+            icon="radio-outline"
+            title="Listen for Hey PADI or PADI"
+            subtitle="Keeps PADI voice listening while the app is active. Android can continue with a foreground notification."
+            value={preferences.wakeWordEnabled}
+            onValueChange={(wakeWordEnabled) => update({ wakeWordEnabled })}
+            accent
           />
         </SettingsGroup>
 

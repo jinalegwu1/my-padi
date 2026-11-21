@@ -21,7 +21,6 @@ public class PadiVoiceModule: Module {
     Function("stop") { self.onMain { self.stopCapture() } }
     AsyncFunction("play") { (encoded: String, promise: Promise) in self.playAudio(encoded, promise) }.runOnQueue(.main)
     Function("stopPlayback") { self.onMain { self.stopPlayback() } }
-    OnAppEntersBackground { self.stopCapture(); self.sendEvent("interrupted", ["reason": "background"]) }
     OnDestroy { self.onMain { self.stopCapture() } }
   }
 

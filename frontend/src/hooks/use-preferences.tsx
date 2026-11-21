@@ -18,6 +18,15 @@ export const DEFAULT_PREFERENCES: Preferences = {
   dailyCheckIn: true,
   checkInTime: '08:00',
   showVoiceTranscript: true,
+  wakeWordEnabled: false,
+  age: null,
+  gender: null,
+  deviceActionsEnabled: false,
+  devicePhoneCallsEnabled: true,
+  deviceMessagesEnabled: true,
+  deviceEmailEnabled: true,
+  deviceMusicEnabled: true,
+  deviceVideosEnabled: true,
 };
 
 type PreferencesContextValue = {

@@ -326,6 +326,7 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	chatRequest := ai.Request{
 		Messages:      messages,
 		Task:          ai.TaskConversation,
+		Voice:         body.Delivery == "voice",
 		StyleGuidance: personality.ResponseGuidance(latestUserMessage, personalityPreferences),
 	}
 	if body.Delivery == "voice" {

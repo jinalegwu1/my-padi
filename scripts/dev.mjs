@@ -163,6 +163,7 @@ try {
           ...(backendEnv.PADI_VOICE_FALLBACK_MODEL !== undefined ? {PADI_VOICE_FALLBACK_MODEL:backendEnv.PADI_VOICE_FALLBACK_MODEL} : {}),
           PADI_VOICE_DEFAULT_ID:backendEnv.PADI_VOICE_DEFAULT_ID||'',
           PADI_AI_FREE_ACCOUNT_CONFIRMED:backendEnv.PADI_AI_FREE_ACCOUNT_CONFIRMED,
+          PADI_DISABLE_ALL_LIMITS:backendEnv.PADI_DISABLE_ALL_LIMITS||'false',
           GEMINI_API_KEY:backendEnv.GEMINI_API_KEY,GROQ_API_KEY:backendEnv.GROQ_API_KEY};
         for(const name of ['SystemRoot','WINDIR','SSL_CERT_FILE','SSL_CERT_DIR','HTTPS_PROXY','HTTP_PROXY','NO_PROXY']) {
           if(process.env[name]) voiceEnv[name]=process.env[name];

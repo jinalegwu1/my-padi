@@ -28,11 +28,12 @@ var ErrInvalidAudio = errors.New("unsupported audio recording")
 var ErrBusy = errors.New("speech service is busy")
 
 type Transcriber struct {
-	key      string
-	endpoint string
-	client   *http.Client
-	limiter  ai.UsageLimiter
-	active   chan struct{}
+	key           string
+	endpoint      string
+	client        *http.Client
+	limiter       ai.UsageLimiter
+	active        chan struct{}
+	disableLimits bool
 }
 
 // LoadEnvironment keeps speech opt-in, independent of approved text models.
@@ -77,7 +78,8 @@ func LoadEnvironment(limiter ai.UsageLimiter) (*Transcriber, error) {
 		}
 	}
 	return &Transcriber{key: key, endpoint: endpoint,
-		client: &http.Client{Timeout: 45 * time.Second}, limiter: limiter, active: make(chan struct{}, 4)}, nil
+		client: &http.Client{Timeout: 45 * time.Second}, limiter: limiter, active: make(chan struct{}, 4),
+		disableLimits: os.Getenv("PADI_DISABLE_ALL_LIMITS") == "true"}, nil
 }
 
 // AudioFilename identifies containers by their bytes, never trusting an upload name.
@@ -118,11 +120,13 @@ func (service *Transcriber) TranscribeLanguage(ctx context.Context, audio []byte
 	if silentPCM(audio) {
 		return "", ErrNoSpeech
 	}
-	select {
-	case service.active <- struct{}{}:
-		defer func() { <-service.active }()
-	default:
-		return "", ErrBusy
+	if !service.disableLimits {
+		select {
+		case service.active <- struct{}{}:
+			defer func() { <-service.active }()
+		default:
+			return "", ErrBusy
+		}
 	}
 	// Speech has no text-token usage. Reserve one bookkeeping unit per request
 	// in a separate ledger bucket; never count audio bytes as text tokens.

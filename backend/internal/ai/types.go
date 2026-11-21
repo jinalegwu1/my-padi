@@ -50,6 +50,7 @@ type Request struct {
 	Messages         []Message  `json:"messages"`
 	Task             Task       `json:"task,omitempty"`
 	Complexity       Complexity `json:"complexity,omitempty"`
+	Voice            bool       `json:"-"`
 	StructuredOutput bool       `json:"structured_output,omitempty"`
 	MaxOutputTokens  int        `json:"max_output_tokens,omitempty"`
 	StyleGuidance    string     `json:"-"`

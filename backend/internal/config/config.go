@@ -40,6 +40,21 @@ func DevelopmentAIUsageBypass() (bool, error) {
 	return enabled, nil
 }
 
+// DisableApplicationLimits disables PADI's own quotas, cooldowns, and local
+// concurrency gates for explicit temporary testing. Provider-side limits still
+// apply and must be handled by provider failover.
+func DisableApplicationLimits() (bool, error) {
+	raw := os.Getenv("PADI_DISABLE_ALL_LIMITS")
+	if raw == "" {
+		return false, nil
+	}
+	enabled, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, errors.New("PADI_DISABLE_ALL_LIMITS must be true or false")
+	}
+	return enabled, nil
+}
+
 // Config contains the settings needed to start the API.
 type Config struct {
 	HTTPAddr    string

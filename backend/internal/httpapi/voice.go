@@ -125,6 +125,9 @@ func registerVoiceRoutes(mux *http.ServeMux, deps Dependencies) {
 				writeAPIError(w, http.StatusTooManyRequests, "voice_busy", "Voice is busy. Please try again shortly.")
 			default:
 				status, code, _ := classifyChatError(err)
+				if deps.Logger != nil {
+					deps.Logger.Warn("voice transcription failed", "endpoint", r.URL.Path, "status", status, "error_code", code)
+				}
 				writeAPIError(w, status, code, "PADI could not transcribe your recording right now. Please try again.")
 			}
 			return

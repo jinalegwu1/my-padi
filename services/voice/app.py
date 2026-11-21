@@ -12,6 +12,7 @@ import binascii
 import hmac
 import io
 import json
+import logging
 import os
 import re
 import threading
@@ -24,10 +25,13 @@ from email import policy
 from array import array
 import math
 import sys
+import time
 import uuid
 
 import webrtcvad
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+logger = logging.getLogger("padi.voice")
 
 LEGACY_MODEL = "gemini-3.1-flash-tts-preview"
 FALLBACK_VOICE_MODEL = "gemini-2.5-flash-preview-tts"
@@ -382,6 +386,7 @@ def recognise(key: str, audio: bytes, language: str = "en", prompt: str = "") ->
 
 def make_handler(token: str, key: str, generate=synthesise, groq_key="", transcribe=recognise):
     slots = threading.BoundedSemaphore(4)
+    disable_limits = os.environ.get("PADI_DISABLE_ALL_LIMITS", "").lower() == "true"
 
     class Handler(BaseHTTPRequestHandler):
         # Default HTTP logging contains request paths. Keep this service silent.
@@ -414,7 +419,10 @@ def make_handler(token: str, key: str, generate=synthesise, groq_key="", transcr
             if self.path not in ("/synthesise", "/transcribe"):
                 self.respond(404, {"error": "not_found"})
                 return
+            started = time.monotonic()
+            endpoint = self.path.removeprefix("/")
             if not hmac.compare_digest(self.headers.get("Authorization", "").encode("utf8"), ("Bearer " + token).encode("utf8")):
+                logger.warning("voice request endpoint=%s status=401 error=unauthenticated", endpoint)
                 self.respond(401, {"error": "unauthenticated"})
                 return
             if self.path == "/transcribe":
@@ -449,15 +457,21 @@ def make_handler(token: str, key: str, generate=synthesise, groq_key="", transcr
                     language, prompt = field("language", "en"), field("prompt", "")
                     if language not in ("", "en", "fr", "pt", "es", "ar", "sw", "ha", "yo", "am", "hi", "zh"):
                         raise SpeechError(400,"invalid_language")
-                    if not slots.acquire(blocking=False):
+                    if not disable_limits and not slots.acquire(blocking=False):
+                        logger.warning("voice request endpoint=transcribe provider=groq status=429 error=speech_busy")
                         raise SpeechError(429,"speech_busy")
                     try:
-                        self.respond(200,transcribe(groq_key,audio,language=language,prompt=prompt))
+                        result = transcribe(groq_key,audio,language=language,prompt=prompt)
+                        logger.info("voice request endpoint=transcribe provider=groq model=whisper-large-v3-turbo status=200 duration_ms=%d", int((time.monotonic()-started)*1000))
+                        self.respond(200,result)
                     finally:
-                        slots.release()
+                        if not disable_limits:
+                            slots.release()
                 except SpeechError as error:
+                    logger.warning("voice request endpoint=transcribe provider=groq status=%d error=%s duration_ms=%d", error.status, error.code, int((time.monotonic()-started)*1000))
                     self.respond(error.status,{"error":error.code})
-                except Exception:
+                except Exception as error:
+                    logger.error("voice request endpoint=transcribe status=400 error=invalid_audio exception=%s", type(error).__name__)
                     self.respond(400,{"error":"invalid_audio"})
                 return
             try:
@@ -484,28 +498,36 @@ def make_handler(token: str, key: str, generate=synthesise, groq_key="", transcr
                 if model == FAST_MODEL and (rate != 1 or language not in ("en-NG", "en-GB", "pcm-NG")):
                     raise ValueError()
             except (ValueError, TypeError, UnicodeError, TimeoutError):
+                logger.warning("voice request endpoint=synthesise status=400 error=invalid_request")
                 self.respond(400, {"error": "invalid_request"})
                 return
-            if not slots.acquire(blocking=False):
+            if not disable_limits and not slots.acquire(blocking=False):
+                logger.warning("voice request endpoint=synthesise status=429 error=speech_busy")
                 self.respond(429, {"error": "speech_busy"})
                 return
             try:
+                provider = "groq" if model == FAST_MODEL else "gemini"
                 if model == FAST_MODEL:
                     result = synthesise_groq(groq_key, text, style)
                 else:
                     result = generate(key, text, style, rate, language) if model == MODEL else generate(key, text, style, rate, language, model=model)
+                logger.info("voice request endpoint=synthesise provider=%s model=%s status=200 duration_ms=%d", provider, model or MODEL, int((time.monotonic()-started)*1000))
                 self.respond(200, result)
             except SpeechError as error:
+                logger.warning("voice request endpoint=synthesise provider=%s model=%s status=%d error=%s duration_ms=%d", provider, model or MODEL, error.status, error.code, int((time.monotonic()-started)*1000))
                 self.respond(error.status, {"error": error.code, "retry_after_seconds": error.retry_after_seconds})
-            except Exception:
+            except Exception as error:
+                logger.error("voice request endpoint=synthesise provider=%s model=%s status=502 error=speech_unavailable exception=%s", provider, model or MODEL, type(error).__name__)
                 self.respond(502, {"error": "speech_unavailable"})
             finally:
-                slots.release()
+                if not disable_limits:
+                    slots.release()
 
     return Handler
 
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s", stream=sys.stdout)
     if MODEL not in LEGACY_MODELS and MODEL not in NATURAL_MODELS:
         raise SystemExit("Choose a verified, supported PADI voice model.")
     if FALLBACK_MODEL and FALLBACK_MODEL not in LEGACY_MODELS and FALLBACK_MODEL not in NATURAL_MODELS:
@@ -521,7 +543,8 @@ def main():
     port = int(os.environ.get("PADI_PYTHON_VOICE_PORT", "8090"))
     server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(token, key,groq_key=groq_key))
     server.daemon_threads = True
-    print(f"Python voice service listening on 127.0.0.1:{port}", flush=True)
+    logger.info("voice service ready host=127.0.0.1 port=%d primary_model=%s fallback_model=%s gemini_key_configured=%s groq_key_configured=%s limits_disabled=%s",
+        port, MODEL, FALLBACK_MODEL or "none", bool(key), bool(groq_key), os.environ.get("PADI_DISABLE_ALL_LIMITS", "").lower() == "true")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -19,6 +19,7 @@ import { usePushDeviceLifecycle } from '@/hooks/use-push-device-lifecycle';
 import { PreferencesProvider } from '@/hooks/use-preferences';
 import { ChatProvider } from '@/state/chat-context';
 import { MemoryProvider } from '@/state/memory-context';
+import { WakeManager } from '@/components/wake-manager';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -93,6 +94,7 @@ function ThemedStack() {
           options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
         />
         <Stack.Screen name="memory" options={{ animation: 'slide_from_right' }} />
+        <Stack.Screen name="device-actions" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="weather" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="auth" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="+not-found" options={{ headerShown: true, title: 'Not found' }} />
@@ -131,6 +133,7 @@ export default function RootLayout() {
         <MemoryProvider>
           <ChatProvider>
             <ThemedStack />
+            <WakeManager />
           </ChatProvider>
         </MemoryProvider>
       </PreferencesProvider>

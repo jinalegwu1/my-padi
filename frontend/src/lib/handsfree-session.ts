@@ -31,6 +31,9 @@ export class HandsfreeSession {
   private pending='';
   private stopping:Promise<void>|null=null;
   private snapshot:VoiceSnapshot & {connected:boolean}={phase:'idle',connected:false,padiText:'',error:null};
+  private wakeMode=false;
+  private wakeActivated=false;
+  private wakeTimer:ReturnType<typeof setTimeout>|null=null;
 
   constructor(private deps:Dependencies) {
     this.activity=new VoiceActivity(()=>this.began(),utterance=>{
@@ -49,8 +52,10 @@ export class HandsfreeSession {
     return {controller:new AbortController(),spoken:'',accountID,done,finish};
   }
 
-  async start({greet=true}: {greet?:boolean} = {}) {
+  async start({greet=true,wake=false}: {greet?:boolean;wake?:boolean} = {}) {
     if(this.controller || this.stopping) return;
+    this.wakeMode=wake;
+    this.wakeActivated=false;
     const controller=new AbortController(); this.controller=controller;
     this.change({phase:'preparing',error:null});
     try {
@@ -123,7 +128,22 @@ export class HandsfreeSession {
         try {
           const text=await this.deps.transcribe(session.token,wav,controller.signal);
           if(!this.alive(controller)) return;
-          this.pending=[this.pending,text].filter(Boolean).join('\n');
+          let recognised=text.trim();
+          if(this.wakeMode) {
+            const wake=/^(?:hey\s+)?padi\b[\s,.:!?-]*/i;
+            if(!this.wakeActivated) {
+              if(!wake.test(recognised)) continue;
+              recognised=recognised.replace(wake,'').trim();
+              this.wakeActivated=true;
+            } else if(wake.test(recognised)) {
+              recognised=recognised.replace(wake,'').trim();
+            }
+            if(this.wakeTimer) clearTimeout(this.wakeTimer);
+            this.wakeTimer=setTimeout(()=>{
+              this.wakeActivated=false;
+            },20_000);
+          }
+          if(recognised)this.pending=[this.pending,recognised].filter(Boolean).join('\n');
           this.change({userText:this.pending,error:null});
         } catch(error) {
           if(this.alive(controller) && error && typeof error==='object' && 'status' in error && error.status===401) {
@@ -190,6 +210,9 @@ export class HandsfreeSession {
 
   cancel(error:string|null=null,clearTranscript=false):Promise<void> {
     this.touchVersion++;this.touchPending=false;
+    if(this.wakeTimer) { clearTimeout(this.wakeTimer); this.wakeTimer=null; }
+    this.wakeMode=false;
+    this.wakeActivated=false;
     this.controller?.abort(); this.work?.controller.abort();
     if(this.work?.id && this.work.reply) this.deps.delivered(this.work.id,this.work.spoken,true,this.work.accountID);
     this.activity.reset(); this.queue=[]; this.pending='';

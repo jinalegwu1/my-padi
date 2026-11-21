@@ -86,9 +86,12 @@ func synthesisHandler(deps Dependencies) http.HandlerFunc {
 		}
 		if err != nil {
 			status, code, _ := classifyChatError(err)
+			if deps.Logger != nil {
+				deps.Logger.Warn("natural voice generation failed", "endpoint", r.URL.Path, "status", status, "error_code", code)
+			}
 			message := "PADI could not generate its natural voice right now. The reply is available as text."
 			if status == 429 {
-				message = "PADI's natural voice is temporarily busy or rate-limited. Please try again later; your reply is available as text."
+				message = "PADI could not generate natural voice right now. The reply is available as text."
 			}
 			writeAPIError(w, status, code, message)
 			return

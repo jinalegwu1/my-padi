@@ -47,10 +47,10 @@ export function useVoiceSession() {
     changed: next => { if (mounted.current) setSnapshot(next); },
   });
   const session = sessionRef.current;
-  const connect = useCallback((greet = true) => {
+  const connect = useCallback((greet = true, wake = false) => {
     // Start unlocking synchronously in the tap handler while capture prepares.
     void unlockVoicePlayback().catch(error => { void session.cancel(error instanceof Error ? error.message : 'Tap to chat again to enable sound.'); });
-    void session.start({ greet });
+    void session.start({ greet, wake });
   }, [session]);
 
   useEffect(() => {
@@ -65,7 +65,8 @@ export function useVoiceSession() {
     const background = () => { void session.cancel('Chat paused while the app was away. Tap Resume chat to continue.'); };
     // Native permission sheets can briefly make the app inactive.
     const subscription = AppState.addEventListener('change', state => {
-      if (state === 'background' || (state === 'inactive' && latestSnapshot.current.phase !== 'preparing')) background();
+      if (!current.current.preferences.wakeWordEnabled &&
+          (state === 'background' || (state === 'inactive' && latestSnapshot.current.phase !== 'preparing'))) background();
     });
     const visibility = () => { if (document.hidden) background(); };
     if (Platform.OS === 'web') document.addEventListener('visibilitychange', visibility);

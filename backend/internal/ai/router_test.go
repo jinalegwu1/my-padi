@@ -210,6 +210,50 @@ func TestRouterRoutesByTaskAndComplexity(t *testing.T) {
 	}
 }
 
+func TestRouterVoiceUsesOnlyGeminiThenGroqFallback(t *testing.T) {
+	gemini := &fakeProvider{err: &ProviderError{Provider: "gemini", Status: 503, Retryable: true}}
+	groq := &fakeProvider{response: Response{Content: "groq voice answer"}}
+	openrouter := &fakeProvider{response: Response{Content: "unexpected backup"}}
+	router := testRouter(t, []ModelConfig{
+		{ID: "gemini-primary", Provider: "gemini", Model: "gemini-model", Retries: 2},
+		{ID: "groq-fast", Provider: "groq", Model: "groq-model"},
+		{ID: "openrouter-backup", Provider: "openrouter", Model: "backup-model"},
+	}, map[string]Provider{
+		"gemini": gemini, "groq": groq, "openrouter": openrouter,
+	}, RoutingConfig{
+		PrimaryModel: "gemini-primary",
+		FastModel:    "groq-fast",
+		BackupModel:  "openrouter-backup",
+	}, nil)
+
+	candidates := router.candidates(Request{Voice: true})
+	if len(candidates) != 2 || candidates[0] != "gemini-primary" || candidates[1] != "groq-fast" {
+		t.Fatalf("voice candidates = %v, want Gemini then Groq", candidates)
+	}
+
+	response, err := router.Generate(context.Background(), Request{
+		Messages:   []Message{{Role: RoleUser, Content: "What is the weather?"}},
+		Task:       TaskConversation,
+		Complexity: ComplexitySimple,
+		Voice:      true,
+	})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if response.Content != "groq voice answer" {
+		t.Fatalf("response content = %q, want Groq fallback answer", response.Content)
+	}
+	if gemini.callCount() != 1 {
+		t.Errorf("Gemini calls = %d, want 1 immediate fallback attempt; response provider=%q", gemini.callCount(), response.Provider)
+	}
+	if groq.callCount() != 1 {
+		t.Errorf("Groq calls = %d, want 1", groq.callCount())
+	}
+	if openrouter.callCount() != 0 {
+		t.Errorf("OpenRouter calls = %d, want 0 for voice routing", openrouter.callCount())
+	}
+}
+
 func TestRouterFallsBackOnRetryableFailureAndObservesUsage(t *testing.T) {
 	primary := &fakeProvider{err: &ProviderError{Provider: "primary", Status: 503, Retryable: true}}
 	backup := &fakeProvider{response: Response{

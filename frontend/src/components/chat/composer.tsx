@@ -7,6 +7,7 @@ import { fonts, radius, shadow, spacing, useColors, useType } from '@/constants/
 type Props = {
   onSend: (text: string) => void | boolean | Promise<void | boolean>;
   onOpenVoice: () => void;
+  onOpenDeviceActions?: () => void;
   placeholder: string;
   sendLabel: string;
   voiceLabel: string;
@@ -20,6 +21,7 @@ type Props = {
 export function Composer({
   onSend,
   onOpenVoice,
+  onOpenDeviceActions,
   placeholder,
   sendLabel,
   voiceLabel,
@@ -126,6 +128,19 @@ export function Composer({
         ]}>
         <Ionicons name="mic" size={22} color={colors.primary} />
       </Pressable>
+      {onOpenDeviceActions ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open device actions"
+          accessibilityHint="Prepare a call, message, email, music search, or video search"
+          onPress={onOpenDeviceActions}
+          style={({ pressed }) => [
+            styles.deviceButton,
+            { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.8 : 1 },
+          ]}>
+          <Ionicons name="apps-outline" size={20} color={colors.primary} />
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -174,5 +189,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     ...shadow.card,
+  },
+  deviceButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

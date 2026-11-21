@@ -55,6 +55,20 @@ test('account change discards queued speech and fences late transcription',async
   assert.equal(f.calls.some(x=>Array.isArray(x)&&x[0]==='chat'),false);
 });
 
+test('wake mode only activates for PADI at the start and strips the wake phrase',async()=>{
+  const transcripts=['I am PADI, I am not going to be a fan','Hey PADI hello','PADI how are you'];
+  let index=0;
+  const f=fixture({transcribe:async()=>transcripts[index++]});
+  await f.session.start({greet:false,wake:true});
+  f.voice();f.quiet();await tick();
+  assert.equal(f.calls.filter(x=>Array.isArray(x)&&x[0]==='chat').length,0);
+  f.voice();f.quiet();await tick();
+  assert.deepEqual(f.calls.filter(x=>Array.isArray(x)&&x[0]==='chat'),[['chat','hello']]);
+  f.voice();f.quiet();await tick();
+  assert.deepEqual(f.calls.filter(x=>Array.isArray(x)&&x[0]==='chat'),[['chat','hello'],['chat','how are you']]);
+  await f.session.cancel();
+});
+
 test('voice activity ignores clicks and creates correctly framed WAV speech',()=>{
   let starts=0,utterance;const detector=new activity.VoiceActivity(()=>{starts++;},audio=>{utterance=audio;});
   detector.feed(frame(0.1,50));for(let i=0;i<30;i++)detector.feed(frame());assert.equal(starts,0);

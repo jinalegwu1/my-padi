@@ -8,9 +8,5 @@ import { usePreferences } from '@/hooks/use-preferences';
  */
 export default function Index() {
   const { preferences } = usePreferences();
-  return (
-    <Redirect
-      href={preferences.onboarded ? '/onboarding/location' : '/onboarding/welcome'}
-    />
-  );
+  return <Redirect href={preferences.onboarded ? '/(tabs)/chat' : '/onboarding/welcome'} />;
 }

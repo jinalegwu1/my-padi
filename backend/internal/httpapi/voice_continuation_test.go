@@ -18,6 +18,9 @@ func TestVoiceDeliveryUsesSpokenStyleAndInterruptedContext(t *testing.T) {
 	if response.Code != 200 || generator.request.Messages[0].Role != ai.RoleSystem || !strings.Contains(generator.request.Messages[0].Content, "spoken conversation") || !strings.Contains(generator.request.Messages[0].Content, `"spoken_prefix":"First sentence."`) {
 		t.Fatal("voice delivery or interrupted context missing")
 	}
+	if !generator.request.Voice {
+		t.Fatal("voice chat request was not marked for Gemini-to-Groq routing")
+	}
 	if generator.request.Complexity != ai.ComplexitySimple || generator.request.MaxOutputTokens != 512 {
 		t.Fatal("Ordinary live replies did not use the fast conversation route")
 	}

@@ -7,14 +7,10 @@ import { fonts, spacing, useColors, useType } from '@/constants/theme';
 type Props = {
   name: string;
   status: string;
-  onOpenSettings: () => void;
-  settingsLabel: string;
-  onNewChat: () => void;
-  newChatLabel: string;
-  onOpenWeather: () => void;
-  weatherLabel: string;
-  onSignOut: () => void;
-  signOutLabel: string;
+  onOpenMenu: () => void;
+  menuLabel: string;
+  onSwitchToVoice: () => void;
+  voiceLabel: string;
 };
 
 /**
@@ -24,14 +20,10 @@ type Props = {
 export function ChatHeader({
   name,
   status,
-  onOpenSettings,
-  settingsLabel,
-  onNewChat,
-  newChatLabel,
-  onOpenWeather,
-  weatherLabel,
-  onSignOut,
-  signOutLabel,
+  onOpenMenu,
+  menuLabel,
+  onSwitchToVoice,
+  voiceLabel,
 }: Props) {
   const colors = useColors();
   const type = useType();
@@ -57,32 +49,23 @@ export function ChatHeader({
       <View style={styles.actions}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={weatherLabel}
-          onPress={onOpenWeather}
+          accessibilityLabel={voiceLabel}
+          onPress={onSwitchToVoice}
           hitSlop={8}
           style={({ pressed }) => [
-            styles.iconButton,
-            { backgroundColor: colors.cardMuted },
+            styles.voiceButton,
+            { backgroundColor: colors.primarySoft, borderColor: colors.primary },
             pressed && { opacity: 0.7 },
           ]}>
-          <Ionicons name="partly-sunny-outline" size={19} color={colors.textSecondary} />
+          <Ionicons name="mic-outline" size={17} color={colors.primary} />
+          <Text style={[styles.voiceText, { color: colors.primary, fontSize: type.bodySmall }]}>
+            Switch to voice
+          </Text>
         </Pressable>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={newChatLabel}
-          onPress={onNewChat}
-          hitSlop={8}
-          style={({ pressed }) => [
-            styles.iconButton,
-            { backgroundColor: colors.cardMuted },
-            pressed && { opacity: 0.7 },
-          ]}>
-          <Ionicons name="create-outline" size={19} color={colors.textSecondary} />
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={settingsLabel}
-          onPress={onOpenSettings}
+          accessibilityLabel={menuLabel}
+          onPress={onOpenMenu}
           hitSlop={8}
           style={({ pressed }) => [
             styles.iconButton,
@@ -90,18 +73,6 @@ export function ChatHeader({
             pressed && { opacity: 0.7 },
           ]}>
           <Ionicons name="settings-outline" size={19} color={colors.textSecondary} />
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={signOutLabel}
-          onPress={onSignOut}
-          hitSlop={8}
-          style={({ pressed }) => [
-            styles.iconButton,
-            { backgroundColor: colors.cardMuted },
-            pressed && { opacity: 0.7 },
-          ]}>
-          <Ionicons name="log-out-outline" size={19} color={colors.textSecondary} />
         </Pressable>
       </View>
     </View>
@@ -130,4 +101,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  voiceButton: {
+    minHeight: 38,
+    borderRadius: 19,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.sm,
+  },
+  voiceText: { fontFamily: fonts.semibold },
 });

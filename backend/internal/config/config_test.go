@@ -49,6 +49,33 @@ func TestDevelopmentAIUsageBypass(t *testing.T) {
 	}
 }
 
+func TestDisableApplicationLimits(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "unset"},
+		{name: "disabled", value: "false"},
+		{name: "enabled", value: "true", want: true},
+		{name: "invalid", value: "typo"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("PADI_DISABLE_ALL_LIMITS", test.value)
+			got, err := DisableApplicationLimits()
+			if test.name == "invalid" {
+				if err == nil {
+					t.Fatal("DisableApplicationLimits() error = nil, want invalid flag error")
+				}
+				return
+			}
+			if err != nil || got != test.want {
+				t.Fatalf("DisableApplicationLimits() = %v, %v, want %v, nil", got, err, test.want)
+			}
+		})
+	}
+}
+
 func TestLoad(t *testing.T) {
 	t.Setenv("PADI_DATABASE_URL", "")
 	t.Setenv("DATABASE_URL", "")

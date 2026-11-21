@@ -2,6 +2,7 @@ package expo.modules.padivoice
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -13,6 +14,11 @@ import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.NoiseSuppressor
 import android.os.Handler
 import android.os.Looper
+import android.net.Uri
+import android.telecom.TelecomManager
+import android.telephony.PhoneStateListener
+import android.telephony.TelephonyManager
+import android.os.Build
 import android.util.Base64
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
@@ -34,13 +40,51 @@ class PadiVoiceModule : Module() {
   private val main = Handler(Looper.getMainLooper())
   @Volatile private var playbackGeneration = 0
   @Volatile private var track: AudioTrack? = null
+  private var telephonyListener: PhoneStateListener? = null
 
   override fun definition() = ModuleDefinition {
     Name("PadiVoice")
-    Events("buffer", "interrupted")
+    Events("buffer", "interrupted", "callState")
     AsyncFunction("start") { startCapture() }
     Function("stop") { stopCapture() }
     Function("stopPlayback") { stopPlayback() }
+    AsyncFunction("dial") { phone: String ->
+      val context = appContext.reactContext ?: throw IllegalStateException("Phone context unavailable")
+      val normalized = phone.filter { it.isDigit() || it == '+' }
+      if (normalized.isBlank()) throw IllegalArgumentException("A valid phone number is required")
+      val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:$normalized")).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      }
+      context.startActivity(intent)
+      null
+    }
+    AsyncFunction("answerIncomingCall") {
+      val context = appContext.reactContext ?: throw IllegalStateException("Phone context unavailable")
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) throw IllegalStateException("Answering calls is not supported on this Android version")
+      if (context.checkSelfPermission(Manifest.permission.ANSWER_PHONE_CALLS) != PackageManager.PERMISSION_GRANTED) {
+        throw SecurityException("Phone call answering permission is required")
+      }
+      val telecom = context.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
+      telecom.acceptRingingCall()
+      null
+    }
+    AsyncFunction("playMedia") { query: String ->
+      val context = appContext.reactContext ?: throw IllegalStateException("Media context unavailable")
+      val trimmed = query.trim()
+      if (trimmed.isEmpty()) throw IllegalArgumentException("A music search is required")
+      val encoded = Uri.encode(trimmed)
+      val candidates = listOf(
+        Intent(Intent.ACTION_VIEW, Uri.parse("spotify:search:$encoded")).apply { setPackage("com.spotify.music") },
+        Intent(Intent.ACTION_VIEW, Uri.parse("vnd.youtube://music/search?q=$encoded")).apply { setPackage("com.google.android.apps.youtube.music") },
+        Intent(Intent.ACTION_VIEW, Uri.parse("https://music.youtube.com/search?q=$encoded")),
+      )
+      val intent = candidates.firstOrNull { context.packageManager.resolveActivity(it, 0) != null }
+        ?: throw IllegalStateException("No supported music app is available")
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      context.startActivity(intent)
+      null
+    }
+    OnActivityEntersForeground { startCallListener() }
     AsyncFunction("play") { encoded: String, promise: Promise ->
       stopPlayback()
       val started = playbackGeneration
@@ -52,8 +96,32 @@ class PadiVoiceModule : Module() {
         }
       }, "PadiVoicePlayback").start()
     }
-    OnActivityEntersBackground { stopCapture(); sendEvent("interrupted", mapOf("reason" to "background")) }
-    OnDestroy { stopCapture() }
+    OnDestroy { stopCapture(); stopCallListener() }
+  }
+
+  private fun startCallListener() {
+    val context = appContext.reactContext ?: return
+    if (context.checkSelfPermission(Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) return
+    if (telephonyListener != null) return
+    val telephony = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+    telephonyListener = object : PhoneStateListener() {
+      override fun onCallStateChanged(state: Int, incomingNumber: String?) {
+        val name = when (state) {
+          TelephonyManager.CALL_STATE_RINGING -> "ringing"
+          TelephonyManager.CALL_STATE_OFFHOOK -> "offhook"
+          else -> "idle"
+        }
+        sendEvent("callState", mapOf("state" to name, "incomingNumber" to (incomingNumber ?: "")))
+      }
+    }
+    telephony.listen(telephonyListener, PhoneStateListener.LISTEN_CALL_STATE)
+  }
+
+  private fun stopCallListener() {
+    val context = appContext.reactContext ?: return
+    val telephony = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+    telephonyListener?.let { telephony.listen(it, PhoneStateListener.LISTEN_NONE) }
+    telephonyListener = null
   }
 
   @Synchronized private fun startCapture(): Map<String, Any> {
@@ -67,6 +135,9 @@ class PadiVoiceModule : Module() {
     } ?: throw IllegalStateException("Microphone format unavailable")
     val frameBytes = rate / 20 * 2
     val minimum = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+    val wakeIntent = Intent(context, PadiWakeService::class.java)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(wakeIntent)
+    else context.startService(wakeIntent)
     manager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     previousMode = manager!!.mode
     previousSpeaker = manager!!.isSpeakerphoneOn
@@ -102,6 +173,7 @@ class PadiVoiceModule : Module() {
 
   @Synchronized private fun stopCapture() {
     stopPlayback()
+    val context = appContext.reactContext
     active = false
     generation++
     try { recorder?.stop() } catch (_: Exception) {}
@@ -112,6 +184,7 @@ class PadiVoiceModule : Module() {
     noise?.release(); noise = null
     manager?.let { it.mode = previousMode; it.isSpeakerphoneOn = previousSpeaker }
     manager = null
+    context?.stopService(Intent(context, PadiWakeService::class.java))
   }
 
   @Synchronized private fun stopPlayback() {

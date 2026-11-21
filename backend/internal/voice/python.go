@@ -49,6 +49,8 @@ type PythonSpeech struct {
 	endpoint, token string
 	fallbackModel   string
 	fastVoice       bool
+	groqVoice       bool
+	disableLimits   bool
 	client          *http.Client
 	limiter         ai.UsageLimiter
 	mu              sync.Mutex
@@ -105,6 +107,7 @@ func LoadPythonSpeech(limiter ai.UsageLimiter) (*PythonSpeech, error) {
 	if provider != "" && provider != "gemini" && provider != "groq" {
 		return nil, errors.New("live voice provider must be gemini or groq")
 	}
+	groqVoice := false
 	if provider == "groq" {
 		confirmed := false
 		for _, account := range strings.Split(os.Getenv("PADI_AI_FREE_ACCOUNT_CONFIRMED"), ",") {
@@ -115,8 +118,18 @@ func LoadPythonSpeech(limiter ai.UsageLimiter) (*PythonSpeech, error) {
 		if !confirmed || os.Getenv("GROQ_API_KEY") == "" {
 			return nil, errors.New("fast live voice requires a configured, confirmed Groq account")
 		}
+		groqVoice = true
 	}
-	return &PythonSpeech{endpoint: endpoint + "/synthesise", token: token, fallbackModel: fallback, fastVoice: provider == "groq", limiter: limiter, client: &http.Client{Timeout: 55 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	if provider != "groq" {
+		for _, account := range strings.Split(os.Getenv("PADI_AI_FREE_ACCOUNT_CONFIRMED"), ",") {
+			if strings.TrimSpace(account) == "groq" && os.Getenv("GROQ_API_KEY") != "" {
+				groqVoice = true
+				break
+			}
+		}
+	}
+	disableLimits := os.Getenv("PADI_DISABLE_ALL_LIMITS") == "true"
+	return &PythonSpeech{endpoint: endpoint + "/synthesise", token: token, fallbackModel: fallback, fastVoice: provider == "groq", groqVoice: groqVoice, disableLimits: disableLimits, limiter: limiter, client: &http.Client{Timeout: 55 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
 const fastVoiceModel = "canopylabs/orpheus-v1-english"
@@ -124,9 +137,10 @@ const fastVoiceModel = "canopylabs/orpheus-v1-english"
 // Live English turns can use Groq speech while the selected locale/pace falls
 // back to Gemini when unsupported or the fast service is unavailable.
 func (service *PythonSpeech) SynthesiseLive(ctx context.Context, text, style string, rate float64, language string) (Audio, error) {
-	if service.fastVoice && rate == 1 && (language == "en-NG" || language == "en-GB" || language == "pcm-NG") {
+	supportedFastSpeech := rate == 1 && (language == "en-NG" || language == "en-GB" || language == "pcm-NG")
+	if service.fastVoice && supportedFastSpeech {
 		service.mu.Lock()
-		blocked := time.Now().Before(service.cooldowns[fastVoiceModel])
+		blocked := !service.disableLimits && time.Now().Before(service.cooldowns[fastVoiceModel])
 		service.mu.Unlock()
 		if !blocked {
 			audio, err := service.synthesise(ctx, text, style, rate, language, fastVoiceModel)
@@ -137,6 +151,47 @@ func (service *PythonSpeech) SynthesiseLive(ctx context.Context, text, style str
 				return Audio{}, err
 			}
 		}
+	}
+	if !service.fastVoice && supportedFastSpeech && service.groqVoice {
+		service.mu.Lock()
+		geminiBlocked := !service.disableLimits && time.Now().Before(service.cooldowns[""])
+		service.mu.Unlock()
+		if !geminiBlocked {
+			audio, err := service.synthesise(ctx, text, style, rate, language, "")
+			if err == nil {
+				return audio, nil
+			}
+			if ctx.Err() != nil || errors.Is(err, ai.ErrUsageLimiterUnavailable) {
+				return Audio{}, err
+			}
+		}
+		service.mu.Lock()
+		groqBlocked := !service.disableLimits && time.Now().Before(service.cooldowns[fastVoiceModel])
+		service.mu.Unlock()
+		if !groqBlocked {
+			audio, err := service.synthesise(ctx, text, style, rate, language, fastVoiceModel)
+			if err == nil {
+				return audio, nil
+			}
+			if ctx.Err() != nil || errors.Is(err, ai.ErrUsageLimiterUnavailable) {
+				return Audio{}, err
+			}
+		}
+		if service.fallbackModel != "" {
+			service.mu.Lock()
+			fallbackBlocked := !service.disableLimits && time.Now().Before(service.cooldowns[service.fallbackModel])
+			service.mu.Unlock()
+			if !fallbackBlocked {
+				audio, err := service.synthesise(ctx, text, style, rate, language, service.fallbackModel)
+				if err == nil {
+					return audio, nil
+				}
+				if ctx.Err() != nil || errors.Is(err, ai.ErrUsageLimiterUnavailable) {
+					return Audio{}, err
+				}
+			}
+		}
+		return Audio{}, &ai.ProviderError{Provider: "live-voice", Status: http.StatusBadGateway}
 	}
 	return service.Synthesise(ctx, text, style, rate, language)
 }
@@ -149,7 +204,7 @@ func (service *PythonSpeech) Synthesise(ctx context.Context, text, style string,
 	var lastErr error
 	for _, model := range models {
 		service.mu.Lock()
-		blocked := time.Now().Before(service.cooldowns[model])
+		blocked := !service.disableLimits && time.Now().Before(service.cooldowns[model])
 		service.mu.Unlock()
 		if blocked {
 			lastErr = &ai.ProviderError{Provider: "gemini-voice", Status: http.StatusTooManyRequests}

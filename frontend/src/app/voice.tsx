@@ -87,7 +87,19 @@ export default function VoiceScreen() {
           <Ionicons name="chevron-down" size={20} color={colors.textSecondary} />
         </Pressable>
         <Text style={[styles.headerTitle, { color: colors.text, fontSize: type.subheading }]}>{t('voice.title')}</Text>
-        <View style={styles.closeButton} />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Switch to text"
+          onPress={handleEnd}
+          hitSlop={8}
+          style={({ pressed }) => [
+            styles.textSwitch,
+            { backgroundColor: colors.primarySoft, borderColor: colors.primary },
+            pressed && { opacity: 0.7 },
+          ]}>
+          <Ionicons name="chatbubble-outline" size={16} color={colors.primary} />
+          <Text style={[styles.textSwitchText, { color: colors.primary, fontSize: type.micro }]}>Text</Text>
+        </Pressable>
       </View>
       <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
         <View style={[styles.orbArea, { minHeight: 250 }]}>
@@ -133,6 +145,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  textSwitch: {
+    minHeight: 38,
+    borderRadius: 19,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: spacing.sm,
+  },
+  textSwitchText: { fontFamily: fonts.semibold },
   headerTitle: { fontFamily: fonts.semibold },
   orbArea: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.lg },
   captionArea: { paddingHorizontal: spacing.base, paddingBottom: spacing.md },

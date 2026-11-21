@@ -43,6 +43,14 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure AI usage limits: %w", err)
 	}
+	disableApplicationLimits, err := config.DisableApplicationLimits()
+	if err != nil {
+		return fmt.Errorf("configure application limits: %w", err)
+	}
+	if disableApplicationLimits {
+		bypassUsageCaps = true
+		logger.Warn("All PADI application limits disabled")
+	}
 	aiConfiguration, err := ai.LoadEnvironment()
 	if err != nil {
 		return fmt.Errorf("load AI provider configuration: %w", err)

@@ -174,9 +174,12 @@ func (samples *speechSamples) handle(kind string) http.HandlerFunc {
 		}
 		if entry.err != nil {
 			status, code, _ := classifyChatError(entry.err)
+			if samples.logger != nil {
+				samples.logger.Warn("natural voice sample generation failed", "endpoint", r.URL.Path, "status", status, "error_code", code)
+			}
 			message := "PADI's natural voice is unavailable right now. You can continue with text."
 			if status == 429 {
-				message = "PADI's natural voice is temporarily busy or rate-limited. Please try again later; text is available."
+				message = "PADI could not generate natural voice right now. The text is available."
 			}
 			writeAPIError(w, status, code, message)
 			return
