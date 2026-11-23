@@ -1,0 +1,53 @@
+[
+  {
+    "id": "clear-english",
+    "file": "clear-english.wav",
+    "language": "auto",
+    "reference": "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+    "source": "https://github.com/ggml-org/whisper.cpp/blob/master/samples/jfk.wav",
+    "license": "Public domain: U.S. federal government speech",
+    "sha256": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e"
+  },
+  {
+    "id": "short-sentence",
+    "file": "please-continue.wav",
+    "language": "en",
+    "reference": "Please continue.",
+    "source": "Offline eSpeak NG fixture; see README.md",
+    "synthetic": true,
+    "sha256": "f6f810f266857a5bab57edfd70d7287b2135196cd095e39b7d4621aafd54798e"
+  },
+  {
+    "id": "nigerian-english-short",
+    "file": "nigerian-english-short.wav",
+    "language": "en",
+    "reference": "Invoices are always issued with terms of payment.",
+    "source": "https://huggingface.co/datasets/benjaminogbonna/nigerian_accented_english_dataset/tree/23063ce074a2e7b930475d7e776e505c2027d69d",
+    "test_row": 1,
+    "license": "Apache-2.0",
+    "synthetic": false,
+    "sha256": "8bdb912c3d44282a2c1bf265e7ff91d0317c5634bf1c56195683504cc4594699"
+  },
+  {
+    "id": "nigerian-english-long",
+    "file": "nigerian-english-long.wav",
+    "language": "en",
+    "reference": "Niger Delta is sometimes called the Oil Rivers because it was once a major producer of palm oil",
+    "source": "https://huggingface.co/datasets/benjaminogbonna/nigerian_accented_english_dataset/tree/23063ce074a2e7b930475d7e776e505c2027d69d",
+    "test_row": 0,
+    "license": "Apache-2.0",
+    "synthetic": false,
+    "sha256": "fa955ff52f5817f2d183fd689439da04fb1400031b350f0f73ce3f58abc56216"
+  },
+  {
+    "id": "nigerian-pidgin",
+    "file": "nigerian-pidgin.wav",
+    "language": "pcm-NG",
+    "reference": "if you wan do dat one na you sabi but make sure say you dey monitor your pikin well well",
+    "source": "https://huggingface.co/datasets/asr-nigerian-pidgin/nigerian-pidgin-1.0/tree/87c615091844ac1b44b91d8831683641b02df447",
+    "test_row": 3,
+    "license": "CC-BY-4.0",
+    "synthetic": false,
+    "sha256": "ef3367c2bb6acfce61021bdaf927ef13f0aaf25765a433baac45fabc48c9d37c"
+  }
+]

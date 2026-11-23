@@ -153,6 +153,13 @@ export default function SettingsScreen() {
             onValueChange={(value) => update({ showVoiceTranscript: value })}
           />
           <SwitchRow
+            icon="volume-high-outline"
+            title="Speak chat replies automatically"
+            subtitle="Play written PADI replies aloud. You can still play any reply manually when this is off."
+            value={preferences.autoSpeakReplies ?? false}
+            onValueChange={(autoSpeakReplies) => update({ autoSpeakReplies })}
+          />
+          <SwitchRow
             icon="radio-outline"
             title="Listen for Hey PADI or PADI"
             subtitle="Keeps PADI voice listening while the app is active. Android can continue with a foreground notification."

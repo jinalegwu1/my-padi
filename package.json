@@ -8,6 +8,7 @@
     "setup:voice": "node scripts/setup-voice.mjs",
     "verify:voice": "node scripts/verify-voice.mjs",
     "verify:voice:browser": "node scripts/verify-voice.mjs --browser",
+    "verify:transcription": "node scripts/verify-transcription.mjs",
     "typecheck": "npm --prefix frontend run typecheck"
   },
   "engines": {

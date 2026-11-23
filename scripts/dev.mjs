@@ -152,19 +152,23 @@ try {
     const needsDatabase = Boolean(backendEnv.DATABASE_URL || backendEnv.PADI_DATABASE_URL || backendEnv.PADI_AI_MODELS);
     const backendRunning = await runningBackend(backendPort, needsDatabase);
     if (!stopping) {
-      if(backendEnv.PADI_PYTHON_VOICE_ENABLED==='true') {
+      if(backendEnv.PADI_PYTHON_VOICE_ENABLED==='true' || backendEnv.PADI_STT_ENABLED==='true') {
         const voicePort=port(backendEnv.PADI_PYTHON_VOICE_PORT||'8090','PADI_PYTHON_VOICE_PORT');
         if(voicePort===backendPort || voicePort===frontendPort) throw new Error('Python voice needs its own port.');
         const python=backendEnv.PADI_VOICE_PYTHON || join(root,'services','voice','.venv',process.platform==='win32'?'Scripts':'bin',process.platform==='win32'?'python.exe':'python');
         if(!existsSync(python)) throw new Error('Prepare services/voice/.venv and install services/voice/requirements.txt before starting Python voice.');
         const voiceEnv={PATH:process.env.PATH,PYTHONUNBUFFERED:'1',
-          PADI_PYTHON_VOICE_PORT:String(voicePort),PADI_VOICE_SERVICE_TOKEN:backendEnv.PADI_VOICE_SERVICE_TOKEN,
+          PADI_PYTHON_VOICE_ENABLED:backendEnv.PADI_PYTHON_VOICE_ENABLED||'false',PADI_PYTHON_VOICE_PORT:String(voicePort),PADI_VOICE_SERVICE_TOKEN:backendEnv.PADI_VOICE_SERVICE_TOKEN,
+          PADI_STT_ENABLED:backendEnv.PADI_STT_ENABLED||'false',
           PADI_VOICE_MODEL:backendEnv.PADI_VOICE_MODEL||'gemini-3.1-flash-tts-preview',
           ...(backendEnv.PADI_VOICE_FALLBACK_MODEL !== undefined ? {PADI_VOICE_FALLBACK_MODEL:backendEnv.PADI_VOICE_FALLBACK_MODEL} : {}),
           PADI_VOICE_DEFAULT_ID:backendEnv.PADI_VOICE_DEFAULT_ID||'',
           PADI_AI_FREE_ACCOUNT_CONFIRMED:backendEnv.PADI_AI_FREE_ACCOUNT_CONFIRMED,
           PADI_DISABLE_ALL_LIMITS:backendEnv.PADI_DISABLE_ALL_LIMITS||'false',
           GEMINI_API_KEY:backendEnv.GEMINI_API_KEY,GROQ_API_KEY:backendEnv.GROQ_API_KEY};
+        for(const name of ['PADI_STT_MODEL','PADI_STT_MODEL_PATH','PADI_STT_WORKERS','PADI_STT_THREADS','PADI_STT_TIMEOUT_SECONDS']) {
+          if(backendEnv[name]!==undefined) voiceEnv[name]=backendEnv[name];
+        }
         for(const name of ['SystemRoot','WINDIR','SSL_CERT_FILE','SSL_CERT_DIR','HTTPS_PROXY','HTTP_PROXY','NO_PROXY']) {
           if(process.env[name]) voiceEnv[name]=process.env[name];
         }

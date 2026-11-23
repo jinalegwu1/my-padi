@@ -14,6 +14,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   highContrast: false,
   voiceId: 'baby',
   voiceRate: 1,
+  autoSpeakReplies: false,
   notificationsEnabled: true,
   dailyCheckIn: true,
   checkInTime: '08:00',

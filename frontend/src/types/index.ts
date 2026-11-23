@@ -178,6 +178,7 @@ export type Preferences = {
   highContrast: boolean;
   voiceId: string;
   voiceRate: number;
+  autoSpeakReplies: boolean;
   notificationsEnabled: boolean;
   dailyCheckIn: boolean;
   checkInTime: string;

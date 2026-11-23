@@ -68,6 +68,18 @@ test('voice turns preserve the explicitly selected language through shared chat'
   }finally{await f.close();}
 });
 
+test('text sends expose the exact committed reply for the speech integration', async () => {
+  const f = await fixture();
+  try {
+    let result;
+    await act(async () => { result = await f.text.sendWithResponse('Question', 'a'); });
+    assert.equal(result.status, 'sent');
+    assert.equal(result.reply, 'Real reply 😊');
+    assert.equal(f.text.messages.at(-1).id, result.messageID);
+    assert.equal(f.text.messages.at(-1).text, result.reply);
+  } finally { await f.close(); }
+});
+
 test('a pending voice send blocks competing text sends and cancellation removes both pending messages', async () => {
   const f = await fixture();
   const pending = deferred();

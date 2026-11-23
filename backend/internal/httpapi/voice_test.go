@@ -3,14 +3,15 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"strings"
 	"testing"
 
-	"github.com/jinalegwu1/my-padi/backend/internal/ai"
 	"github.com/jinalegwu1/my-padi/backend/internal/auth"
 	"github.com/jinalegwu1/my-padi/backend/internal/voice"
 )
@@ -44,7 +45,7 @@ func TestVoiceUploadPassesSelectedLanguageAndDefaultsToEnglish(t *testing.T) {
 	} {
 		speech := &testLanguageSpeech{}
 		router := NewRouter(nil, Dependencies{Auth: testAuthAPI{}, Speech: speech})
-		request := audioRequest(t, []byte("RIFF0000WAVEdata"), "audio", false)
+		request := audioRequest(t, uploadWAV(), "audio", false)
 		request.URL.RawQuery = strings.TrimPrefix(test.query, "?")
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)
@@ -60,11 +61,18 @@ func (s *testSpeech) Transcribe(context.Context, []byte) (string, error) {
 }
 
 func audioRequest(t *testing.T, audio []byte, field string, duplicate bool) *http.Request {
+	return audioRequestType(t, audio, field, duplicate, "audio/wav")
+}
+
+func audioRequestType(t *testing.T, audio []byte, field string, duplicate bool, media string) *http.Request {
 	t.Helper()
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	for i := 0; i < 1+btoi(duplicate); i++ {
-		part, err := writer.CreateFormFile(field, "malicious-path.exe")
+		headers := make(textproto.MIMEHeader)
+		headers.Set("Content-Disposition", `form-data; name="`+field+`"; filename="malicious-path.exe"`)
+		headers.Set("Content-Type", media)
+		part, err := writer.CreatePart(headers)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -75,6 +83,24 @@ func audioRequest(t *testing.T, audio []byte, field string, duplicate bool) *htt
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	request.Header.Set("Authorization", "Bearer test-token")
 	return request
+}
+
+func uploadWAV() []byte {
+	audio := make([]byte, 44+3200)
+	copy(audio, "RIFF")
+	binary.LittleEndian.PutUint32(audio[4:], uint32(len(audio)-8))
+	copy(audio[8:], "WAVEfmt ")
+	binary.LittleEndian.PutUint32(audio[16:], 16)
+	binary.LittleEndian.PutUint16(audio[20:], 1)
+	binary.LittleEndian.PutUint16(audio[22:], 1)
+	binary.LittleEndian.PutUint32(audio[24:], 16000)
+	binary.LittleEndian.PutUint32(audio[28:], 32000)
+	binary.LittleEndian.PutUint16(audio[32:], 2)
+	binary.LittleEndian.PutUint16(audio[34:], 16)
+	copy(audio[36:], "data")
+	binary.LittleEndian.PutUint32(audio[40:], 3200)
+	audio[44] = 1
+	return audio
 }
 func btoi(b bool) int {
 	if b {
@@ -91,12 +117,12 @@ func TestVoiceUploadValidationAndAuthentication(t *testing.T) {
 		duplicate, expired, missingToken bool
 		status, calls                    int
 	}{
-		{"valid", []byte("RIFF0000WAVEdata"), "audio", false, false, false, 200, 1},
-		{"expired", []byte("RIFF0000WAVEdata"), "audio", false, true, false, 401, 0},
-		{"no token", []byte("RIFF0000WAVEdata"), "audio", false, false, true, 401, 0},
+		{"valid", uploadWAV(), "audio", false, false, false, 200, 1},
+		{"expired", uploadWAV(), "audio", false, true, false, 401, 0},
+		{"no token", uploadWAV(), "audio", false, false, true, 401, 0},
 		{"fake", []byte("not a real WAV file"), "audio", false, false, false, 400, 0},
-		{"duplicate", []byte("RIFF0000WAVEdata"), "audio", true, false, false, 400, 0},
-		{"wrong field", []byte("RIFF0000WAVEdata"), "other", false, false, false, 400, 0},
+		{"duplicate", uploadWAV(), "audio", true, false, false, 400, 0},
+		{"wrong field", uploadWAV(), "other", false, false, false, 400, 0},
 		{"oversize", append([]byte("RIFF0000WAVE"), make([]byte, voice.MaxAudioBytes)...), "audio", false, false, false, 413, 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -129,14 +155,14 @@ func TestVoiceProviderErrorsAreSanitized(t *testing.T) {
 		code   string
 	}{
 		{voice.ErrNoSpeech, 422, "no_speech"},
-		{voice.ErrBusy, 429, "voice_busy"},
-		{context.DeadlineExceeded, 504, "provider_timeout"},
-		{&ai.ProviderError{Status: 429}, 429, "provider_rate_limited"},
-		{errors.New("private recording and credentials"), 502, "provider_unavailable"},
+		{voice.ErrBusy, 429, "transcription_busy"},
+		{context.DeadlineExceeded, 504, "transcription_timeout"},
+		{&voice.SpeechFailure{Status: 503, Code: "model_not_installed"}, 503, "model_not_installed"},
+		{errors.New("private recording and credentials"), 502, "transcription_failed"},
 	} {
 		router := NewRouter(nil, Dependencies{Auth: testAuthAPI{}, Speech: &testSpeech{err: test.err}})
 		response := httptest.NewRecorder()
-		router.ServeHTTP(response, audioRequest(t, []byte("RIFF0000WAVEdata"), "audio", false))
+		router.ServeHTTP(response, audioRequest(t, uploadWAV(), "audio", false))
 		if response.Code != test.status || !strings.Contains(response.Body.String(), test.code) || strings.Contains(response.Body.String(), "private recording") {
 			t.Fatal("incorrect or unsafe speech error")
 		}

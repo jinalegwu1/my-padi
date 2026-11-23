@@ -21,8 +21,8 @@ const preferences = {
 
 test('push lifecycle registers active account schedules and unregisters on sign-out', async () => {
   const originalDateTimeFormat = Intl.DateTimeFormat;
-  Intl.DateTimeFormat = class {
-    resolvedOptions() { return { timeZone: 'Pacific/Auckland' }; }
+  Intl.DateTimeFormat = function DateTimeFormat() {
+    return { resolvedOptions: () => ({ timeZone: 'Pacific/Auckland' }) };
   };
   let session = { token: 'token-a', user: { id: 'a', full_name: 'Ada' } };
   const sessionListeners = new Set();
@@ -83,6 +83,9 @@ test('push lifecycle registers active account schedules and unregisters on sign-
       root = create(React.createElement(Probe));
       await new Promise(resolve => setImmediate(resolve));
     });
+    // This effect queues an async operation without a React state update.
+    // Flush that queue after the initial effect has actually mounted.
+    await act(async () => { await new Promise(resolve => setImmediate(resolve)); });
     assert.equal(registrations.length, 1);
     assert.equal(registrations[0].token, 'token-a');
     assert.equal(registrations[0].language, 'en-NG');

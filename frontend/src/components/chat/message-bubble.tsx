@@ -17,6 +17,12 @@ type Props = {
   feedbackLabels?: Record<ResponseRating, string>;
   feedbackSaving?: boolean;
   onFeedback?: (messageID: string, rating: ResponseRating) => void;
+  speechState?: 'idle' | 'loading' | 'speaking' | 'paused' | 'error';
+  speechError?: string;
+  onSpeak?: (message: Message) => void;
+  onPauseSpeech?: () => void;
+  onResumeSpeech?: () => void;
+  onStopSpeech?: () => void;
 };
 
 /** One message in the conversation. PADI on the start side, the user on the end side. */
@@ -26,6 +32,12 @@ export const MessageBubble = memo(function MessageBubble({
   feedbackLabels,
   feedbackSaving = false,
   onFeedback,
+  speechState = 'idle',
+  speechError,
+  onSpeak,
+  onPauseSpeech,
+  onResumeSpeech,
+  onStopSpeech,
 }: Props) {
   const colors = useColors();
   const type = useType();
@@ -127,6 +139,63 @@ export const MessageBubble = memo(function MessageBubble({
                 </Text>
               </Pressable>
             ))}
+          </View>
+        ) : null}
+        {!isUser && message.backendChat && onSpeak ? (
+          <View style={styles.speechControls}>
+            {speechState === 'speaking' ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Pause spoken reply"
+                onPress={onPauseSpeech}
+                style={styles.speechButton}>
+                <Ionicons name="pause" size={15} color={colors.primary} />
+                <Text style={[styles.speechButtonText, { color: colors.primary, fontSize: type.caption }]}>Pause</Text>
+              </Pressable>
+            ) : speechState === 'paused' ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Resume spoken reply"
+                onPress={onResumeSpeech}
+                style={styles.speechButton}>
+                <Ionicons name="play" size={15} color={colors.primary} />
+                <Text style={[styles.speechButtonText, { color: colors.primary, fontSize: type.caption }]}>Resume</Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={speechState === 'loading' ? 'Preparing spoken reply' : 'Play spoken reply'}
+                accessibilityState={{ disabled: speechState === 'loading' }}
+                disabled={speechState === 'loading'}
+                onPress={() => onSpeak(message)}
+                style={styles.speechButton}>
+                <Ionicons
+                  name={speechState === 'loading' ? 'hourglass-outline' : 'play'}
+                  size={15}
+                  color={colors.primary}
+                />
+                <Text style={[styles.speechButtonText, { color: colors.primary, fontSize: type.caption }]}>
+                  {speechState === 'loading' ? 'Preparing audio…' : speechState === 'error' ? 'Try again' : 'Play'}
+                </Text>
+              </Pressable>
+            )}
+            {speechState === 'loading' || speechState === 'speaking' || speechState === 'paused' ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={speechState === 'loading' ? 'Cancel spoken reply' : 'Stop spoken reply'}
+                onPress={onStopSpeech}
+                style={styles.speechButton}>
+                <Ionicons name="stop" size={15} color={colors.muted} />
+                <Text style={[styles.speechButtonText, { color: colors.muted, fontSize: type.caption }]}>
+                  {speechState === 'loading' ? 'Cancel' : 'Stop'}
+                </Text>
+              </Pressable>
+            ) : null}
+            {speechError ? (
+              <Text accessibilityRole="alert" style={[styles.speechError, { color: colors.danger, fontSize: type.micro }]}>
+                {speechError}
+              </Text>
+            ) : null}
           </View>
         ) : null}
       </View>
@@ -318,6 +387,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
   },
   feedbackText: { fontFamily: fonts.medium },
+  speechControls: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: spacing.sm, paddingStart: spacing.xs },
+  speechButton: { minHeight: 30, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.xs },
+  speechButtonText: { fontFamily: fonts.medium },
+  speechError: { flexBasis: '100%', fontFamily: fonts.regular, paddingStart: spacing.xs },
   visualCard: {
     borderRadius: radius.lg,
     borderWidth: StyleSheet.hairlineWidth,

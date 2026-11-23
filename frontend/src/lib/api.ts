@@ -181,8 +181,10 @@ export function sendChat(
 let liveSpeechSupported = false;
 let voiceLanguageSupported = false;
 
-export async function getVoiceConfiguration(signal?: AbortSignal): Promise<{ enabled: boolean; max_seconds: number; natural_speech?: boolean; live_speech?: boolean; language_selection?: boolean }> {
-  const result = await requestJSON<{ enabled: boolean; max_seconds: number; natural_speech?: boolean; live_speech?: boolean; language_selection?: boolean }>('/v1/voice/config', undefined, { method: 'GET', signal });
+export type VoiceConfiguration = { enabled: boolean; max_seconds: number; natural_speech?: boolean; live_speech?: boolean; language_selection?: boolean; local_transcription?: boolean; transcription_ready?: boolean; transcription_error?: string; transcription_model?: string };
+
+export async function getVoiceConfiguration(signal?: AbortSignal): Promise<VoiceConfiguration> {
+  const result = await requestJSON<VoiceConfiguration>('/v1/voice/config', undefined, { method: 'GET', signal });
   if (typeof result?.enabled !== 'boolean' || result.max_seconds !== 60) throw new Error('PADI returned invalid voice settings.');
   liveSpeechSupported = result.live_speech === true;
   voiceLanguageSupported = result.language_selection === true;
@@ -209,9 +211,73 @@ export async function fetchVoiceSample(kind: 'welcome' | 'preview' | 'call', sty
 
 export async function transcribeAudio(token: string, audio: FormData, signal: AbortSignal, languageCode?: string): Promise<string> {
   const query = voiceLanguageSupported && languageCode ? `?language=${encodeURIComponent(languageCode)}` : '';
-  const result = await requestJSON<{ text: string }>(`/v1/voice/transcribe${query}`, audio, { token, multipart: true, timeoutMs: 55_000, signal });
+  const result = await requestJSON<{ text: string }>(`/v1/voice/transcribe${query}`, audio, { token, multipart: true, timeoutMs: 200_000, signal });
   if (typeof result?.text !== 'string' || !result.text.trim()) throw new Error('PADI could not hear clear speech. Please try again.');
   return result.text.trim();
+}
+
+export type TranscriptResult = {
+  text: string; user_id: string; request_id: string; language: string; language_probability: number; language_detected: boolean; model: string;
+  duration_seconds: number; audio_bytes: number; decoded_pcm_bytes: number; codec: string; container: string;
+  sample_rate: number; channels: number; decode_ms: number; prepare_ms: number; transcription_ms: number; processing_ms: number; service_ms: number;
+};
+
+function transcriptResponse(value: unknown): TranscriptResult {
+  const result = value as TranscriptResult;
+  if (!result || typeof result.text !== 'string' || !result.text.trim() || result.text.length > 8192 ||
+      typeof result.user_id !== 'string' || !result.user_id || !/^[a-f0-9]{32}$/.test(result.request_id) ||
+      typeof result.language !== 'string' || !/^[a-z]{2,3}$/.test(result.language) || typeof result.language_detected !== 'boolean' ||
+      typeof result.model !== 'string' || !result.model || result.model.length > 128 || result.sample_rate !== 16000 || result.channels !== 1 ||
+      !['opus', 'aac', 'pcm_s16le'].includes(result.codec) || !['webm', 'mp4', 'wav'].includes(result.container)) throw new Error('PADI returned an invalid transcription response.');
+  for (const field of ['duration_seconds', 'audio_bytes', 'decoded_pcm_bytes', 'decode_ms', 'prepare_ms', 'transcription_ms', 'processing_ms', 'service_ms', 'language_probability'] as const) {
+    if (!Number.isFinite(result[field]) || result[field] < 0) throw new Error('PADI returned invalid speech measurements.');
+  }
+  if (!Number.isSafeInteger(result.audio_bytes) || result.audio_bytes < 12 || result.audio_bytes > 8 * 1024 * 1024 ||
+      !Number.isSafeInteger(result.decoded_pcm_bytes) || result.decoded_pcm_bytes < 2 || result.decoded_pcm_bytes > 1923200 || result.decoded_pcm_bytes % 2 ||
+      Math.abs(result.decoded_pcm_bytes / 32000 - result.duration_seconds) > .001 || result.duration_seconds <= 0 || result.duration_seconds > 60.1 || result.language_probability > 1) throw new Error('PADI returned invalid speech measurements.');
+  for (const field of ['decode_ms', 'prepare_ms', 'transcription_ms', 'processing_ms', 'service_ms'] as const) {
+    if (result[field] > 200_000) throw new Error('PADI returned invalid speech measurements.');
+  }
+  return result;
+}
+
+/** Upload progress is measured by XHR; credentials and multipart boundaries are
+ * handled separately so neither audio nor private text enters application logs. */
+export function transcribeRecording(token: string, form: FormData, language: string, signal: AbortSignal,
+  progress: (percent: number, uploaded: boolean) => void): Promise<TranscriptResult> {
+  return new Promise((resolve, reject) => {
+    if (!API_URL) { reject(new Error('The PADI backend address is not configured.')); return; }
+    if (signal.aborted) { reject(Object.assign(new Error('Cancelled'), { name: 'AbortError' })); return; }
+    const xhr = new XMLHttpRequest();
+    let settled = false;
+    const abort = () => xhr.abort();
+    const finish = (error?: Error, result?: TranscriptResult) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', abort);
+      xhr.onload = xhr.onerror = xhr.ontimeout = xhr.onabort = null;
+      xhr.upload.onprogress = xhr.upload.onload = null;
+      if (error) reject(error); else resolve(result!);
+    };
+    xhr.open('POST', `${API_URL}/v1/voice/transcribe?language=${encodeURIComponent(language)}`);
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.timeout = 200_000;
+    xhr.upload.onprogress = event => { if (!settled && !signal.aborted) progress(event.lengthComputable && event.total > 0 ? Math.max(0, Math.min(100, event.loaded / event.total * 100)) : 0, false); };
+    xhr.upload.onload = () => { if (!settled && !signal.aborted) progress(100, true); };
+    xhr.onabort = () => finish(Object.assign(new Error('Cancelled'), { name: 'AbortError' }));
+    xhr.onerror = () => finish(new Error('The recording could not upload. Check your connection and try again.'));
+    xhr.ontimeout = () => finish(new Error('Speech processing timed out. Try a shorter recording.'));
+    xhr.onload = () => {
+      try {
+        if (xhr.responseText.length > 64 * 1024) throw new Error('PADI returned an invalid speech response.');
+        const body = JSON.parse(xhr.responseText);
+        if (xhr.status < 200 || xhr.status >= 300) throw new APIError(typeof body.message === 'string' ? body.message : 'Speech processing failed.', xhr.status, typeof body.error === 'string' ? body.error : 'transcription_failed');
+        finish(undefined, transcriptResponse(body));
+      } catch (error) { finish(error instanceof SyntaxError ? new Error('The speech service returned an invalid response. Please try again.') : error instanceof Error ? error : new Error('Invalid speech response.')); }
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    try { xhr.send(form); } catch (error) { finish(error instanceof Error ? error : new Error('The recording could not upload.')); }
+  });
 }
 
 const memoryCategories: MemoryCategory[] = ['name', 'interests', 'relationships', 'preferences', 'plans'];

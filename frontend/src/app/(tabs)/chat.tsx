@@ -1,5 +1,5 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -23,6 +23,7 @@ import { useTranslation } from '@/hooks/use-translation';
 import { revokeSession } from '@/lib/api';
 import { hasBackend } from '@/lib/config';
 import { visibleChatMessages } from '@/lib/chat-context';
+import { createChatResponseSpeech } from '@/lib/chat-response-speech';
 import { unregisterCurrentPushDevice } from '@/lib/push-notifications';
 import { clearSession, readSession, type AppSession } from '@/lib/session';
 import { unlockVoicePlayback } from '@/lib/voice-playback';
@@ -41,7 +42,7 @@ export default function ConversationScreen() {
   const type = useType();
   const { t } = useTranslation();
   const { preferences } = usePreferences();
-  const { messages, status, isThinking, sendError, send, rateResponse, reset } = useChat();
+  const { messages, status, isThinking, sendError, sendWithResponse, rateResponse, reset } = useChat();
   const listRef = useRef<FlatList<Message>>(null);
   const [session, setSession] = useState<AppSession | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
@@ -50,6 +51,110 @@ export default function ConversationScreen() {
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [feedbackSavingID, setFeedbackSavingID] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [speech, setSpeech] = useState<{
+    messageID: string;
+    state: 'loading' | 'speaking' | 'paused' | 'error';
+    error?: string;
+  } | null>(null);
+  const speechRef = useRef<{
+    messageID: string;
+    controller: AbortController;
+    task: ReturnType<typeof createChatResponseSpeech>;
+    automatic: boolean;
+  } | null>(null);
+  const spokenAutomatically = useRef(new Set<string>());
+  const preferencesRef = useRef(preferences);
+  preferencesRef.current = preferences;
+
+  const stopSpeech = useCallback(() => {
+    const active = speechRef.current;
+    if (!active) return;
+    speechRef.current = null;
+    active.controller.abort();
+    setSpeech(current => current?.messageID === active.messageID ? null : current);
+  }, []);
+
+  const playReply = useCallback((message: Message, automatic = false) => {
+    if (message.role !== 'padi' || !message.backendChat || !message.backendUserID ||
+        message.backendUserID !== session?.user.id) return;
+    if (automatic && spokenAutomatically.current.has(message.id)) return;
+    if (speechRef.current?.messageID === message.id) return;
+    stopSpeech();
+    if (automatic) spokenAutomatically.current.add(message.id);
+    void unlockVoicePlayback().catch(() => undefined);
+
+    const controller = new AbortController();
+    const selected = preferencesRef.current;
+    const task = createChatResponseSpeech({
+      text: message.text,
+      voiceId: selected.voiceId,
+      voiceRate: selected.voiceRate,
+      languageCode: selected.languageCode,
+      signal: controller.signal,
+      onStart: () => {
+        if (speechRef.current?.messageID === message.id && !controller.signal.aborted) {
+          setSpeech({ messageID: message.id, state: 'speaking' });
+        }
+      },
+    });
+    const active = { messageID: message.id, controller, task, automatic };
+    speechRef.current = active;
+    setSpeech({ messageID: message.id, state: 'loading' });
+    void task.play().then(() => {
+      if (speechRef.current === active) {
+        speechRef.current = null;
+        setSpeech(current => current?.messageID === message.id ? null : current);
+      }
+    }).catch(error => {
+      if (speechRef.current !== active || controller.signal.aborted) return;
+      speechRef.current = null;
+      setSpeech({
+        messageID: message.id,
+        state: 'error',
+        error: error instanceof Error ? error.message : 'PADI could not generate or play this reply.',
+      });
+    });
+  }, [session?.user.id, stopSpeech]);
+
+  const pauseSpeech = useCallback(() => {
+    const active = speechRef.current;
+    if (!active) return;
+    void active.task.pause().then(() => {
+      if (speechRef.current === active) setSpeech({ messageID: active.messageID, state: 'paused' });
+    }).catch(error => {
+      if (speechRef.current === active) {
+        active.controller.abort();
+        speechRef.current = null;
+        setSpeech({
+          messageID: active.messageID,
+          state: 'error',
+          error: error instanceof Error ? error.message : 'PADI could not pause audio.',
+        });
+      }
+    });
+  }, []);
+
+  const resumeSpeech = useCallback(() => {
+    const active = speechRef.current;
+    if (!active) return;
+    void active.task.resume().then(() => {
+      if (speechRef.current === active) setSpeech({ messageID: active.messageID, state: 'speaking' });
+    }).catch(error => {
+      if (speechRef.current === active) {
+        active.controller.abort();
+        speechRef.current = null;
+        setSpeech({
+          messageID: active.messageID,
+          state: 'error',
+          error: error instanceof Error ? error.message : 'PADI could not resume audio.',
+        });
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!preferences.autoSpeakReplies && speechRef.current?.automatic) stopSpeech();
+  }, [preferences.autoSpeakReplies, stopSpeech]);
 
   useFocusEffect(
     useCallback(() => {
@@ -73,8 +178,9 @@ export default function ConversationScreen() {
       });
     return () => {
       active = false;
+      stopSpeech();
     };
-    }, []),
+    }, [stopSpeech]),
   );
 
   const scrollToEnd = useCallback(() => {
@@ -83,15 +189,31 @@ export default function ConversationScreen() {
 
   const handleSend = useCallback(
     async (text: string): Promise<boolean> => {
-      const result = await send(text, session?.user.id);
-      if (result === 'unauthorized') {
+      stopSpeech();
+      if (preferencesRef.current.autoSpeakReplies) {
+        void unlockVoicePlayback().catch(() => undefined);
+      }
+      const result = await sendWithResponse(text, session?.user.id);
+      if (result.status === 'unauthorized') {
         setSession(null);
         router.push('/auth');
       }
-      if (result === 'sent') scrollToEnd();
-      return result === 'sent';
+      if (result.status === 'sent') {
+        scrollToEnd();
+        if (preferencesRef.current.autoSpeakReplies && result.messageID && result.reply) {
+          playReply({
+            id: result.messageID,
+            role: 'padi',
+            text: result.reply,
+            createdAt: Date.now(),
+            backendChat: true,
+            backendUserID: session?.user.id,
+          }, true);
+        }
+      }
+      return result.status === 'sent';
     },
-    [router, scrollToEnd, send, session?.user.id],
+    [playReply, router, scrollToEnd, sendWithResponse, session?.user.id, stopSpeech],
   );
 
   const handleFeedback = useCallback(async (messageID: string, rating: ResponseRating) => {
@@ -107,6 +229,7 @@ export default function ConversationScreen() {
   }, [rateResponse]);
 
   const handleSignOut = useCallback(async () => {
+    stopSpeech();
     const current = session;
     let revokeFailed = false;
     let pushUnregisterFailed = false;
@@ -122,10 +245,12 @@ export default function ConversationScreen() {
     } catch {
       setSessionError('The saved session could not be cleared. Restart the app before signing in again.');
       setSession(null);
+      setSpeech(null);
       reset();
       return;
     }
     setSession(null);
+    setSpeech(null);
     reset();
     if (current) {
       try {
@@ -141,7 +266,7 @@ export default function ConversationScreen() {
       ].filter(Boolean);
       setSignOutNotice(`You are signed out on this device. ${notices.join(' ')}`);
     }
-  }, [reset, session]);
+  }, [reset, session, stopSpeech]);
 
   const greeting = buildPadiGreeting(preferences.displayName, preferences.age, preferences.gender);
 
@@ -222,7 +347,7 @@ export default function ConversationScreen() {
         visible={sidebarOpen}
         displayName={preferences.displayName}
         onClose={() => setSidebarOpen(false)}
-        onNewChat={() => { setSidebarOpen(false); reset(); }}
+        onNewChat={() => { setSidebarOpen(false); stopSpeech(); setSpeech(null); reset(); }}
         onSettings={() => { setSidebarOpen(false); router.push('/(tabs)/settings'); }}
         onMemory={() => { setSidebarOpen(false); router.push('/memory'); }}
         onDeviceActions={() => { setSidebarOpen(false); router.push('/device-actions'); }}
@@ -255,6 +380,12 @@ export default function ConversationScreen() {
               }}
               feedbackSaving={feedbackSavingID === item.id}
               onFeedback={handleFeedback}
+              speechState={speech?.messageID === item.id ? speech.state : 'idle'}
+              speechError={speech?.messageID === item.id ? speech.error : undefined}
+              onSpeak={playReply}
+              onPauseSpeech={pauseSpeech}
+              onResumeSpeech={resumeSpeech}
+              onStopSpeech={stopSpeech}
             />
           )}
           contentContainerStyle={styles.list}

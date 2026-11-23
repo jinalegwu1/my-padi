@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { loadTS } = require('./helpers/load-ts.cjs');
 
 const { deviceActionUrl } = loadTS('src/lib/device-actions.ts', {
+  'expo': { requireOptionalNativeModule: () => null },
   'react-native': {
     Linking: { canOpenURL: async () => true, openURL: async () => {} },
     Platform: { OS: 'android' },

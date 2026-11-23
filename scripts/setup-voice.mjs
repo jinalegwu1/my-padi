@@ -22,8 +22,10 @@ try {
   }
   await run(python, ['-c', 'import sys; assert sys.version_info >= (3, 10), "Python 3.10 or later is required"']);
   await run(python, ['-m', 'pip', 'install', '--disable-pip-version-check', '-r', join(root, 'services', 'voice', 'requirements.txt')]);
-  await run(python, ['-c', 'import webrtcvad']);
-  console.log('Python voice is prepared. Start the configured services with npm run dev.');
+  await run(python, ['-c', 'import webrtcvad, av, faster_whisper, ctranslate2, numpy']);
+  console.log('Python voice dependencies are prepared. Incoming recognition also needs an explicitly installed local model.');
+  console.log(`Install once: ${python} services/voice/install_model.py --model base`);
+  console.log('Then enable PADI_STT_ENABLED in backend/.env and start the configured services with npm run dev.');
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;

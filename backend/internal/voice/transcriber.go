@@ -1,16 +1,22 @@
-// Package voice provides short-turn speech transcription without persisting audio.
+// Package voice coordinates private, local Python speech recognition.
 package voice
 
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -21,23 +27,69 @@ import (
 )
 
 const MaxAudioBytes = 8 * 1024 * 1024
-const Model = "whisper-large-v3-turbo"
+const Model = "base"
 
 var ErrNoSpeech = errors.New("no speech detected")
 var ErrInvalidAudio = errors.New("unsupported audio recording")
 var ErrBusy = errors.New("speech service is busy")
 
+// Existing provider quota configuration is not used by local inference.
+// Upload, duration, authentication and concurrency protections remain mandatory.
 type Transcriber struct {
-	key           string
-	endpoint      string
+	key, endpoint string
 	client        *http.Client
-	limiter       ai.UsageLimiter
 	active        chan struct{}
-	disableLimits bool
 }
 
-// LoadEnvironment keeps speech opt-in, independent of approved text models.
-func LoadEnvironment(limiter ai.UsageLimiter) (*Transcriber, error) {
+type SpeechFailure struct {
+	Status int
+	Code   string
+}
+
+func (e *SpeechFailure) Error() string { return e.Code }
+
+type Input struct {
+	Audio                             []byte
+	MIME, UserID, RequestID, Language string
+}
+type Transcript struct {
+	Text                string  `json:"text"`
+	UserID              string  `json:"user_id"`
+	RequestID           string  `json:"request_id"`
+	Language            string  `json:"language"`
+	LanguageProbability float64 `json:"language_probability"`
+	LanguageDetected    bool    `json:"language_detected"`
+	Model               string  `json:"model"`
+	Duration            float64 `json:"duration_seconds"`
+	AudioBytes          int     `json:"audio_bytes"`
+	PCMBytes            int     `json:"decoded_pcm_bytes"`
+	Codec               string  `json:"codec"`
+	Container           string  `json:"container"`
+	SampleRate          int     `json:"sample_rate"`
+	Channels            int     `json:"channels"`
+	DecodeMS            float64 `json:"decode_ms"`
+	PrepareMS           float64 `json:"prepare_ms"`
+	TranscriptionMS     float64 `json:"transcription_ms"`
+	ProcessingMS        float64 `json:"processing_ms"`
+	ServiceMS           float64 `json:"service_ms"`
+}
+
+type Readiness struct {
+	Ready          bool    `json:"ready"`
+	Model          string  `json:"model"`
+	Error          string  `json:"error"`
+	TimeoutSeconds float64 `json:"timeout_seconds"`
+}
+
+func NewRequestID() (string, error) {
+	value := make([]byte, 16)
+	if _, err := rand.Read(value); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(value), nil
+}
+
+func LoadEnvironment(_ ai.UsageLimiter) (*Transcriber, error) {
 	raw := os.Getenv("PADI_STT_ENABLED")
 	if raw == "" {
 		return nil, nil
@@ -49,40 +101,28 @@ func LoadEnvironment(limiter ai.UsageLimiter) (*Transcriber, error) {
 	if !enabled {
 		return nil, nil
 	}
-	key := strings.TrimSpace(os.Getenv("GROQ_API_KEY"))
-	if key == "" {
-		return nil, errors.New("GROQ_API_KEY is required for voice transcription")
+	endpoint := os.Getenv("PADI_PYTHON_VOICE_URL")
+	if endpoint == "" {
+		endpoint = "http://127.0.0.1:8090"
 	}
-	confirmed := false
-	for _, provider := range strings.Split(os.Getenv("PADI_AI_FREE_ACCOUNT_CONFIRMED"), ",") {
-		if strings.TrimSpace(provider) == "groq" {
-			confirmed = true
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != "" || (parsed.Scheme != "https" && !(parsed.Scheme == "http" && (parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1"))) {
+		return nil, errors.New("local speech URL must be HTTPS or loopback HTTP, without a path or credentials")
+	}
+	key := os.Getenv("PADI_VOICE_SERVICE_TOKEN")
+	if len(key) < 32 {
+		return nil, errors.New("local Python speech requires PADI_VOICE_SERVICE_TOKEN with at least 32 bytes")
+	}
+	seconds := 120
+	if value := os.Getenv("PADI_STT_TIMEOUT_SECONDS"); value != "" {
+		seconds, err = strconv.Atoi(value)
+		if err != nil || seconds < 1 || seconds > 120 {
+			return nil, errors.New("PADI_STT_TIMEOUT_SECONDS must be between 1 and 120")
 		}
 	}
-	if !confirmed {
-		return nil, errors.New("voice requires groq in PADI_AI_FREE_ACCOUNT_CONFIRMED")
-	}
-	if limiter == nil {
-		return nil, ai.ErrUsageLimiterUnavailable
-	}
-	endpoint := "https://api.groq.com/openai/v1/audio/transcriptions"
-	if os.Getenv("PADI_PYTHON_VOICE_ENABLED") == "true" {
-		endpoint = os.Getenv("PADI_PYTHON_VOICE_URL")
-		if endpoint == "" {
-			endpoint = "http://127.0.0.1:8090"
-		}
-		endpoint += "/transcribe"
-		key = os.Getenv("PADI_VOICE_SERVICE_TOKEN")
-		if len(key) < 32 {
-			return nil, errors.New("Python voice requires an internal service token")
-		}
-	}
-	return &Transcriber{key: key, endpoint: endpoint,
-		client: &http.Client{Timeout: 45 * time.Second}, limiter: limiter, active: make(chan struct{}, 4),
-		disableLimits: os.Getenv("PADI_DISABLE_ALL_LIMITS") == "true"}, nil
+	return &Transcriber{key: key, endpoint: endpoint + "/transcribe", active: make(chan struct{}, 4), client: &http.Client{Timeout: time.Duration(seconds+10) * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
-// AudioFilename identifies containers by their bytes, never trusting an upload name.
 func AudioFilename(audio []byte) (string, error) {
 	if len(audio) < 12 || len(audio) > MaxAudioBytes {
 		return "", ErrInvalidAudio
@@ -94,137 +134,253 @@ func AudioFilename(audio []byte) (string, error) {
 		return "recording.m4a", nil
 	case bytes.Equal(audio[:4], []byte{0x1a, 0x45, 0xdf, 0xa3}):
 		return "recording.webm", nil
-	default:
-		return "", ErrInvalidAudio
 	}
+	return "", ErrInvalidAudio
 }
 
-func (service *Transcriber) Transcribe(ctx context.Context, audio []byte) (string, error) {
-	return service.TranscribeLanguage(ctx, audio, "en-NG")
-}
-
-func (service *Transcriber) TranscribeLanguage(ctx context.Context, audio []byte, locale string) (string, error) {
-	language, valid := map[string]string{
-		"en-NG": "en", "en-GB": "en", "pcm-NG": "en",
-		"fr-FR": "fr", "pt-BR": "pt", "es-ES": "es", "ar-SA": "ar",
-		"sw-KE": "sw", "ha-NG": "ha", "yo-NG": "yo", "ig-NG": "",
-		"am-ET": "am", "hi-IN": "hi", "zh-CN": "zh",
-	}[locale]
-	if !valid {
-		return "", errors.New("unsupported speech language")
-	}
+func ValidateContentType(audio []byte, contentType string) (string, error) {
 	filename, err := AudioFilename(audio)
 	if err != nil {
 		return "", err
 	}
-	if silentPCM(audio) {
-		return "", ErrNoSpeech
-	}
-	if !service.disableLimits {
-		select {
-		case service.active <- struct{}{}:
-			defer func() { <-service.active }()
-		default:
-			return "", ErrBusy
-		}
-	}
-	// Speech has no text-token usage. Reserve one bookkeeping unit per request
-	// in a separate ledger bucket; never count audio bytes as text tokens.
-	if err := service.limiter.Reserve(ctx, "groq-speech", 1, ai.FreeUsageLimits(), time.Now()); err != nil {
-		if errors.Is(err, ai.ErrUsageLimitReached) {
-			return "", err
-		}
-		return "", ai.ErrUsageLimiterUnavailable
-	}
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("file", filename)
+	media, parameters, err := mime.ParseMediaType(contentType)
 	if err != nil {
-		return "", err
+		return "", &SpeechFailure{415, "unsupported_audio_format"}
 	}
-	if _, err := part.Write(audio); err != nil {
-		return "", err
+	valid := (filename == "recording.webm" && media == "audio/webm" && (parameters["codecs"] == "" || parameters["codecs"] == "opus")) ||
+		(filename == "recording.m4a" && (media == "audio/mp4" || media == "audio/x-m4a") && (parameters["codecs"] == "" || parameters["codecs"] == "mp4a.40.2")) ||
+		(filename == "recording.wav" && (media == "audio/wav" || media == "audio/x-wav"))
+	if !valid {
+		return "", &SpeechFailure{415, "unsupported_audio_format"}
 	}
-	for name, value := range map[string]string{"model": Model, "response_format": "verbose_json", "temperature": "0"} {
-		if err := writer.WriteField(name, value); err != nil {
+	if filename == "recording.wav" {
+		if err := validateWAV(audio); err != nil {
 			return "", err
 		}
 	}
-	if language != "" || strings.HasSuffix(service.endpoint, "/transcribe") {
-		if err := writer.WriteField("language", language); err != nil {
-			return "", err
+	return mime.FormatMediaType(media, parameters), nil
+}
+
+// WAV is retained for existing native/hands-free clients. Inspect RIFF chunks
+// rather than assuming all valid WAV files use the canonical 44-byte header.
+func validateWAV(audio []byte) error {
+	if len(audio) < 44 || int64(binary.LittleEndian.Uint32(audio[4:8])) != int64(len(audio)-8) {
+		return ErrInvalidAudio
+	}
+	var rate, stride uint32
+	foundFormat, foundData := false, false
+	for offset := 12; offset < len(audio); {
+		if len(audio)-offset < 8 {
+			return ErrInvalidAudio
+		}
+		size := int64(binary.LittleEndian.Uint32(audio[offset+4 : offset+8]))
+		start := offset + 8
+		if size > int64(len(audio)-start) {
+			return ErrInvalidAudio
+		}
+		switch string(audio[offset : offset+4]) {
+		case "fmt ":
+			if foundFormat || size < 16 {
+				return ErrInvalidAudio
+			}
+			foundFormat = true
+			format := audio[start : start+16]
+			channels := uint32(binary.LittleEndian.Uint16(format[2:4]))
+			rate = binary.LittleEndian.Uint32(format[4:8])
+			stride = uint32(binary.LittleEndian.Uint16(format[12:14]))
+			if binary.LittleEndian.Uint16(format[:2]) != 1 || binary.LittleEndian.Uint16(format[14:16]) != 16 || channels < 1 || channels > 2 || rate < 8000 || rate > 96000 || stride != channels*2 || binary.LittleEndian.Uint32(format[8:12]) != rate*stride {
+				return ErrInvalidAudio
+			}
+		case "data":
+			if !foundFormat || foundData || size == 0 || size%int64(stride) != 0 {
+				return ErrInvalidAudio
+			}
+			foundData = true
+			if float64(size)/float64(rate*stride) > 60.1 {
+				return &SpeechFailure{422, "audio_too_long"}
+			}
+		}
+		offset = start + int(size) + int(size%2)
+		if offset > len(audio) {
+			return ErrInvalidAudio
 		}
 	}
-	// Igbo has no supported Whisper language code. A fixed vocabulary hint
-	// preserves that option without submitting an unsupported provider value.
-	if locale == "ig-NG" || locale == "pcm-NG" {
-		prompt := "Ndewo. Kedu ka ị mere taa?"
-		if locale == "pcm-NG" {
-			prompt = "How you dey? Na me be PADI. Make we gist."
-		}
-		if err := writer.WriteField("prompt", prompt); err != nil {
-			return "", err
-		}
+	if !foundFormat || !foundData {
+		return ErrInvalidAudio
 	}
-	if err := writer.Close(); err != nil {
-		return "", err
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, service.endpoint, &body)
+	return nil
+}
+
+func (s *Transcriber) Ready(ctx context.Context) Readiness {
+	request, err := http.NewRequestWithContext(ctx, "GET", strings.TrimSuffix(s.endpoint, "/transcribe")+"/ready", nil)
 	if err != nil {
-		return "", err
+		return Readiness{Error: "service_unavailable"}
 	}
-	request.Header.Set("Authorization", "Bearer "+service.key)
-	request.Header.Set("Content-Type", writer.FormDataContentType())
-	response, err := service.client.Do(request)
+	request.Header.Set("Authorization", "Bearer "+s.key)
+	response, err := s.client.Do(request)
 	if err != nil {
-		if ctx.Err() != nil {
-			return "", ctx.Err()
-		}
-		return "", &ai.ProviderError{Provider: "groq-speech"}
+		return Readiness{Error: "service_unavailable"}
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		if response.StatusCode == 422 && strings.HasSuffix(service.endpoint, "/transcribe") {
-			return "", ErrNoSpeech
+	var state Readiness
+	if json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&state) != nil {
+		return Readiness{Error: "service_unavailable"}
+	}
+	if response.StatusCode != 200 {
+		state.Ready = false
+	}
+	allowedErrors := map[string]bool{"model_loading": true, "model_not_installed": true, "model_load_failed": true, "model_unavailable": true}
+	if !state.Ready && !allowedErrors[state.Error] {
+		state.Error = "service_unavailable"
+	}
+	return state
+}
+
+func mapLanguage(locale string) (string, bool) {
+	result, valid := map[string]string{"auto": "auto", "en": "en", "en-NG": "en", "en-GB": "en", "pcm-NG": "pcm", "fr-FR": "fr", "pt-BR": "pt", "es-ES": "es", "ar-SA": "ar", "sw-KE": "sw", "ha-NG": "ha", "yo-NG": "yo", "ig-NG": "ig", "am-ET": "am", "hi-IN": "hi", "zh-CN": "zh"}[locale]
+	return result, valid
+}
+func ValidLanguage(locale string) bool { _, valid := mapLanguage(locale); return valid }
+
+func (s *Transcriber) Transcribe(ctx context.Context, audio []byte) (string, error) {
+	return s.TranscribeLanguage(ctx, audio, "en-NG")
+}
+func (s *Transcriber) TranscribeLanguage(ctx context.Context, audio []byte, language string) (string, error) {
+	name, err := AudioFilename(audio)
+	if err != nil {
+		return "", err
+	}
+	media := map[string]string{"recording.wav": "audio/wav", "recording.webm": "audio/webm", "recording.m4a": "audio/mp4"}[name]
+	id, err := NewRequestID()
+	if err != nil {
+		return "", err
+	}
+	result, err := s.TranscribeAudio(ctx, Input{Audio: audio, MIME: media, UserID: "internal", RequestID: id, Language: language})
+	return result.Text, err
+}
+
+func (s *Transcriber) cancel(input Input) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	body, _ := json.Marshal(map[string]string{"request_id": input.RequestID, "user_id": input.UserID})
+	request, err := http.NewRequestWithContext(ctx, "POST", strings.TrimSuffix(s.endpoint, "/transcribe")+"/cancel", bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	request.Header.Set("Authorization", "Bearer "+s.key)
+	request.Header.Set("Content-Type", "application/json")
+	if response, err := s.client.Do(request); err == nil {
+		io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		response.Body.Close()
+	}
+}
+
+func (s *Transcriber) TranscribeAudio(ctx context.Context, input Input) (Transcript, error) {
+	language, valid := mapLanguage(input.Language)
+	if !valid {
+		return Transcript{}, &SpeechFailure{400, "invalid_language"}
+	}
+	filename, err := AudioFilename(input.Audio)
+	if err != nil {
+		return Transcript{}, err
+	}
+	contentType, err := ValidateContentType(input.Audio, input.MIME)
+	if err != nil {
+		return Transcript{}, err
+	}
+	if silentPCM(input.Audio) {
+		return Transcript{}, ErrNoSpeech
+	}
+	if err := ctx.Err(); err != nil {
+		return Transcript{}, err
+	}
+	select {
+	case s.active <- struct{}{}:
+		defer func() { <-s.active }()
+	default:
+		return Transcript{}, ErrBusy
+	}
+	// Only multipart headers are buffered. Compressed audio is forwarded once,
+	// without transcoding or making a second complete audio buffer.
+	var headers bytes.Buffer
+	writer := multipart.NewWriter(&headers)
+	for _, field := range [][2]string{{"request_id", input.RequestID}, {"user_id", input.UserID}, {"language", language}} {
+		if err := writer.WriteField(field[0], field[1]); err != nil {
+			return Transcript{}, err
 		}
-		return "", &ai.ProviderError{Provider: "groq-speech", Status: response.StatusCode}
+	}
+	partHeaders := make(textproto.MIMEHeader)
+	partHeaders.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
+	partHeaders.Set("Content-Type", contentType)
+	if _, err := writer.CreatePart(partHeaders); err != nil {
+		return Transcript{}, err
+	}
+	prefixLength := headers.Len()
+	writer.Close()
+	value := headers.Bytes()
+	reader := io.MultiReader(bytes.NewReader(value[:prefixLength]), bytes.NewReader(input.Audio), bytes.NewReader(value[prefixLength:]))
+	request, err := http.NewRequestWithContext(ctx, "POST", s.endpoint, reader)
+	if err != nil {
+		return Transcript{}, err
+	}
+	request.ContentLength = int64(len(value) + len(input.Audio))
+	request.Header.Set("Authorization", "Bearer "+s.key)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	cancelUpstream := false
+	defer func() {
+		if ctx.Err() != nil || cancelUpstream {
+			s.cancel(input)
+		}
+	}()
+	response, err := s.client.Do(request)
+	if err != nil {
+		cancelUpstream = true
+		if ctx.Err() != nil {
+			return Transcript{}, ctx.Err()
+		}
+		var timeout interface{ Timeout() bool }
+		if errors.As(err, &timeout) && timeout.Timeout() {
+			return Transcript{}, &SpeechFailure{504, "transcription_timeout"}
+		}
+		return Transcript{}, &SpeechFailure{503, "speech_service_unavailable"}
+	}
+	defer response.Body.Close()
+	if response.StatusCode != 200 {
+		if response.StatusCode == 401 || response.StatusCode == 403 {
+			return Transcript{}, &SpeechFailure{503, "speech_service_unavailable"}
+		}
+		var failure struct {
+			Code string `json:"error"`
+		}
+		json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&failure)
+		statuses := map[string]int{"no_speech": 422, "invalid_audio": 400, "empty_audio": 400, "audio_too_large": 413, "audio_too_long": 422, "unsupported_audio_format": 415, "unsupported_audio_codec": 415, "unsupported_language": 422, "transcription_busy": 429, "model_not_installed": 503, "model_load_failed": 503, "model_loading": 503, "model_unavailable": 503, "transcription_timeout": 504, "upload_timeout": 504, "transcription_failed": 502, "cancelled": 499}
+		status, allowed := statuses[failure.Code]
+		if !allowed {
+			status, failure.Code = 502, "transcription_failed"
+		}
+		return Transcript{}, &SpeechFailure{status, failure.Code}
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, 64*1024+1))
 	if err != nil || len(data) > 64*1024 {
-		return "", errors.New("invalid speech response")
+		return Transcript{}, &SpeechFailure{502, "invalid_transcription"}
 	}
-	var result struct {
-		Text     string  `json:"text"`
-		Duration float64 `json:"duration"`
-		Segments []struct {
-			NoSpeech float64 `json:"no_speech_prob"`
-		} `json:"segments"`
+	var result Transcript
+	if json.Unmarshal(data, &result) != nil {
+		return Transcript{}, &SpeechFailure{502, "invalid_transcription"}
 	}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return "", errors.New("invalid speech response")
+	result.Text = strings.TrimSpace(result.Text)
+	if result.Text == "" {
+		return Transcript{}, ErrNoSpeech
 	}
-	if result.Duration > 65 {
-		return "", fmt.Errorf("%w: record up to 60 seconds", ErrInvalidAudio)
+	if !utf8.ValidString(result.Text) || len(result.Text) > 8192 || result.UserID != input.UserID || result.RequestID != input.RequestID || result.AudioBytes != len(input.Audio) || result.SampleRate != 16000 || result.Channels != 1 || result.PCMBytes < 1 || result.PCMBytes > 1923200 || result.PCMBytes%2 != 0 || math.Abs(float64(result.PCMBytes)/32000-result.Duration) > 0.001 || result.Duration <= 0 || result.Duration > 60.1 || math.IsNaN(result.Duration) || result.Language == "" || len(result.Language) > 12 || result.LanguageProbability < 0 || result.LanguageProbability > 1 || !map[string]bool{"opus": true, "aac": true, "pcm_s16le": true}[result.Codec] || !map[string]bool{"webm": true, "mp4": true, "wav": true}[result.Container] {
+		return Transcript{}, &SpeechFailure{502, "invalid_transcription"}
 	}
-	text := strings.TrimSpace(result.Text)
-	if text == "" {
-		return "", ErrNoSpeech
-	}
-	if !utf8.ValidString(text) || len(text) > 8*1024 {
-		return "", errors.New("invalid speech response")
-	}
-	if len(result.Segments) > 0 {
-		allSilent := true
-		for _, segment := range result.Segments {
-			if segment.NoSpeech < 0.8 {
-				allSilent = false
-			}
-		}
-		if allSilent {
-			return "", ErrNoSpeech
+	for _, duration := range []float64{result.DecodeMS, result.PrepareMS, result.TranscriptionMS, result.ProcessingMS, result.ServiceMS} {
+		if duration < 0 || duration > 180000 || math.IsNaN(duration) {
+			return Transcript{}, &SpeechFailure{502, "invalid_transcription"}
 		}
 	}
-	return text, nil
+	return result, nil
 }
 
 // Whisper can confidently invent words even for digital silence. Reject known

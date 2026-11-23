@@ -65,6 +65,11 @@ function fixture(initialPreferences = defaults()) {
   const exported = loadTS('src/hooks/use-check-in-preferences.ts', {
     '@/lib/api': api,
     '@/lib/check-in-notifications': notificationAPI,
+    '@/lib/push-notifications': {
+      syncCheckInDelivery: async (_token, preferences) => ({
+        ...await notificationAPI.syncCheckInNotifications(preferences), pushEnabled: false, warning: null,
+      }),
+    },
     '@/lib/session': {
       readSession: async () => session,
       subscribeSession: listener => {

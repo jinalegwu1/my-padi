@@ -93,6 +93,7 @@ function useChatState() {
   }, [setMessages, status]);
 
   const send = useCallback(async (text: string, expectedUserID?: string) => (await performSend(text, expectedUserID)).status, [performSend]);
+  const sendWithResponse = useCallback((text: string, expectedUserID?: string) => performSend(text, expectedUserID), [performSend]);
   const sendVoice = useCallback((text: string, expectedUserID: string, signal: AbortSignal, languageCode = 'en-NG') => performSend(text, expectedUserID, true, signal, languageCode), [performSend]);
   const rateResponse = useCallback(async (messageID: string, rating: ResponseRating) => {
     const message = latest.current.find(item => item.id === messageID);
@@ -120,7 +121,7 @@ function useChatState() {
     setSendError(null);
     setMessages([{ id: nextId('padi'), role: 'padi', text: WELCOME_MESSAGE, createdAt: Date.now() }]);
   }, [setMessages]);
-  return { messages, status, isThinking, sendError, send, sendVoice, rateResponse, delivered, addGreeting, reset };
+  return { messages, status, isThinking, sendError, send, sendWithResponse, sendVoice, rateResponse, delivered, addGreeting, reset };
 }
 
 export function ChatProvider({ children }: { children: ReactNode }) {

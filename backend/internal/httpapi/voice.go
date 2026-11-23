@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"time"
 
@@ -18,7 +19,12 @@ type LanguageSpeechTranscriber interface {
 	TranscribeLanguage(context.Context, []byte, string) (string, error)
 }
 
+type DetailedSpeechTranscriber interface {
+	TranscribeAudio(context.Context, voice.Input) (voice.Transcript, error)
+}
+
 func registerVoiceRoutes(mux *http.ServeMux, deps Dependencies) {
+	uploads := make(chan struct{}, 4)
 	registerSpeechSamples(mux, deps.Synthesis, deps.Logger)
 	mux.HandleFunc("/v1/voice/speak", synthesisHandler(deps))
 	mux.HandleFunc("/v1/voice/config", func(w http.ResponseWriter, r *http.Request) {
@@ -26,13 +32,22 @@ func registerVoiceRoutes(mux *http.ServeMux, deps Dependencies) {
 			return
 		}
 		_, liveSpeech := deps.Synthesis.(LiveSpeechSynthesiser)
-		writeJSON(w, http.StatusOK, struct {
-			Enabled           bool `json:"enabled"`
-			MaxSeconds        int  `json:"max_seconds"`
-			NaturalSpeech     bool `json:"natural_speech"`
-			LiveSpeech        bool `json:"live_speech"`
-			LanguageSelection bool `json:"language_selection"`
-		}{deps.Speech != nil && deps.Auth != nil && deps.Chat != nil, 60, deps.Synthesis != nil, liveSpeech, true})
+		_, localSpeech := deps.Speech.(DetailedSpeechTranscriber)
+		state := voice.Readiness{Ready: deps.Speech != nil}
+		if service, ok := deps.Speech.(interface {
+			Ready(context.Context) voice.Readiness
+		}); ok {
+			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+			state = service.Ready(ctx)
+			cancel()
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"enabled": deps.Speech != nil && deps.Auth != nil, "max_seconds": 60,
+			"natural_speech": deps.Synthesis != nil, "live_speech": liveSpeech, "language_selection": true,
+			"local_transcription": localSpeech, "transcription_ready": state.Ready,
+			"transcription_error": state.Error, "transcription_model": state.Model,
+			"accepted_audio_formats": []string{"audio/webm;codecs=opus", "audio/mp4", "audio/wav"},
+		})
 	})
 	mux.HandleFunc("/v1/voice/transcribe", func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodPost) {
@@ -47,7 +62,8 @@ func registerVoiceRoutes(mux *http.ServeMux, deps Dependencies) {
 			writeAPIError(w, http.StatusUnauthorized, "unauthenticated", "Sign in to use voice.")
 			return
 		}
-		if _, err := deps.Auth.Authenticate(r.Context(), token); err != nil {
+		user, err := deps.Auth.Authenticate(r.Context(), token)
+		if err != nil {
 			writeAuthError(w, err, deps.Logger)
 			return
 		}
@@ -65,10 +81,23 @@ func registerVoiceRoutes(mux *http.ServeMux, deps Dependencies) {
 				return
 			}
 		}
-		if !validSpeechLanguage(language) {
+		if !voice.ValidLanguage(language) {
 			writeAPIError(w, 400, "invalid_request", "Choose a supported speech language.")
 			return
 		}
+		select {
+		case uploads <- struct{}{}:
+			defer func() { <-uploads }()
+		default:
+			writeAPIError(w, 429, "transcription_busy", "Speech processing is busy. Try again shortly.")
+			return
+		}
+		media, _, typeErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if typeErr != nil || media != "multipart/form-data" {
+			writeAPIError(w, 415, "unsupported_audio_format", "Upload one supported audio recording.")
+			return
+		}
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(200 * time.Second))
 		// Short recordings still need time to upload on slower mobile networks.
 		// This extends the read deadline only for authenticated voice uploads.
 		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(60 * time.Second))
@@ -80,6 +109,7 @@ func registerVoiceRoutes(mux *http.ServeMux, deps Dependencies) {
 		}
 		// Stream the multipart into bounded memory. Never create server audio files.
 		var audio []byte
+		var audioType string
 		for {
 			part, err := reader.NextPart()
 			if errors.Is(err, io.EOF) {
@@ -93,6 +123,12 @@ func registerVoiceRoutes(mux *http.ServeMux, deps Dependencies) {
 				writeUploadError(w, voice.ErrInvalidAudio)
 				return
 			}
+			audioType = part.Header.Get("Content-Type")
+			partMedia, _, partErr := mime.ParseMediaType(audioType)
+			if partErr != nil || (partMedia != "audio/webm" && partMedia != "audio/mp4" && partMedia != "audio/x-m4a" && partMedia != "audio/wav" && partMedia != "audio/x-wav") {
+				writeAPIError(w, 415, "unsupported_audio_format", "Use WebM/Opus or M4A/AAC audio.")
+				return
+			}
 			audio, err = io.ReadAll(io.LimitReader(part, voice.MaxAudioBytes+1))
 			if err != nil {
 				writeUploadError(w, err)
@@ -103,36 +139,38 @@ func registerVoiceRoutes(mux *http.ServeMux, deps Dependencies) {
 				return
 			}
 		}
-		if _, err := voice.AudioFilename(audio); err != nil {
-			writeUploadError(w, err)
+		audioType, err = voice.ValidateContentType(audio, audioType)
+		if err != nil {
+			writeVoiceError(w, err)
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 50*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 130*time.Second)
 		defer cancel()
-		var text string
-		if transcriber, ok := deps.Speech.(LanguageSpeechTranscriber); ok {
-			text, err = transcriber.TranscribeLanguage(ctx, audio, language)
+		id, err := voice.NewRequestID()
+		if err != nil {
+			writeAPIError(w, 500, "transcription_failed", "Speech processing could not start.")
+			return
+		}
+		result := voice.Transcript{UserID: user.ID, RequestID: id}
+		if service, ok := deps.Speech.(DetailedSpeechTranscriber); ok {
+			result, err = service.TranscribeAudio(ctx, voice.Input{Audio: audio, MIME: audioType, UserID: user.ID, RequestID: id, Language: language})
+		} else if service, ok := deps.Speech.(LanguageSpeechTranscriber); ok {
+			result.Text, err = service.TranscribeLanguage(ctx, audio, language)
 		} else {
-			text, err = deps.Speech.Transcribe(ctx, audio)
+			result.Text, err = deps.Speech.Transcribe(ctx, audio)
 		}
 		if err != nil {
-			switch {
-			case errors.Is(err, voice.ErrNoSpeech):
-				writeAPIError(w, http.StatusUnprocessableEntity, "no_speech", "I could not hear clear speech. Please try again in a quieter place.")
-			case errors.Is(err, voice.ErrInvalidAudio):
-				writeUploadError(w, err)
-			case errors.Is(err, voice.ErrBusy):
-				writeAPIError(w, http.StatusTooManyRequests, "voice_busy", "Voice is busy. Please try again shortly.")
-			default:
-				status, code, _ := classifyChatError(err)
-				if deps.Logger != nil {
-					deps.Logger.Warn("voice transcription failed", "endpoint", r.URL.Path, "status", status, "error_code", code)
-				}
-				writeAPIError(w, status, code, "PADI could not transcribe your recording right now. Please try again.")
-			}
+			writeVoiceError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"text": text})
+		if result.UserID != user.ID || result.RequestID != id {
+			writeVoiceError(w, &voice.SpeechFailure{Status: 502, Code: "invalid_transcription"})
+			return
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
 	})
 }
 
@@ -142,5 +180,48 @@ func writeUploadError(w http.ResponseWriter, err error) {
 		writeAPIError(w, http.StatusRequestEntityTooLarge, "audio_too_large", "Record a shorter voice message (up to 8 MB).")
 		return
 	}
-	writeAPIError(w, http.StatusBadRequest, "invalid_audio", "Send one WAV, M4A, or WebM recording of up to 60 seconds.")
+	writeAPIError(w, http.StatusBadRequest, "invalid_audio", "Send one WebM/Opus, M4A/AAC or PCM WAV recording of up to 60 seconds.")
+}
+
+func writeVoiceError(w http.ResponseWriter, err error) {
+	var failure *voice.SpeechFailure
+	status, code, message := 502, "transcription_failed", "PADI could not recognise this recording. Please try again."
+	switch {
+	case errors.Is(err, context.Canceled):
+		return
+	case errors.Is(err, voice.ErrNoSpeech):
+		status, code, message = 422, "no_speech", "No clear speech was detected. Speak closer to the microphone and try again."
+	case errors.Is(err, voice.ErrInvalidAudio):
+		status, code, message = 400, "invalid_audio", "The recording is malformed or unsupported."
+	case errors.Is(err, voice.ErrBusy):
+		status, code, message = 429, "transcription_busy", "Speech processing is busy. Try again shortly."
+	case errors.Is(err, context.DeadlineExceeded):
+		status, code, message = 504, "transcription_timeout", "Speech processing took too long. Try a shorter recording."
+	case errors.As(err, &failure):
+		status, code = failure.Status, failure.Code
+		switch code {
+		case "no_speech":
+			message = "No clear speech was detected. Please try again."
+		case "audio_too_long":
+			message = "Keep recordings under 60 seconds."
+		case "audio_too_large":
+			message = "The recording exceeds the 8 MB upload limit."
+		case "unsupported_audio_format", "unsupported_audio_codec":
+			message = "This audio format is unsupported. Use WebM/Opus or M4A/AAC."
+		case "invalid_audio", "empty_audio":
+			message = "The recording is empty or damaged. Please record again."
+		case "transcription_busy":
+			message = "Speech processing is busy. Try again shortly."
+		case "model_not_installed", "model_load_failed", "model_loading", "model_unavailable", "speech_service_unavailable":
+			status = 503
+			message = "Local speech recognition is not ready. Please try again later."
+		case "transcription_timeout", "upload_timeout":
+			message = "Speech processing took too long. Try a shorter recording."
+		case "unsupported_language":
+			message = "The local speech model does not support the selected language. Try automatic detection."
+		case "cancelled":
+			status, message = 499, "The recording was cancelled. Please record again."
+		}
+	}
+	writeAPIError(w, status, code, message)
 }

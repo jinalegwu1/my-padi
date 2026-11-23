@@ -1,13 +1,15 @@
 """PADI's private Python speech service. Run behind the authenticated Go API.
 
-No audio, text, or credentials are logged or persisted. Python owns expressive
-speech synthesis; Go owns authentication, memory, consent, and usage accounting.
-Uses the standard library so the development service needs no heavyweight AI SDK.
+No private audio, text, or credentials are logged or retained. Python owns
+audio decoding, local recognition and expressive synthesis; Go owns accounts,
+consent and usage accounting. Local recognition uses an explicitly installed
+CTranslate2 Whisper checkpoint; outgoing speech keeps its existing providers.
 """
 
 from __future__ import annotations
 
 import base64
+import signal
 import binascii
 import hmac
 import io
@@ -29,6 +31,10 @@ import time
 import uuid
 
 import webrtcvad
+from voice_errors import SpeechError
+from audio_processing import prepare_audio
+from local_recognition import RecognitionConfig, RecognitionPool
+from transcription_http import process_upload, valid_identity
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 logger = logging.getLogger("padi.voice")
@@ -70,14 +76,6 @@ LANGUAGE_DELIVERY = {
     "hi-IN": "Use natural Hindi pronunciation and conversational rhythm.",
     "zh-CN": "Use natural Mandarin pronunciation, respecting its tones and conversational rhythm.",
 }
-
-
-class SpeechError(Exception):
-    def __init__(self, status: int, code: str, retry_after_seconds: int = 0):
-        super().__init__(code)
-        self.status = status
-        self.code = code
-        self.retry_after_seconds = retry_after_seconds
 
 
 def speech_payload(text: str, style: str, rate: float, language: str = "en-NG", model: str = MODEL, default_voice_id: str = "") -> dict:
@@ -219,56 +217,6 @@ def synthesise(key: str, text: str, style: str, rate: float, language: str = "en
         raise SpeechError(502, "invalid_speech_response") from None
 
 
-def prepare_audio(audio: bytes) -> bytes:
-    """Detect actual speech, trim idle audio, reduce DC/low-frequency rumble,
-    and convert microphone PCM to Whisper's 16 kHz mono input format."""
-    try:
-        with wave.open(io.BytesIO(audio), "rb") as wav:
-            rate = wav.getframerate()
-            if wav.getnchannels() != 1 or wav.getsampwidth() != 2 or not 8000 <= rate <= 96000 or wav.getnframes() / rate > 60:
-                raise SpeechError(400, "invalid_audio")
-            raw = wav.readframes(wav.getnframes())
-    except (wave.Error, EOFError):
-        raise SpeechError(400, "invalid_audio") from None
-    samples = array("h")
-    samples.frombytes(raw)
-    if sys.byteorder != "little":
-        samples.byteswap()
-    if not samples:
-        raise SpeechError(422, "no_speech")
-    if rate != 16000:
-        converted = array("h")
-        for index in range(int(len(samples) * 16000 / rate)):
-            position = index * rate / 16000
-            start = int(position)
-            fraction = position - start
-            converted.append(round(samples[start] * (1-fraction) + samples[min(start+1, len(samples)-1)] * fraction))
-        samples = converted
-    # High-pass filter at approximately 80 Hz; never amplify a silent recording.
-    alpha = math.exp(-2 * math.pi * 80 / 16000)
-    previous = 0.0
-    filtered = 0.0
-    for index, sample in enumerate(samples):
-        filtered = alpha * (filtered + sample - previous)
-        previous = sample
-        samples[index] = max(-32768, min(32767, round(filtered)))
-    if sys.byteorder != "little":
-        samples.byteswap()
-    pcm = samples.tobytes()
-    detector = webrtcvad.Vad(2)
-    frame_size = 640  # 20 ms of 16 kHz, 16-bit mono.
-    speech = [offset for offset in range(0, len(pcm)-frame_size+1, frame_size) if detector.is_speech(pcm[offset:offset+frame_size], 16000)]
-    if len(speech) < 3:
-        raise SpeechError(422, "no_speech")
-    start = max(0, speech[0]-16000)  # Include half a second of lead-in.
-    end = min(len(pcm), speech[-1]+frame_size+16000)
-    out = io.BytesIO()
-    with wave.open(out, "wb") as wav:
-        wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(16000)
-        wav.writeframes(pcm[start:end])
-    return out.getvalue()
-
-
 def normalise_speech_wave(raw: bytes) -> dict:
     """Keep generated speech intact while normalizing the provider WAV format."""
     if len(raw) > MAX_AUDIO_BYTES:
@@ -346,46 +294,9 @@ def synthesise_groq(key: str, text: str, style: str) -> dict:
         raise SpeechError(504, "speech_timeout") from None
 
 
-def recognise(key: str, audio: bytes, language: str = "en", prompt: str = "") -> dict:
-    audio = prepare_audio(audio)
-    boundary = "padi-" + uuid.uuid4().hex
-    body = bytearray()
-    fields = {"model": "whisper-large-v3-turbo", "response_format": "verbose_json", "temperature": "0"}
-    if language:
-        if language not in ("en", "fr", "pt", "es", "ar", "sw", "ha", "yo", "am", "hi", "zh"):
-            raise SpeechError(400, "invalid_language")
-        fields["language"] = language
-    if prompt:
-        fields["prompt"] = prompt
-    for name, value in fields.items():
-        body.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
-    body.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="speech.wav"\r\nContent-Type: audio/wav\r\n\r\n'.encode())
-    body.extend(audio); body.extend(f'\r\n--{boundary}--\r\n'.encode())
-    request = urllib.request.Request("https://api.groq.com/openai/v1/audio/transcriptions", data=bytes(body), headers={"Authorization": "Bearer "+key, "Content-Type": "multipart/form-data; boundary="+boundary, "User-Agent": "MyPADI-Voice/1.0"}, method="POST")
-    try:
-        with urllib.request.urlopen(request, timeout=40) as response:
-            data = response.read(64*1024+1)
-        if len(data)>64*1024:
-            raise SpeechError(502,"invalid_transcription")
-        result = json.loads(data)
-        text = result.get("text")
-        if not isinstance(text,str) or not text.strip():
-            raise SpeechError(422,"no_speech")
-        text = text.strip()
-        if len(text.encode())>MAX_TEXT_BYTES:
-            raise SpeechError(502,"invalid_transcription")
-        result["text"] = text
-        return result
-    except urllib.error.HTTPError as error:
-        raise SpeechError(429 if error.code==429 else 502,"speech_rate_limited" if error.code==429 else "transcription_unavailable") from None
-    except (urllib.error.URLError,TimeoutError):
-        raise SpeechError(504,"speech_timeout") from None
-    except (json.JSONDecodeError,AttributeError):
-        raise SpeechError(502,"invalid_transcription") from None
-
-
-def make_handler(token: str, key: str, generate=synthesise, groq_key="", transcribe=recognise):
+def make_handler(token: str, key: str, generate=synthesise, groq_key="", recognition_pool=None):
     slots = threading.BoundedSemaphore(4)
+    incoming_slots = threading.BoundedSemaphore(4)
     disable_limits = os.environ.get("PADI_DISABLE_ALL_LIMITS", "").lower() == "true"
 
     class Handler(BaseHTTPRequestHandler):
@@ -411,12 +322,15 @@ def make_handler(token: str, key: str, generate=synthesise, groq_key="", transcr
 
         def do_GET(self):
             if self.path == "/health":
-                self.respond(200, {"service": "padi-python-voice", "status": "ready"})
+                self.respond(200, {"service": "padi-python-voice", "status": "alive", "recognition": recognition_pool.health() if recognition_pool else {"ready": False, "error": "model_unavailable"}})
+            elif self.path == "/ready":
+                state = recognition_pool.health() if recognition_pool else {"ready": False, "error": "model_unavailable"}
+                self.respond(200 if state["ready"] else 503, state)
             else:
                 self.respond(404, {"error": "not_found"})
 
         def do_POST(self):
-            if self.path not in ("/synthesise", "/transcribe"):
+            if self.path not in ("/synthesise", "/transcribe", "/cancel"):
                 self.respond(404, {"error": "not_found"})
                 return
             started = time.monotonic()
@@ -425,54 +339,36 @@ def make_handler(token: str, key: str, generate=synthesise, groq_key="", transcr
                 logger.warning("voice request endpoint=%s status=401 error=unauthenticated", endpoint)
                 self.respond(401, {"error": "unauthenticated"})
                 return
-            if self.path == "/transcribe":
+            if self.path == "/cancel":
                 try:
-                    length=int(self.headers.get("Content-Length","0"))
-                    if not 0<length<=MAX_AUDIO_BYTES+4096 or self.headers.get("Transfer-Encoding"):
-                        raise SpeechError(400,"invalid_audio")
-                    raw=self.rfile.read(length)
-                    if len(raw)!=length:
-                        raise SpeechError(400,"invalid_audio")
-                    header=self.headers.get("Content-Type", "")
-                    message=BytesParser(policy=policy.default).parsebytes(("Content-Type: "+header+"\r\nMIME-Version: 1.0\r\n\r\n").encode()+raw)
-                    if not message.is_multipart():
-                        raise SpeechError(400,"invalid_audio")
-                    parts=list(message.iter_parts())
-                    files=[part for part in parts if part.get_param("name",header="content-disposition")=="file"]
-                    if len(files)!=1:
-                        raise SpeechError(400,"invalid_audio")
-                    audio=files[0].get_payload(decode=True)
-                    if not isinstance(audio,bytes) or len(audio)>MAX_AUDIO_BYTES:
-                        raise SpeechError(400,"invalid_audio")
-                    def field(name, default):
-                        values = [part for part in parts if part.get_param("name", header="content-disposition") == name]
-                        if len(values) > 1:
-                            raise SpeechError(400,"invalid_audio")
-                        if not values:
-                            return default
-                        value = values[0].get_payload(decode=True)
-                        if not isinstance(value,bytes) or len(value)>512:
-                            raise SpeechError(400,"invalid_audio")
-                        return value.decode("utf8")
-                    language, prompt = field("language", "en"), field("prompt", "")
-                    if language not in ("", "en", "fr", "pt", "es", "ar", "sw", "ha", "yo", "am", "hi", "zh"):
-                        raise SpeechError(400,"invalid_language")
-                    if not disable_limits and not slots.acquire(blocking=False):
-                        logger.warning("voice request endpoint=transcribe provider=groq status=429 error=speech_busy")
-                        raise SpeechError(429,"speech_busy")
-                    try:
-                        result = transcribe(groq_key,audio,language=language,prompt=prompt)
-                        logger.info("voice request endpoint=transcribe provider=groq model=whisper-large-v3-turbo status=200 duration_ms=%d", int((time.monotonic()-started)*1000))
-                        self.respond(200,result)
-                    finally:
-                        if not disable_limits:
-                            slots.release()
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < length <= 1024:
+                        raise ValueError()
+                    body = json.loads(self.rfile.read(length))
+                    if set(body) != {"request_id", "user_id"} or not valid_identity(body["request_id"], body["user_id"]):
+                        raise ValueError()
+                    if recognition_pool:
+                        recognition_pool.cancel(body["request_id"], body["user_id"])
+                    self.respond(202, {"cancellation_requested": True})
+                except (ValueError, TypeError, KeyError):
+                    self.respond(400, {"error": "invalid_request"})
+                return
+            if self.path == "/transcribe":
+                if not incoming_slots.acquire(blocking=False):
+                    self.respond(429, {"error": "transcription_busy"})
+                    return
+                try:
+                    result = process_upload(self, recognition_pool)
+                    logger.info("local transcription status=200 duration_ms=%d audio_bytes=%d", int((time.monotonic()-started)*1000), result["audio_bytes"])
+                    self.respond(200, result)
                 except SpeechError as error:
-                    logger.warning("voice request endpoint=transcribe provider=groq status=%d error=%s duration_ms=%d", error.status, error.code, int((time.monotonic()-started)*1000))
-                    self.respond(error.status,{"error":error.code})
+                    logger.warning("local transcription status=%d error=%s", error.status, error.code)
+                    self.respond(error.status, {"error": error.code})
                 except Exception as error:
-                    logger.error("voice request endpoint=transcribe status=400 error=invalid_audio exception=%s", type(error).__name__)
-                    self.respond(400,{"error":"invalid_audio"})
+                    logger.error("local transcription status=502 exception=%s", type(error).__name__)
+                    self.respond(502, {"error": "transcription_failed"})
+                finally:
+                    incoming_slots.release()
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
@@ -527,6 +423,9 @@ def make_handler(token: str, key: str, generate=synthesise, groq_key="", transcr
 
 
 def main():
+    def stop_service(_signal, _frame):
+        raise KeyboardInterrupt()
+    signal.signal(signal.SIGTERM, stop_service)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s", stream=sys.stdout)
     if MODEL not in LEGACY_MODELS and MODEL not in NATURAL_MODELS:
         raise SystemExit("Choose a verified, supported PADI voice model.")
@@ -538,10 +437,13 @@ def main():
     key = os.environ.get("GEMINI_API_KEY", "")
     groq_key=os.environ.get("GROQ_API_KEY", "")
     confirmed=os.environ.get("PADI_AI_FREE_ACCOUNT_CONFIRMED", "").split(",")
-    if len(token) < 32 or not key or not groq_key or "gemini" not in confirmed or "groq" not in confirmed:
-        raise SystemExit("Python voice requires an internal token, Gemini/Groq credentials, and confirmed free-tier use.")
+    if len(token) < 32:
+        raise SystemExit("Python voice requires an internal service token of at least 32 characters.")
+    if os.getenv("PADI_PYTHON_VOICE_ENABLED") == "true" and (not key or not groq_key or "gemini" not in confirmed or "groq" not in confirmed):
+        raise SystemExit("Outgoing speech requires the existing Gemini/Groq credentials and confirmed accounts.")
+    recognition_pool = RecognitionPool(RecognitionConfig.environment()) if os.getenv("PADI_STT_ENABLED", "false").lower() == "true" else None
     port = int(os.environ.get("PADI_PYTHON_VOICE_PORT", "8090"))
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(token, key,groq_key=groq_key))
+    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(token, key,groq_key=groq_key, recognition_pool=recognition_pool))
     server.daemon_threads = True
     logger.info("voice service ready host=127.0.0.1 port=%d primary_model=%s fallback_model=%s gemini_key_configured=%s groq_key_configured=%s limits_disabled=%s",
         port, MODEL, FALLBACK_MODEL or "none", bool(key), bool(groq_key), os.environ.get("PADI_DISABLE_ALL_LIMITS", "").lower() == "true")
@@ -551,6 +453,8 @@ def main():
         pass
     finally:
         server.server_close()
+        if recognition_pool:
+            recognition_pool.close()
 
 
 if __name__ == "__main__":

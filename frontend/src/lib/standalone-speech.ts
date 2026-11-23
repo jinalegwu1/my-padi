@@ -1,8 +1,20 @@
 import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
 import { File, Paths } from 'expo-file-system';
 import { Platform } from 'react-native';
-import { playVoice } from '@/lib/voice-playback';
+import { pauseVoicePlayback, playVoice, resumeVoicePlayback } from '@/lib/voice-playback';
 import { portraitSpeech, speechEnvelope } from '@/lib/portrait-speech';
+
+let activePlayer: AudioPlayer | undefined;
+
+export async function pauseStandaloneSpeech(): Promise<void> {
+  if (Platform.OS === 'web') return pauseVoicePlayback();
+  activePlayer?.pause();
+}
+
+export async function resumeStandaloneSpeech(): Promise<void> {
+  if (Platform.OS === 'web') return resumeVoicePlayback();
+  activePlayer?.play();
+}
 
 /** Play generated PCM speech without opening a microphone. */
 export async function playStandaloneSpeech(encoded: string, signal: AbortSignal, onStart: () => void, voiceId?: string): Promise<void> {
@@ -15,6 +27,7 @@ export async function playStandaloneSpeech(encoded: string, signal: AbortSignal,
   try {
     file.create(); file.write(encoded, { encoding: 'base64' });
     player = createAudioPlayer(file.uri, { updateInterval: 50 });
+    activePlayer = player;
     await new Promise<void>((resolve, reject) => {
       let started = false, settled = false;
       const timer = setTimeout(() => finish(new Error('PADI’s voice did not finish. You can read the text and try again.')), 120_000);
@@ -39,6 +52,7 @@ export async function playStandaloneSpeech(encoded: string, signal: AbortSignal,
     });
   } finally {
     face?.stop();
+    if(activePlayer===player)activePlayer=undefined;
     try { player?.release(); } finally { if (file.exists) file.delete(); }
   }
 }

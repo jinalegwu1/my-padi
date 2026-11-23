@@ -3,6 +3,8 @@ import { portraitSpeech, speechEnvelope } from '@/lib/portrait-speech';
 
 type NativeVoice = { play(encoded:string):Promise<void>; stopPlayback():void };
 export async function unlockVoicePlayback(): Promise<void> {}
+export async function pauseVoicePlayback(): Promise<void> {}
+export async function resumeVoicePlayback(): Promise<void> {}
 export async function playVoice(encoded:string,signal:AbortSignal,onStart:()=>void,voiceId?:string):Promise<void> {
   const voice = requireOptionalNativeModule<NativeVoice>('PadiVoice');
   if (!voice) throw new Error('Natural hands-free voice requires the PADI development build.');

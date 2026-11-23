@@ -174,7 +174,7 @@ func run(logger *slog.Logger) error {
 	var speechAPI httpapi.SpeechTranscriber
 	if speechService != nil {
 		speechAPI = speechService
-		logger.Info("voice transcription configured", "provider", "groq", "model", voice.Model)
+		logger.Info("voice transcription configured", "provider", "local-python")
 	}
 	pythonSpeech, err := voice.LoadPythonSpeech(speechLimiter)
 	if err != nil {

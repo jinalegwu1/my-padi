@@ -19,6 +19,14 @@ export async function unlockVoicePlayback(): Promise<void> {
   } finally { if (timer) clearTimeout(timer); }
 }
 
+export async function pauseVoicePlayback(): Promise<void> {
+  if (output?.state === 'running') await output.suspend();
+}
+
+export async function resumeVoicePlayback(): Promise<void> {
+  if (output?.state === 'suspended') await output.resume();
+}
+
 /** One unlocked output context keeps replies audible after async requests. */
 export async function playVoice(encoded: string, signal: AbortSignal, onStart: () => void, voiceId?: string): Promise<void> {
   if (signal.aborted) return;

@@ -5,6 +5,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } fr
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PadiOrb, type OrbState } from '@/components/padi-orb';
+import { TranscriptionScreen } from '@/components/voice/transcription-screen';
 import { VoiceCaption } from '@/components/voice/voice-caption';
 import { VoiceStatePill } from '@/components/voice/voice-state-pill';
 import { Button } from '@/components/ui/button';
@@ -19,6 +20,11 @@ import { speakPortraitGreeting } from '@/lib/speech';
  * chat reply, listening/thinking/speaking portrait state, and natural voice playback.
  */
 export default function VoiceScreen() {
+  const { mode } = useLocalSearchParams<{ mode?: string }>();
+  return mode === 'transcribe' ? <TranscriptionScreen /> : <ConversationScreen />;
+}
+
+function ConversationScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ connect?: string }>();
   const colors = useColors();
@@ -118,6 +124,11 @@ export default function VoiceScreen() {
           <View style={styles.chatControls}>
             <Button title={micLabel} onPress={handleMic} icon={busy?'pause':hasConnected.current?'mic':'chatbubbles'}
               disabled={!busy&&(!voice.ready||voice.chatBusy)} variant={busy?'secondary':'primary'} />
+            <Button title="Voice to text" variant="secondary" icon="document-text-outline" onPress={() => {
+              touchReply.current?.abort();
+              void voice.session.cancel();
+              router.replace({ pathname: '/voice', params: { mode: 'transcribe' } });
+            }} />
             <Button title={t('voice.end')} onPress={handleEnd} icon="close" variant="ghost" />
           </View>
           <Text style={[styles.noticeText, { color: colors.muted, fontSize: type.micro }]}>

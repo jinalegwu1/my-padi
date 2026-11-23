@@ -20,17 +20,17 @@ def pcm_wav(pcm, rate=16000):
 
 
 class VoiceTests(unittest.TestCase):
-    def test_selected_language_is_carried_into_the_actual_transcription_payload(self):
-        class Response:
-            def __enter__(self): return self
-            def __exit__(self, *_args): pass
-            def read(self, _limit): return b'{"text":"Hello","duration":1}'
-        for language in ("en", "fr"):
-            with patch.object(app, "prepare_audio", return_value=pcm_wav(b"\x01\x00"*160)), patch.object(app.urllib.request, "urlopen", return_value=Response()) as call:
-                self.assertEqual(app.recognise("test-key", b"public-audio", language=language)["text"], "Hello")
-            request = call.call_args.args[0]
-            self.assertIn(f'name="language"\r\n\r\n{language}\r\n'.encode(), request.data)
-            self.assertTrue(request.full_url.endswith("/audio/transcriptions"))
+    def test_health_distinguishes_service_from_model_readiness(self):
+        server=ThreadingHTTPServer(("127.0.0.1",0),app.make_handler("x"*32,"test-key"))
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        try:
+            for path,status in [("/health",200),("/ready",503)]:
+                connection=http.client.HTTPConnection("127.0.0.1",server.server_port)
+                connection.request("GET",path);response=connection.getresponse();body=json.loads(response.read());connection.close()
+                self.assertEqual(response.status,status)
+                self.assertFalse(body.get("ready",body.get("recognition",{}).get("ready")))
+        finally:
+            server.shutdown();server.server_close();thread.join()
 
     def test_english_delivery_does_not_invite_unrequested_language_switches(self):
         for model in (*app.NATURAL_MODELS, *app.LEGACY_MODELS):
@@ -42,25 +42,30 @@ class VoiceTests(unittest.TestCase):
                 self.assertIn("Do not translate the transcript", directions)
                 self.assertNotIn("Follow any language switches", directions)
 
-    def test_transcription_http_handler_preserves_selected_language(self):
-        calls = []
-        handler = app.make_handler("x"*32, "test-key", transcribe=lambda key, audio, **kwargs: calls.append(kwargs) or {"text":"Hello"})
-        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+    def test_transcription_http_handler_preserves_owner_and_language(self):
+        calls=[]
+        class Pool:
+            def transcribe(self,path,mime,language,request_id,user_id,disconnected):
+                from pathlib import Path
+                calls.append((language,request_id,user_id,path))
+                return {"text":"Hello","audio_bytes":Path(path).stat().st_size,"request_id":request_id,"user_id":user_id}
+        server=ThreadingHTTPServer(("127.0.0.1",0),app.make_handler("x"*32,"test-key",recognition_pool=Pool()))
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
         try:
-            for language, expected in [(None,"en"),("fr","fr"),("unknown",None)]:
-                body = b'--test\r\nContent-Disposition: form-data; name="file"; filename="test.wav"\r\nContent-Type: audio/wav\r\n\r\nRIFF0000WAVEdata\r\n'
-                if language is not None:
-                    body += f'--test\r\nContent-Disposition: form-data; name="language"\r\n\r\n{language}\r\n'.encode()
-                body += b'--test--\r\n'
-                connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            for language,status in [("auto",200),("fr",200),("unknown",400)]:
+                body=bytearray()
+                for name,value in [("request_id","a"*32),("user_id","account-a"),("language",language)]:
+                    body.extend(f'--test\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
+                body.extend(b'--test\r\nContent-Disposition: form-data; name="file"; filename="../../private.wav"\r\nContent-Type: audio/wav\r\n\r\n')
+                body.extend(pcm_wav(b"\x01\x00"*1600));body.extend(b'\r\n--test--\r\n')
+                connection=http.client.HTTPConnection("127.0.0.1",server.server_port)
                 connection.request("POST","/transcribe",body,{"Content-Type":"multipart/form-data; boundary=test","Authorization":"Bearer "+"x"*32})
-                response = connection.getresponse(); response.read(); connection.close()
-                self.assertEqual(response.status, 200 if expected else 400)
-                if expected: self.assertEqual(calls[-1]["language"], expected)
-            self.assertEqual(len(calls),2)
+                response=connection.getresponse();response.read();connection.close();self.assertEqual(response.status,status)
+            self.assertEqual([call[:3] for call in calls],[("auto","a"*32,"account-a"),("fr","a"*32,"account-a")])
+            from pathlib import Path
+            self.assertTrue(all(not Path(call[3]).exists() for call in calls))
         finally:
-            server.shutdown(); server.server_close(); thread.join()
+            server.shutdown();server.server_close();thread.join()
 
     def test_fast_speech_keeps_the_actual_words_and_normalises_audio(self):
         class Response:
