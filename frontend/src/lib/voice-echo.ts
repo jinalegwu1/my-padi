@@ -1,6 +1,6 @@
 import type { PCMFrame } from '@/lib/voice-activity';
 
-type Reference={mono:Float32Array;position():number;stopAt:number};
+type Reference={mono:Float32Array;position():number;stopAt:number;lag?:number};
 const references:Reference[]=[];
 
 /** Prepare the actual output PCM before reserving its playback-clock slot. */
@@ -76,6 +76,13 @@ export function suppressPlaybackEcho(frame:PCMFrame):PCMFrame {
     // envelope, which can confuse adjacent pitch periods. Sparse full-band
     // candidates are cheap; verify the strongest ones against every sample.
     const newest=Math.round(position*16000),candidates:{base:number;score:number}[]=[];
+    if(ref.lag!==undefined) {
+      for(let offset=-24;offset<=24;offset++) {
+        const candidate=score(newest-ref.lag+offset,1);
+        if(candidate&&(!best||candidate.score>best.score))best={...candidate,ref};
+      }
+      if(best?.ref===ref&&best.score>.98)continue;
+    }
     for(let lag=-480;lag<=7200;lag++){
       const match=score(newest-lag,16);if(!match)continue;
       if(candidates.length<12||match.score>candidates[candidates.length-1].score){
@@ -83,11 +90,17 @@ export function suppressPlaybackEcho(frame:PCMFrame):PCMFrame {
       }
     }
     for(const candidate of candidates){const match=score(candidate.base,1);if(match&&(!best||match.score>best.score))best={...match,ref};}
+    if(best?.ref===ref&&best.score>.98)ref.lag=newest-best.base;
   }
   // A weak accidental match must never rewrite a consonant of the user's
   // interrupting word. Double talk without a strong match passes through;
   // genuine onset then stops playback and removes the echo at its source.
-  if(!best||best.score<.8)return frame;
+  const tracing = typeof __DEV__ !== 'undefined' && __DEV__ ? (globalThis as typeof globalThis & {__padiEchoTrace?:unknown[]}).__padiEchoTrace : undefined;
+  const trace=(output:PCMFrame,residual?:number)=>{
+    if(tracing && tracing.length<20000) tracing.push({at:performance.now(),age,score:best?.score,refs:references.length,input:10*Math.log10(power/count),output:output.voiceLevel,residual});
+    return output;
+  };
+  if(!best||best.score<.8)return trace(frame);
   const match=best;
   const data=new ArrayBuffer(frame.data.byteLength),output=new DataView(data);
   // Fit a short FIR around the matched delay. A single gain/linear interpolation
@@ -121,7 +134,7 @@ export function suppressPlaybackEcho(frame:PCMFrame):PCMFrame {
     const residual=input.getInt16(i*2,true)/32768-echo;residualPower+=residual*residual;
     output.setInt16(i*2,Math.max(-32768,Math.min(32767,Math.round(residual*32768))),true);
   }
-  if(best.score>.98&&residualPower/originalPower<.005)return {...frame,data:new ArrayBuffer(frame.data.byteLength),voiceLevel:-140};
+  if(best.score>.98&&residualPower/originalPower<.025)return trace({...frame,data:new ArrayBuffer(frame.data.byteLength),voiceLevel:-140},residualPower/originalPower);
   const residual=Math.sqrt(residualPower/count);
-  return {...frame,data,voiceLevel:20*Math.log10(Math.max(1e-7,residual))};
+  return trace({...frame,data,voiceLevel:20*Math.log10(Math.max(1e-7,residual))},residualPower/originalPower);
 }

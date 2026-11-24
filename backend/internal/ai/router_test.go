@@ -254,14 +254,14 @@ func TestRouterVoiceUsesOnlyGeminiThenGroqFallback(t *testing.T) {
 	}
 }
 
-func TestRouterGroqVoiceStreamingRequiresAgreedFastModel(t *testing.T) {
+func TestRouterVoiceStreamingSupportsConfiguredTextModels(t *testing.T) {
 	router := testRouter(t, []ModelConfig{
 		{ID: "gemini-main", Provider: ProviderGemini, Model: "gemini-model"},
 		{ID: "groq-fast", Provider: ProviderGroq, Model: "openai/gpt-oss-20b"},
-	}, map[string]Provider{ProviderGemini: &fakeProvider{}, ProviderGroq: groqProvider{}},
+	}, map[string]Provider{ProviderGemini: geminiProvider{}, ProviderGroq: groqProvider{}},
 		RoutingConfig{PrimaryModel: "gemini-main", FastModel: "groq-fast"}, nil)
 	if !router.SupportsGroqVoiceStreaming() {
-		t.Fatal("configured Groq fast model should enable voice streaming")
+		t.Fatal("configured Gemini and Groq text models should enable voice streaming")
 	}
 
 	request := Request{Messages: []Message{{Role: RoleUser, Content: "Hello"}}, Voice: true}
@@ -269,9 +269,9 @@ func TestRouterGroqVoiceStreamingRequiresAgreedFastModel(t *testing.T) {
 		t.Fatal("streaming without a configured Groq credential unexpectedly succeeded")
 	}
 
-	router.routing.FastModel = "gemini-main"
+	router.providers[ProviderGemini] = &fakeProvider{}
 	if router.SupportsGroqVoiceStreaming() {
-		t.Fatal("a non-Groq fast model enabled Groq voice streaming")
+		t.Fatal("a provider without a streaming adapter enabled streaming")
 	}
 }
 

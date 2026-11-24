@@ -10,7 +10,7 @@ const env = { ...parseEnv(readFileSync(join(root, 'backend/.env'), 'utf8')), ...
 if (env.PADI_ENV !== 'development') throw new Error('Personality verification requires development mode.');
 const directory = mkdtempSync(join(tmpdir(), 'padi-personality-driver-'));
 const driver = join(directory, 'driver.cjs');
-writeFileSync(driver, `require(${JSON.stringify(join(root, 'frontend/tests/personality-browser.cjs'))}).verify(process.argv[2], ${process.argv.includes('--greetings-only')}, ${process.argv.includes('--review-only')}).catch(error => { console.error(String(error.message).replace(/Authorization: Bearer [^\\r\\n]+/gi, 'Authorization: [redacted]')); process.exitCode = 1; });\n`);
+writeFileSync(driver, `require(${JSON.stringify(join(root, 'frontend/tests/personality-browser.cjs'))}).verify(process.argv[2], ${process.argv.includes('--greetings-only')}, ${process.argv.includes('--review-only')}, ${process.argv.includes('--text-review-only')}).catch(error => { console.error(String(error.message).replace(/Authorization: Bearer [^\\r\\n]+/gi, 'Authorization: [redacted]')); process.exitCode = 1; });\n`);
 env.PADI_VERIFY_PERSONALITY_BROWSER = '1';
 env.PADI_VOICE_BROWSER_SCRIPT = driver;
 env.PADI_VOICE_API_URL = `http://127.0.0.1:${(env.PADI_HTTP_ADDR || ':8080').match(/:(\d+)$/)[1]}`;

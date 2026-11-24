@@ -82,6 +82,8 @@ type ModelConfig struct {
 }
 
 type RoutingConfig struct {
+	VoicePrimaryModel  string
+	VoiceBackupModel   string
 	PrimaryModel       string
 	FastModel          string
 	ReasoningModel     string

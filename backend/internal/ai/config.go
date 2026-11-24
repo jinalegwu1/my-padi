@@ -49,6 +49,8 @@ func LoadEnvironment() (EnvironmentConfig, error) {
 	return EnvironmentConfig{
 		Models: models,
 		Routing: RoutingConfig{
+			VoicePrimaryModel:  os.Getenv("PADI_AI_VOICE_PRIMARY_MODEL"),
+			VoiceBackupModel:   os.Getenv("PADI_AI_VOICE_BACKUP_MODEL"),
 			PrimaryModel:       os.Getenv("PADI_AI_PRIMARY_MODEL"),
 			FastModel:          os.Getenv("PADI_AI_FAST_MODEL"),
 			ReasoningModel:     os.Getenv("PADI_AI_REASONING_MODEL"),

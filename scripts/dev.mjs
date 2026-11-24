@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
+import { runningFrontend, verifyBrowserAccess } from './dev-services.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const children = [];
@@ -150,7 +151,13 @@ try {
     console.log(`Backend: http://127.0.0.1:${backendPort}`);
     console.log(`Frontend: http://localhost:${frontendPort}`);
     const needsDatabase = Boolean(backendEnv.DATABASE_URL || backendEnv.PADI_DATABASE_URL || backendEnv.PADI_AI_MODELS);
+    const frontendRunning = await runningFrontend(frontendPort, join(root, 'frontend'));
     const backendRunning = await runningBackend(backendPort, needsDatabase);
+    if (backendRunning) {
+      await verifyBrowserAccess(`http://127.0.0.1:${backendPort}`, [
+        `http://localhost:${frontendPort}`, `http://127.0.0.1:${frontendPort}`,
+      ]);
+    }
     if (!stopping) {
       if(backendEnv.PADI_PYTHON_VOICE_ENABLED==='true' || backendEnv.PADI_STT_ENABLED==='true') {
         const voicePort=port(backendEnv.PADI_PYTHON_VOICE_PORT||'8090','PADI_PYTHON_VOICE_PORT');
@@ -177,7 +184,8 @@ try {
       }
       if (backendRunning) console.log('Using the My PADI backend already running on this port.');
       else launch('Go backend', 'go', ['run', './cmd/api'], 'backend', backendEnv);
-      launch('Expo frontend', process.execPath, [expo, 'start', '--web', '--port', String(frontendPort)], 'frontend', frontendEnv);
+      if (frontendRunning) console.log(`Using this PADI project's Expo server already running at http://localhost:${frontendPort}.`);
+      else launch('Expo frontend', process.execPath, [expo, 'start', '--web', '--port', String(frontendPort)], 'frontend', frontendEnv);
     }
   }
 } catch (error) {

@@ -17,6 +17,20 @@ func TestLoadEnvironmentWithoutModels(t *testing.T) {
 	}
 }
 
+func TestVoiceRoutesLoadWithoutChangingTextRoutes(t *testing.T) {
+	t.Setenv("PADI_TEST_AI_KEY", "synthetic")
+	t.Setenv("PADI_AI_MODELS", `[{"id":"text-existing","provider":"gemini","model":"existing-text","api_key_env":"PADI_TEST_AI_KEY"},{"id":"gemini-voice","provider":"gemini","model":"gemini-3.1-flash-lite","api_key_env":"PADI_TEST_AI_KEY"},{"id":"groq-existing","provider":"groq","model":"openai/gpt-oss-20b","api_key_env":"PADI_TEST_AI_KEY"}]`)
+	t.Setenv("PADI_AI_APPROVED_FREE_MODELS", "gemini:existing-text,gemini:gemini-3.1-flash-lite,groq:openai/gpt-oss-20b")
+	t.Setenv("PADI_AI_PRIMARY_MODEL", "text-existing")
+	t.Setenv("PADI_AI_FAST_MODEL", "groq-existing")
+	t.Setenv("PADI_AI_VOICE_PRIMARY_MODEL", "gemini-voice")
+	t.Setenv("PADI_AI_VOICE_BACKUP_MODEL", "groq-existing")
+	cfg, err := LoadEnvironment()
+	if err != nil || cfg.Routing.PrimaryModel != "text-existing" || cfg.Routing.FastModel != "groq-existing" || cfg.Routing.VoicePrimaryModel != "gemini-voice" || cfg.Routing.VoiceBackupModel != "groq-existing" {
+		t.Fatalf("routing=%+v err=%v", cfg.Routing, err)
+	}
+}
+
 func TestLoadEnvironmentRequiresAPIKeyAndRouting(t *testing.T) {
 	t.Setenv("PADI_AI_APPROVED_FREE_MODELS", "gemini:configured-model")
 	t.Setenv("PADI_AI_MODELS", `[{"id":"main","provider":"gemini","model":"configured-model","api_key_env":"PADI_TEST_AI_KEY"}]`)

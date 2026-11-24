@@ -43,7 +43,8 @@ exports.verify=async(mode,sessionFile)=>{
       localStorage.setItem('app:v1:preferences',JSON.stringify({onboarded:true,voiceId:'ada',voiceRate:1,languageCode:'en-NG',
         countryCode:'NG',appearance:'light',displayName:'Voice interruption check',reduceMotion:true,notificationsEnabled:false,
         dailyCheckIn:false,checkInTime:'08:00',textScale:1,wakeWordEnabled:false,showVoiceTranscript:false}));
-      const audit=window.__interrupt={clips:[],stops:[],input:null};
+      const audit=window.__interrupt={clips:[],stops:[],input:null,users:[]};
+      window.__padiEchoTrace=[];
       const Context=AudioContext;
       navigator.mediaDevices.getUserMedia=async constraints=>{
         const input=new Context({sampleRate:48000});await input.resume();
@@ -82,7 +83,7 @@ exports.verify=async(mode,sessionFile)=>{
         voiced-=begin/buffer.sampleRate;
         const source=audit.input.createBufferSource();source.buffer=speech;source.connect(audit.destination);
         const at=Date.now();audit.userVoicedAt=at+voiced*1000;
-        audit.userPlaying=true;
+        audit.users.push({at:performance.now(),duration:speech.duration});audit.userPlaying=true;
         await new Promise(resolve=>{source.onended=()=>{audit.userPlaying=false;resolve();};source.start();});
         return audit.userVoicedAt;
       };
@@ -134,7 +135,7 @@ exports.verify=async(mode,sessionFile)=>{
       const played=say(encoded);
       await page.waitForFunction(count=>__interrupt.stops.length>count,before.stops);
       const interrupted=await page.evaluate(index=>({clips:__interrupt.clips.length,stoppedAt:__interrupt.stops[index]}),before.stops);
-      await listening();const measured=await page.evaluate(()=>__interrupt.stops.at(-1)-__interrupt.userVoicedAt);
+      await listening();const measured=await page.evaluate(({index})=>__interrupt.stops[index]-__interrupt.userVoicedAt,{index:before.stops});
       assert.ok(measured>=-40&&measured<500,`Speech onset should interrupt promptly (${measured} ms).`);
       await played;
       return {latencyMs:measured,oldClips:interrupted.clips,stoppedAt:interrupted.stoppedAt};
@@ -181,14 +182,14 @@ exports.verify=async(mode,sessionFile)=>{
     const audit=await page.evaluate(()=>({clips:__interrupt.clips,stops:__interrupt.stops,constraints:__interrupt.constraints}));
     assert.equal(audit.constraints.audio.echoCancellation,true);
     const report={stopLatencyMs:stopped.latencyMs,questionLatencyMs:questioned.latencyMs,repeatedLatencyMs:repeated,
-      stoppedWords,questionWords,turns:turns.length,transcriptions:transcripts.length,actualAudio:true,
+      stoppedWords,questionWords,turns:turns.length,transcriptions:transcripts.length,actualAudio:true,stopUsesWhisper:mode!=='echo-stress',
       scenarios:['Stop','new question','double talk','brief pause','complete thought response','repeated interruption','natural completion']};
     writeFileSync(join(folder,'verification.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
     await page.getByRole('button',{name:'Switch to text',exact:true}).click();
     await page.waitForFunction(()=>__interrupt.tracks.every(track=>track.readyState==='ended'));
-    console.log('PASS: all seven interruption/turn scenarios used real audio; Stop and the new question were transcribed by Faster-Whisper.');
+    console.log(`PASS: all seven interruption/turn scenarios used real audio; ${mode==='echo-stress'?'the new question used Faster-Whisper (Stop response was controlled to isolate echo)':'Stop and the new question were transcribed by Faster-Whisper'}.`);
   }catch(error){progress(`failed: ${error.message}`);console.error(error.message);console.error({errors,transcripts,turns:turns.length});if(page){
-    const diagnostic=await page.evaluate(()=>({alerts:[...document.querySelectorAll('[role="alert"]')].map(e=>e.textContent),audit:__interrupt.clips,stops:__interrupt.stops})).catch(()=>({}));
+    const diagnostic=await page.evaluate(()=>({alerts:[...document.querySelectorAll('[role="alert"]')].map(e=>e.textContent),audit:__interrupt.clips,stops:__interrupt.stops,echo:window.__padiEchoTrace,users:__interrupt.users})).catch(()=>({}));
     writeFileSync(join(folder,'failure.json'),JSON.stringify(diagnostic,null,2));console.error({clips:diagnostic.audit,stops:diagnostic.stops});
   }throw error;}
   finally{await browser.close();}

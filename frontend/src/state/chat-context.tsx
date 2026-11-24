@@ -51,9 +51,12 @@ function useChatState() {
     let userMessage: Message | undefined;
     let pending: Message | undefined;
     let streamedText = '';
+    let requestMemoryRevision = 0;
     const removeTurn = () => setMessages(prev => prev.filter(message => message.id !== pending?.id && message.id !== userMessage?.id));
-    const keepPartialStream = () => setMessages(prev => prev.map(message => message.id === pending?.id
-      ? { ...message, text: streamedText, pending: false, backendChat: false, voiceInterrupted: true }
+    const keepPartialStream = () => setMessages(prev => prev.map(message => message.id === userMessage?.id
+      ? {...message,backendChat:true,memoryRevision:requestMemoryRevision}
+      : message.id === pending?.id
+      ? { ...message, text: streamedText, pending: false, backendChat: true, memoryRevision:requestMemoryRevision,voiceInterrupted: true }
       : message));
     try {
       const session = await readSession();
@@ -63,6 +66,7 @@ function useChatState() {
       if (!greeting) userMessage = { id: nextId('user'), role: 'user', text, createdAt: Date.now(), backendUserID: session.user.id, viaVoice };
       pending = { id: viaVoice ? nextId('padi') : nextId('pending'), role: 'padi', text: '', createdAt: Date.now(), pending: true, backendUserID: session.user.id, viaVoice };
       const context = chatContext(latest.current, session.user.id);
+      requestMemoryRevision = context.memoryRevision;
       setMessages(prev => [...prev, ...(userMessage ? [userMessage] : []), pending!]);
       if (viaVoice) onStart?.(pending.id);
       try {

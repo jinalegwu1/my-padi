@@ -54,6 +54,9 @@ func withPADIInstructions(request Request) Request {
 	if guidance := strings.TrimSpace(request.StyleGuidance); guidance != "" {
 		system += "\n\nCurrent-turn response guidance (signals are uncertain, not diagnoses):\n" + guidance
 	}
+	if request.SuppressHumour {
+		system += "\n\nFor this reply, respect the user's no-humour boundary. Respond in straightforward, friendly language. Do not add a joke, a funny comparison, teasing, or laughter, even if the user used humour. Warmth means taking an interest, not making light of their words."
+	}
 	if request.Voice {
 		system += "\n\nSpeech delivery: keep the chosen conversation style in ordinary spoken words. Omit emojis, Markdown, laughter stage directions, and synthetic ha-ha cues. Controlled nonverbal laughter is not supported by this speech system; convey amusement with words instead."
 	}

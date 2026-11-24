@@ -95,6 +95,16 @@ test('capture uses the device clock and keeps mono, echo cancellation, noise sup
   } finally { await f.close(); }
 });
 
+test('capture timestamps include the worklet engine offset and delayed delivery',async()=>{
+  const f=captureHarness({engineRate:48000,startFrame:48000});
+  try {
+    await f.capture.start(new AbortController().signal);
+    f.feed(tone(48000,.1));
+    assert.equal(f.frames.length,2);
+    assert.ok(f.frames.every(frame=>Number.isFinite(frame.capturedAt)&&performance.now()/1000-frame.capturedAt<.1),'A worklet created after one second must not report samples as one second stale');
+  }finally{await f.close();}
+});
+
 test('a device that rejects forced rates still captures native-rate audio and uploads 16 kHz WAV', async () => {
   const f = captureHarness({ engineRate: 48000, rejectRequestedRate: true });
   try {

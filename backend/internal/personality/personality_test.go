@@ -64,6 +64,7 @@ func TestPainAndSeriousRequestsOverrideEveryHumourLevel(t *testing.T) {
 	for _, level := range []HumourPreference{HumourOff, HumourSubtle, HumourOccasional, HumourFrequent} {
 		for _, text := range []string{
 			"My father died. Make me laugh.", "I'm suffering after a miscarriage. Tell me a joke.",
+			"My phone died just as I learned my father died.",
 			"My friend is seriously ill.", "I am in pain.", "I feel overwhelmed.",
 			"Please answer seriously.", "No humor, please.", "Don't joke about this.",
 		} {
@@ -74,10 +75,10 @@ func TestPainAndSeriousRequestsOverrideEveryHumourLevel(t *testing.T) {
 	}
 }
 
-func TestCurrentTurnInvitationDoesNotChangeSavedHumourOff(t *testing.T) {
+func TestCurrentTurnInvitationDoesNotOverrideExplicitHumourOff(t *testing.T) {
 	p := Preferences{Humour: HumourOff, HumourExplicit: true, Tone: ToneAdaptive}
-	if !Assess("Tell me a joke.", p).HumourAllowed || !strings.Contains(ResponseGuidance("Tell me a joke.", p), "for this turn only") {
-		t.Fatal("direct invitation was not treated as a current-turn exception")
+	if Assess("Tell me a joke.", p).HumourAllowed || !strings.Contains(ResponseGuidance("Tell me a joke.", p), "Humour is not appropriate") {
+		t.Fatal("direct invitation overrode the user's disabled humour setting")
 	}
 	if Assess("What should I cook?", p).HumourAllowed {
 		t.Fatal("invitation changed saved humour-off preference")
@@ -86,7 +87,7 @@ func TestCurrentTurnInvitationDoesNotChangeSavedHumourOff(t *testing.T) {
 
 func TestGreetingReflectsDefaultWitAndRespectsSeriousContextAndPreferences(t *testing.T) {
 	p := DefaultPreferences()
-	if got := GreetingGuidance("Greet me briefly.", p); !strings.Contains(got, "PADI wit in the first line") || !strings.Contains(got, "fresh, light observation") {
+	if got := GreetingGuidance("Greet me briefly.", p); !strings.Contains(got, "fresh, light observation") || !strings.Contains(got, "a joke is optional") {
 		t.Fatalf("default opening lacks personality: %s", got)
 	}
 	for _, text := range []string{"My father died. Just listen.", "Please be serious."} {

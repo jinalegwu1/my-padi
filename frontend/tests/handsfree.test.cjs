@@ -47,6 +47,19 @@ test('silence sends unpunctuated speech immediately and the next turn reuses the
   await f.session.cancel();
 });
 
+test('ambiguous bare Start cannot restart speech and explicit end stops capture',async()=>{
+  const words=['Start.','Can we discuss dinner?','End voice mode.'];let index=0;
+  const f=fixture({transcribe:async()=>words[index++]});
+  await f.session.start();f.voice();f.quiet();await settle();
+  assert.equal(f.calls.filter(Array.isArray).length,0);
+  assert.match(f.snapshot.error,/say what you would like to start/);
+  assert.equal(f.snapshot.connected,true);
+  f.voice();f.quiet();await settle();
+  assert.equal(f.calls.filter(Array.isArray).length,1);
+  f.voice();f.quiet();await settle();
+  assert.equal(f.snapshot.connected,false);assert.ok(f.calls.includes('closed'));
+});
+
 test('completed Groq response sentences are spoken before later text arrives',async()=>{
   const firstPlayed=deferred(),continueStream=deferred();const spoken=[];
   const f=fixture({

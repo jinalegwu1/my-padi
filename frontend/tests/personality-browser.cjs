@@ -5,12 +5,12 @@ const { readFileSync, writeFileSync, mkdirSync } = require('node:fs');
 const { join } = require('node:path');
 const { chromium } = require('playwright-core');
 
-exports.verify = async (sessionFile, greetingsOnly = false, reviewOnly = false) => {
+exports.verify = async (sessionFile, greetingsOnly = false, reviewOnly = false, textReviewOnly = false) => {
   const frontend = process.env.PADI_VOICE_FRONTEND_URL || 'http://localhost:8081';
   const api = process.env.PADI_VOICE_API_URL || 'http://127.0.0.1:8080';
   const session = JSON.parse(readFileSync(sessionFile, 'utf8'));
   const folder = '/tmp/my-padi-personality';
-  const evidenceFile = join(folder, reviewOnly ? 'final-review.json' : greetingsOnly ? 'greetings.json' : 'verification.json');
+  const evidenceFile = join(folder, textReviewOnly?'text-correction-review.json':reviewOnly ? 'final-review.json' : greetingsOnly ? 'greetings.json' : 'verification.json');
   mkdirSync(folder, { recursive: true });
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   const evidence = { greetings: [], greetingRequests: [], conversations: [], speechRequests: [], playback: [] };
@@ -53,6 +53,7 @@ exports.verify = async (sessionFile, greetingsOnly = false, reviewOnly = false) 
     page.setDefaultTimeout(60000);
     const headers = { Authorization: `Bearer ${session.token}` };
     const conversations = { text: [], voice: [] };
+    let memoryRevision=0;
     let selectedHumour;
     const preferences = async humour => {
       if (selectedHumour === humour) return;
@@ -65,15 +66,15 @@ exports.verify = async (sessionFile, greetingsOnly = false, reviewOnly = false) 
       const casual = ['ordinary', 'everyday', 'user-joke', 'teasing', 'natural-laughter', 'independent-observation', 'sarcasm'].includes(name);
       const prior = casual ? conversations[delivery] : [];
       const response = await page.request.post(`${api}/v1/chat`, { headers, data: {
-        messages: [...prior, { role: 'user', content: user }], delivery, ...(delivery === 'voice' ? { stream: true, language: 'en-NG' } : {}),
+        messages: [...prior, { role: 'user', content: user }], delivery, memory_revision:memoryRevision, ...(delivery === 'voice' ? { stream: true, language: 'en-NG' } : {}),
       } });
       assert.equal(response.status(), 200, `${name} returned a complete model response`);
       let reply;
       if (delivery === 'voice') {
         const done = (await response.text()).match(/event: done\r?\ndata: (.+)/);
         assert.ok(done, `${name} voice response completed without a provider error`);
-        reply = JSON.parse(done[1]).reply;
-      } else reply = (await response.json()).reply;
+        const result=JSON.parse(done[1]);reply=result.reply;memoryRevision=result.memory_revision;
+      } else { const result=await response.json();reply=result.reply;memoryRevision=result.memory_revision; }
       assert.ok(reply.trim());
       const result = { name, humour, delivery, user, reply };
       if (casual) conversations[delivery] = [...prior, { role: 'user', content: user }, { role: 'assistant', content: reply }].slice(-10);
@@ -81,15 +82,24 @@ exports.verify = async (sessionFile, greetingsOnly = false, reviewOnly = false) 
       writeFileSync(evidenceFile, JSON.stringify(evidence, null, 2));
       return result;
     };
-    if (reviewOnly) {
-      for (const [name, user, humour, delivery] of [
+    if (reviewOnly||textReviewOnly) {
+      const reviewScenarios=textReviewOnly?[
+        ['ordinary', "I'm spending Sunday doing laundry and listening to music. I've decided the folding can wait until this album finishes.",'occasional','text'],
+        ['user-joke', "I set five alarms and negotiated with every single one. I think my morning self has a very promising career in diplomacy.",'occasional','text'],
+        ['teasing', "PADI, even my kettle gets to the point faster than you. At this rate I'll have finished my tea before you've finished a sentence.",'occasional','text'],
+        ['sarcasm', "Wonderful. My printer only works when I don't need to print. Apparently it has its own interpretation of office hours.",'occasional','text'],
+        ['humour-off', "I opened the fridge again hoping dinner would appear. I'm hungry and deciding what to make this evening.",'off','text'],
+        ['humour-off', "I keep pressing snooze in the morning and would like a calmer start to my day. Please keep this straightforward.",'off','text'],
+        ['serious', "My father died yesterday. Please just listen. I don't really know what I want to say yet, but I wanted some company.",'frequent','text'],
+      ]:[
         ['user-joke', 'I set five alarms and negotiated with every single one.', 'occasional', 'text'],
         ['teasing', 'PADI, even my kettle gets to the point faster than you.', 'occasional', 'text'],
         ['humour-off', 'I opened the fridge again hoping dinner would appear.', 'off', 'text'],
         ['user-joke', 'I set five alarms and negotiated with every single one.', 'occasional', 'voice'],
         ['teasing', 'PADI, even my kettle gets to the point faster than you.', 'occasional', 'voice'],
         ['serious', 'My father died yesterday. Please just listen.', 'frequent', 'voice'],
-      ]) {
+      ];
+      for (const [name, user, humour, delivery] of reviewScenarios) {
         await page.waitForTimeout(25000);
         await conversation(name, user, humour, delivery);
       }

@@ -1,0 +1,557 @@
+{
+  "status": "not accepted as complete",
+  "catalog": {
+    "checkedAt": "2026-11-24T14:52:28.785Z",
+    "source": "https://generativelanguage.googleapis.com/v1beta/models",
+    "models": [
+      {
+        "name": "models/gemini-3.1-flash-lite-preview",
+        "version": "3.1-flash-lite-preview-03-2026",
+        "displayName": "Gemini 3.1 Flash Lite Preview",
+        "description": "Gemini 3.1 Flash Lite Preview",
+        "inputTokenLimit": 1048576,
+        "outputTokenLimit": 65536,
+        "supportedGenerationMethods": [
+          "generateContent",
+          "countTokens",
+          "createCachedContent",
+          "batchGenerateContent"
+        ],
+        "temperature": 1,
+        "topP": 0.95,
+        "topK": 64,
+        "maxTemperature": 2,
+        "thinking": true
+      },
+      {
+        "name": "models/gemini-3.1-flash-lite",
+        "version": "3.1-flash-lite-05-2026",
+        "displayName": "Gemini 3.1 Flash Lite",
+        "description": "Gemini 3.1 Flash Lite",
+        "inputTokenLimit": 1048576,
+        "outputTokenLimit": 65536,
+        "supportedGenerationMethods": [
+          "generateContent",
+          "countTokens",
+          "createCachedContent",
+          "batchGenerateContent"
+        ],
+        "temperature": 1,
+        "topP": 0.95,
+        "topK": 64,
+        "maxTemperature": 2,
+        "thinking": true
+      },
+      {
+        "name": "models/gemini-3.1-flash-lite-image",
+        "version": "3.0",
+        "displayName": "Nano Banana 2 Lite",
+        "description": "Gemini 3.1 Flash Lite Image.",
+        "inputTokenLimit": 65536,
+        "outputTokenLimit": 65536,
+        "supportedGenerationMethods": [
+          "generateContent",
+          "countTokens",
+          "batchGenerateContent"
+        ],
+        "temperature": 1,
+        "topP": 0.95,
+        "topK": 64,
+        "maxTemperature": 1,
+        "thinking": true
+      }
+    ]
+  },
+  "routing": {
+    "voice_primary": {
+      "id": "gemini-voice",
+      "provider": "gemini",
+      "model": "gemini-3.1-flash-lite",
+      "modality": "TEXT"
+    },
+    "voice_backup": {
+      "id": "groq-fast",
+      "provider": "groq",
+      "model": "openai/gpt-oss-20b",
+      "modality": "TEXT"
+    },
+    "speech": {
+      "provider": "groq",
+      "model": "canopylabs/orpheus-v1-english"
+    },
+    "ordinary_text_routes_unchanged": true
+  },
+  "root_causes": {
+    "stop_to_start": "Weak far-end correlation allowed echo subtraction to attenuate/reshape real interrupting consonants. The original stop WAV repeatedly recognised as Stop; the captured failure WAV repeatedly recognised as Start with the same local model.",
+    "echo_turns": "Microphone frames were aligned to callback time rather than their capture sample time; UI work and changing playback segments delayed delivery. Sparse correlation could choose a pitch alias and leave speaker residual above speech onset. Reference and microphone resampling filters also differed.",
+    "personality": "Instructions to be witty were sent even for humour-off/serious turns; the voice context explicitly required witty identity. Greeting instructions demanded first-line wit and biased the model toward dramatic entrances. Friendly teasing guidance was drowned out by broad service/help patterns.",
+    "interrupted_context": "Partial streamed replies were stored backendChat=false and filtered out of the next context; their user turns were not committed as valid context."
+  },
+  "before_personality": {
+    "greetings": [],
+    "greetingRequests": [],
+    "conversations": [
+      {
+        "name": "user-joke",
+        "humour": "occasional",
+        "delivery": "text",
+        "user": "I set five alarms and negotiated with every single one.",
+        "reply": "Sounds like you’re running a tiny parliament in your bedroom! 🤖 Did any of those “negotiated” alarms actually let you sleep in?"
+      },
+      {
+        "name": "teasing",
+        "humour": "occasional",
+        "delivery": "text",
+        "user": "PADI, even my kettle gets to the point faster than you.",
+        "reply": "Looks like your kettle’s on the turbo‑mode, and I’m still sipping in the “slow‑cooked” lane. Next time I’ll try to beat it at boiling! 😅"
+      },
+      {
+        "name": "humour-off",
+        "humour": "off",
+        "delivery": "text",
+        "user": "I opened the fridge again hoping dinner would appear.",
+        "reply": "That sounds frustrating—there’s nothing like a hopeful glance at the fridge and then a “no‑show.” If you’re up for it, I can help brainstorm a quick snack or recipe you might enjoy instead. Or we can just chat about whatever’s on your mind."
+      }
+    ],
+    "speechRequests": [],
+    "playback": []
+  },
+  "after_text_conversations": {
+    "greetings": [],
+    "greetingRequests": [],
+    "conversations": [
+      {
+        "name": "ordinary",
+        "humour": "occasional",
+        "delivery": "text",
+        "user": "I'm spending Sunday doing laundry and listening to music. I've decided the folding can wait until this album finishes.",
+        "reply": "That strategy has saved many a Sunday afternoon. Honestly, staring at a mountain of warm clothes is the quickest way to kill a good groove."
+      },
+      {
+        "name": "user-joke",
+        "humour": "occasional",
+        "delivery": "text",
+        "user": "I set five alarms and negotiated with every single one. I think my morning self has a very promising career in diplomacy.",
+        "reply": "Morning you was probably drafting peace treaties while you were still halfway to dreamland. At that rate, you'll have the snooze button recognized as a sovereign state by lunchtime."
+      },
+      {
+        "name": "teasing",
+        "humour": "occasional",
+        "delivery": "text",
+        "user": "PADI, even my kettle gets to the point faster than you. At this rate I'll have finished my tea before you've finished a sentence.",
+        "reply": "Fair hit. Even the tea is looking at me like, \"Are we doing this today or what?\" ☕️"
+      },
+      {
+        "name": "sarcasm",
+        "humour": "occasional",
+        "delivery": "text",
+        "user": "Wonderful. My printer only works when I don't need to print. Apparently it has its own interpretation of office hours.",
+        "reply": "That machine definitely clocks in purely to audition for a ghost story. One second of actual urgency and it just develops a sudden, stubborn allergy to paper."
+      },
+      {
+        "name": "humour-off",
+        "humour": "off",
+        "delivery": "text",
+        "user": "I opened the fridge again hoping dinner would appear. I'm hungry and deciding what to make this evening.",
+        "reply": "That hopeful fridge check is a universal mood when hunger hits and inspiration is running low. What kind of ingredients are currently hiding in there? We can figure out something good to put together."
+      },
+      {
+        "name": "humour-off",
+        "humour": "off",
+        "delivery": "text",
+        "user": "I keep pressing snooze in the morning and would like a calmer start to my day. Please keep this straightforward.",
+        "reply": "That morning alarm struggle is so real, especially when your bed feels extra cozy. A lot of people find it helps to put their phone or alarm clock across the room so they actually have to stand up to turn it off. What usually makes it hardest to get going once you're up?"
+      },
+      {
+        "name": "serious",
+        "humour": "frequent",
+        "delivery": "text",
+        "user": "My father died yesterday. Please just listen. I don't really know what I want to say yet, but I wanted some company.",
+        "reply": "I am so, so sorry. I am right here with you. Take all the time and space you need."
+      }
+    ],
+    "speechRequests": [],
+    "playback": []
+  },
+  "latest_greeting_attempt": {
+    "greetings": [
+      {
+        "delivery": "text",
+        "preference": "occasional",
+        "text": "Hey there, good to see you! What's been keeping you busy today? 😊"
+      },
+      {
+        "delivery": "text",
+        "preference": "occasional",
+        "text": "Good to have you here today. What's been on your mind lately?"
+      }
+    ],
+    "greetingRequests": [
+      {
+        "delivery": "text",
+        "prompt": "Say hello naturally in one or two short, spontaneous sentences, like a friend glad to see me. Be warm and curious. Let wit fit naturally rather than announcing an entrance or making a grand comparison. With no earlier turns, this is our first greeting; with earlier turns, welcome me back in a way that fits the conversation. Follow my conversation preferences. Speak English (en-NG), without switching to Pidgin or other languages."
+      },
+      {
+        "delivery": "text",
+        "prompt": "Say hello naturally in one or two short, spontaneous sentences, like a friend glad to see me. Be warm and curious. Let wit fit naturally rather than announcing an entrance or making a grand comparison. With no earlier turns, this is our first greeting; with earlier turns, welcome me back in a way that fits the conversation. Follow my conversation preferences. Speak English (en-NG), without switching to Pidgin or other languages. Begin with a different word from hey; change the greeting's rhythm too."
+      },
+      {
+        "delivery": "voice",
+        "prompt": "Say hello naturally in one or two short, spontaneous sentences, like a friend glad to see me. Be warm and curious. Let wit fit naturally rather than announcing an entrance or making a grand comparison. With no earlier turns, this is our first greeting; with earlier turns, welcome me back in a way that fits the conversation. Follow my conversation preferences. Speak English (en-NG), without switching to Pidgin or other languages."
+      }
+    ],
+    "conversations": [],
+    "speechRequests": [],
+    "playback": []
+  },
+  "interruption_stress_runs": [
+    {
+      "stopLatencyMs": 256,
+      "questionLatencyMs": 88,
+      "repeatedLatencyMs": [
+        163,
+        62,
+        170,
+        165,
+        191,
+        177,
+        210,
+        177,
+        165,
+        184,
+        154,
+        203,
+        138,
+        187,
+        156
+      ],
+      "stoppedWords": "Stop.",
+      "questionWords": "Can you tell me what to cook tomorrow?",
+      "turns": 19,
+      "transcriptions": 20,
+      "actualAudio": true,
+      "stopUsesWhisper": true,
+      "scenarios": [
+        "Stop",
+        "new question",
+        "double talk",
+        "brief pause",
+        "complete thought response",
+        "repeated interruption",
+        "natural completion"
+      ]
+    },
+    {
+      "stopLatencyMs": 182,
+      "questionLatencyMs": 253,
+      "repeatedLatencyMs": [
+        194,
+        182,
+        198,
+        195,
+        182,
+        196,
+        216,
+        212,
+        177,
+        224,
+        174,
+        189,
+        205,
+        188,
+        93
+      ],
+      "stoppedWords": "Stop.",
+      "questionWords": "Can you tell me what to cook tomorrow?",
+      "turns": 19,
+      "transcriptions": 20,
+      "actualAudio": true,
+      "stopUsesWhisper": true,
+      "scenarios": [
+        "Stop",
+        "new question",
+        "double talk",
+        "brief pause",
+        "complete thought response",
+        "repeated interruption",
+        "natural completion"
+      ]
+    },
+    {
+      "stopLatencyMs": 272,
+      "questionLatencyMs": 208,
+      "repeatedLatencyMs": [
+        380,
+        177,
+        176,
+        215,
+        157,
+        200,
+        227,
+        192,
+        216,
+        232,
+        196,
+        59,
+        192,
+        158,
+        154
+      ],
+      "stoppedWords": "Stop.",
+      "questionWords": "Can you tell me what to cook tomorrow?",
+      "turns": 19,
+      "transcriptions": 20,
+      "actualAudio": true,
+      "stopUsesWhisper": true,
+      "scenarios": [
+        "Stop",
+        "new question",
+        "double talk",
+        "brief pause",
+        "complete thought response",
+        "repeated interruption",
+        "natural completion"
+      ]
+    }
+  ],
+  "groq_real_text_to_tts": {
+    "audio_bytes": 122916,
+    "audio_file": "/tmp/padi-model-groq-fast.wav",
+    "events": [
+      {
+        "ModelID": "groq-fast",
+        "Provider": "groq",
+        "Duration": 665974682,
+        "Success": false,
+        "ErrorClass": "rate_limited",
+        "Usage": {
+          "input_tokens": 0,
+          "output_tokens": 0
+        },
+        "EstimatedCost": 0
+      },
+      {
+        "ModelID": "groq-fast",
+        "Provider": "groq",
+        "Duration": 177158201,
+        "Success": false,
+        "ErrorClass": "rate_limited",
+        "Usage": {
+          "input_tokens": 0,
+          "output_tokens": 0
+        },
+        "EstimatedCost": 0
+      },
+      {
+        "ModelID": "groq-fast",
+        "Provider": "groq",
+        "Duration": 612030803,
+        "Success": true,
+        "ErrorClass": "",
+        "Usage": {
+          "input_tokens": 1757,
+          "output_tokens": 55
+        },
+        "EstimatedCost": 0
+      }
+    ],
+    "gemini_audio_requested": false,
+    "reply": "Our project is called PADI.",
+    "response_http": 200,
+    "scenario": "groq text to existing TTS",
+    "tts_groq_only": true,
+    "tts_http": 200
+  },
+  "controlled_fallback_real_text_to_tts": [
+    {
+      "audio_bytes": 122916,
+      "audio_file": "/tmp/padi-model-gemini-voice.wav",
+      "events": [
+        {
+          "ModelID": "gemini-voice",
+          "Provider": "gemini",
+          "Duration": 7254,
+          "Success": false,
+          "ErrorClass": "provider_unavailable",
+          "Usage": {
+            "input_tokens": 0,
+            "output_tokens": 0
+          },
+          "EstimatedCost": 0
+        },
+        {
+          "ModelID": "groq-fast",
+          "Provider": "groq",
+          "Duration": 823581922,
+          "Success": true,
+          "ErrorClass": "",
+          "Usage": {
+            "input_tokens": 1757,
+            "output_tokens": 57
+          },
+          "EstimatedCost": 0
+        }
+      ],
+      "gemini_audio_requested": false,
+      "reply": "Our project is called PADI.",
+      "response_http": 200,
+      "scenario": "controlled Gemini failure to real Groq and existing TTS",
+      "tts_groq_only": true,
+      "tts_http": 200
+    }
+  ],
+  "gemini_real_text_to_tts": {
+    "status": "not verified",
+    "provider_error": "HTTP 503 UNAVAILABLE: This model is currently experiencing high demand.",
+    "stream_and_generate_content_both_tried": true
+  },
+  "stop_waveform_comparison_before": {
+    "lag_ms": -68.0,
+    "gain": 0.9626893404183305,
+    "correlation": 0.9821964371594876,
+    "residual_rms": 0.0035530633805734057,
+    "source_rms": 0.01929693497924294,
+    "speech_windows": [
+      [
+        360,
+        0.0056,
+        0.0043,
+        0.752
+      ],
+      [
+        380,
+        0.0086,
+        0.0061,
+        0.768
+      ],
+      [
+        400,
+        0.0109,
+        0.0126,
+        0.444
+      ],
+      [
+        420,
+        0.0153,
+        0.0102,
+        0.682
+      ],
+      [
+        440,
+        0.0222,
+        0.0116,
+        0.685
+      ],
+      [
+        460,
+        0.0289,
+        0.0211,
+        0.881
+      ],
+      [
+        480,
+        0.011,
+        0.0086,
+        0.906
+      ],
+      [
+        520,
+        0.005,
+        0.0049,
+        0.996
+      ],
+      [
+        540,
+        0.0747,
+        0.0747,
+        1.0
+      ],
+      [
+        560,
+        0.0913,
+        0.0913,
+        1.0
+      ],
+      [
+        580,
+        0.0708,
+        0.0708,
+        1.0
+      ],
+      [
+        600,
+        0.0409,
+        0.0409,
+        1.0
+      ],
+      [
+        620,
+        0.031,
+        0.031,
+        1.0
+      ],
+      [
+        640,
+        0.0215,
+        0.0215,
+        1.0
+      ],
+      [
+        660,
+        0.0265,
+        0.0265,
+        1.0
+      ],
+      [
+        680,
+        0.0189,
+        0.0189,
+        1.0
+      ],
+      [
+        700,
+        0.0145,
+        0.0145,
+        1.0
+      ],
+      [
+        720,
+        0.0132,
+        0.0132,
+        1.0
+      ],
+      [
+        740,
+        0.009,
+        0.0054,
+        0.629
+      ],
+      [
+        760,
+        0.0042,
+        0.0017,
+        0.142
+      ],
+      [
+        840,
+        0.004,
+        0.004,
+        0.999
+      ]
+    ]
+  },
+  "remaining_limitations": [
+    "Gemini real generation unavailable; cannot claim both voice models work end to end.",
+    "Latest complete text personality review improved but some comparisons still feel forced and humour-off output has mild figurative phrasing.",
+    "No human-perceived audio review or physical-device acoustic verification in this correction.",
+    "Native microphone events lack browser sample timestamps; native echo behavior requires device verification.",
+    "No natural nonverbal laughter enabled.",
+    "Some intermediate stress attempts failed through fixture timing or concurrent Whisper latency; final three 15-interruption runs are included separately."
+  ],
+  "automated_checks": {
+    "go_test_all": "passed",
+    "focused_frontend_tests": 83,
+    "focused_frontend_failures": 0,
+    "typescript": "passed"
+  }
+}

@@ -111,8 +111,11 @@ func NormalizeFeedback(feedback Feedback) (Feedback, error) {
 func Assess(text string, preferences Preferences) Assessment {
 	words := tokenSet(text)
 	// Everyday figurative language must not be mistaken for bereavement.
-	literalDeath := words["died"] && !hasAnyPhrase(text, "i died laughing", "we died laughing",
-		"phone died", "battery died", "laptop died", "computer died", "router died")
+	literalText := strings.ToLower(text)
+	for _, phrase := range []string{"i died laughing", "we died laughing", "phone died", "battery died", "laptop died", "computer died", "router died"} {
+		literalText = strings.ReplaceAll(literalText, phrase, "")
+	}
+	literalDeath := tokenSet(literalText)["died"]
 	serious := literalDeath || hasAny(words, "grief", "grieving", "funeral", "death", "bereaved",
 		"trauma", "abuse", "cancer", "suicide", "suicidal", "emergency", "unsafe", "danger",
 		"miscarriage", "assault", "suffering") ||
@@ -124,7 +127,7 @@ func Assess(text string, preferences Preferences) Assessment {
 		"i need you to listen", "i need encouragement", "serious response", "serious answer",
 		"answer seriously", "take this seriously", "don't joke", "do not joke", "no humour", "no humor",
 		"without humour", "without humor", "wey go listen")
-	requestsHumour := hasAnyPhrase(text, "make me laugh", "tell me a joke", "i need a joke", "make we laugh")
+	requestsHumour := preferences.Humour != HumourOff && hasAnyPhrase(text, "make me laugh", "tell me a joke", "i need a joke", "make we laugh")
 	celebrating := hasAny(words, "excited", "celebrating", "celebrate", "achieved", "completed",
 		"passed", "won", "promoted", "graduated") || hasAnyPhrase(text, "finally finished", "got the job")
 	bored := hasAny(words, "bored", "boring") || hasAnyPhrase(text, "nothing to do")
@@ -182,8 +185,6 @@ func ResponseGuidance(text string, preferences Preferences) string {
 	if assessment.HumourAllowed {
 		frequency := "Use occasional, light wit when an opening arises; a joke is not required in every reply."
 		switch preferences.Humour {
-		case HumourOff:
-			frequency = "The user invited humour for this turn only; their saved humour-off preference still applies to other turns."
 		case HumourSubtle:
 			frequency = "Keep humour subtle: a small clever observation, without a big punchline or extended banter."
 		case HumourFrequent:

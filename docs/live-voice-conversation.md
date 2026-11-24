@@ -3,7 +3,7 @@
 The voice screen contains PADI's picture, an exit control, and a switch to text.
 It has no welcome copy, status labels, transcript cards, or recording/submission
 buttons. Opening the screen waits for a picture tap. That tap requests microphone
-permission, plays a cached spoken greeting, and automatically starts listening.
+permission, streams a context-aware spoken greeting, and automatically starts listening.
 Permission denial appears as an error and does not play a greeting or start a turn.
 Browser capture uses the existing AudioWorklet and voice-activity detector.
 It keeps short 16 kHz PCM frames on
@@ -18,17 +18,30 @@ stream or independent codec fragments. The browser therefore waits for the
 voice-activity boundary (1.4 seconds of quiet, with a bounded utterance)
 before uploading that utterance. This is incremental per utterance, not
 continuous server-side transcription; recent audio remains on-device until
-that boundary. Each completed utterance goes to Groq as soon as recognition
+that boundary. Each completed utterance goes to the voice text route as soon as recognition
 finishes, including speech without sentence punctuation. Silence completes
 only the listening turn; there is no conversation inactivity timeout.
 
 ## Conversation and speech output
 
-Voice requests use the authenticated `/v1/chat` SSE mode. The backend accepts
-that mode only when the configured fast model is Groq's
-`openai/gpt-oss-20b`; it streams Groq deltas and never uses the ordinary chat
-provider or its fallback route. API credentials remain in the Go/Python
-services. Text chat continues to use the existing JSON endpoint and routing.
+Voice requests use the authenticated `/v1/chat` SSE mode. The optional
+`PADI_AI_VOICE_PRIMARY_MODEL` and `PADI_AI_VOICE_BACKUP_MODEL` select text
+generation independently of ordinary chat. The current local voice route is
+Gemini `gemini-3.1-flash-lite` → Groq `openai/gpt-oss-20b`. Google’s live model
+catalogue confirmed the stable identifier on 2026-11-24. Gemini requests
+explicitly set `responseModalities: ["TEXT"]`; neither adapter generates speech.
+Fallback occurs only before the first delta reaches the client. A partial
+stream fails and cancels playback instead of mixing answers from two models.
+With no voice-specific settings, the existing primary → fast order applies.
+API credentials remain in Go/Python. Ordinary text chat keeps its existing
+JSON endpoint, primary, fast, reasoning, and backup settings.
+
+The compatibility capability name `groq_conversation` remains in the API to
+avoid breaking clients; it now reports readiness of the configured text stream
+route. It does not select a TTS provider. The Gemini 3.1 live checks currently
+return HTTP 503/high demand, so the complete two-model architecture is not yet
+accepted as verified. Groq generation and controlled pre-delta fallback into
+Groq both produced real speech through the unchanged TTS endpoint.
 
 The client saves streamed text in shared chat and sends completed sentences
 to the existing synthesis service while later response text is still arriving.

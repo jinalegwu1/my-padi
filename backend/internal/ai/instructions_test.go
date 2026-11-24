@@ -13,7 +13,7 @@ func TestPersonalityFoundationIsSharedByTextAndVoice(t *testing.T) {
 			StyleGuidance: personality.ResponseGuidance("My fridge has food but nothing I want to eat.", personality.DefaultPreferences())}
 		got := withPADIInstructions(request)
 		for _, rule := range []string{
-			"funny best friend", "including neutral conversations", "unexpected comparisons",
+			"funny best friend", "including neutral conversations", "Unexpected comparisons",
 			"genuinely funny comments", "never attach laughter automatically", "affectionate comebacks",
 			"social intent", "sarcasm", "not a complaint requiring an apology", "one to three short sentences",
 			"Vary the wording", "age- or gender-based titles", "do not assume",
@@ -29,6 +29,16 @@ func TestPersonalityFoundationIsSharedByTextAndVoice(t *testing.T) {
 		}
 		if voice && !strings.HasSuffix(got.Messages[0].Content, "convey amusement with words instead.") {
 			t.Fatal("spoken delivery must retain explicit speech capability limits after shared style guidance")
+		}
+	}
+}
+
+func TestDisabledHumourReceivesNoCompetingJokeInstruction(t *testing.T) {
+	for _, voice := range []bool{false, true} {
+		got := withPADIInstructions(Request{Voice: voice, SuppressHumour: true, Messages: []Message{{Role: RoleUser, Content: "Dinner hasn't appeared in my fridge."}}, StyleGuidance: personality.ResponseGuidance("Dinner hasn't appeared in my fridge.", personality.Preferences{Humour: personality.HumourOff})})
+		system := got.Messages[0].Content
+		if strings.Contains(system, padiHumourInstructions) || strings.Contains(system, "witty identity") || !strings.Contains(system, "humour is disabled") {
+			t.Fatalf("conflicting humour instruction in voice=%t", voice)
 		}
 	}
 }

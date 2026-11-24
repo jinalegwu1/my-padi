@@ -9,6 +9,7 @@ const worklet = `class PadiCapture extends AudioWorkletProcessor {
     this.input = [];
     this.inputOffset = 0;
     this.outputIndex = 0;
+    this.inputStartFrame = null;
     this.firstSample = 0;
     this.kernels = new Map();
     // A Blackman-windowed sinc filter prevents high-frequency sound from
@@ -54,6 +55,7 @@ const worklet = `class PadiCapture extends AudioWorkletProcessor {
   process(inputs) {
     const channel = inputs[0]?.[0];
     if (!channel?.length) return true;
+    if (this.inputStartFrame === null) this.inputStartFrame = currentFrame;
     if (sampleRate === 16000) {
       for (let index = 0; index < channel.length; index++) this.append(channel[index], (currentFrame + index + 1) / sampleRate);
       return true;
@@ -75,7 +77,7 @@ const worklet = `class PadiCapture extends AudioWorkletProcessor {
         const sourceIndex = newest - this.radius * 2 + index;
         sample += (sourceIndex < 0 ? this.firstSample : this.input[sourceIndex - this.inputOffset]) * weights[index];
       }
-      this.append(sample, (newest + 1 - this.radius) / sampleRate);
+      this.append(sample, (this.inputStartFrame + newest + 1 - this.radius) / sampleRate);
       this.outputIndex++;
     }
     const keepFrom = Math.max(0, Math.floor(this.outputIndex * sampleRate / 16000) - this.radius * 2);

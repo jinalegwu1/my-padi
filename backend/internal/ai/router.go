@@ -115,6 +115,8 @@ func newRouter(models []ModelConfig, providers map[string]Provider, routing Rout
 		routing.FastModel,
 		routing.ReasoningModel,
 		routing.BackupModel,
+		routing.VoicePrimaryModel,
+		routing.VoiceBackupModel,
 	} {
 		if modelID != "" {
 			if _, exists := registered[modelID]; !exists {
@@ -204,43 +206,91 @@ func (router *Router) GenerateWithModel(ctx context.Context, modelID string, req
 	return router.generateWithModel(ctx, modelID, request)
 }
 
-// SupportsGroqVoiceStreaming reports whether the configured fast model is the
-// agreed Groq conversation model and has a streaming adapter.
+// SupportsGroqVoiceStreaming retains the capability name used by existing
+// clients. Conversation generation now streams either configured text model;
+// TTS remains a separate Groq-only service.
 func (router *Router) SupportsGroqVoiceStreaming() bool {
-	model, exists := router.models[router.routing.FastModel]
-	if !exists || model.Provider != ProviderGroq || model.Model != "openai/gpt-oss-20b" ||
-		(model.Endpoint != "" && model.Endpoint != "https://api.groq.com/openai/v1/chat/completions") {
+	candidates := router.voiceCandidates()
+	if len(candidates) == 0 {
 		return false
 	}
-	_, ok := router.providers[ProviderGroq].(StreamingProvider)
-	return ok
+	for _, id := range candidates {
+		model, ok := router.models[id]
+		if !ok || (model.Provider != ProviderGemini && model.Provider != ProviderGroq) {
+			return false
+		}
+		if _, ok := router.providers[model.Provider].(StreamingProvider); !ok {
+			return false
+		}
+	}
+	return true
 }
 
-// StreamVoice always uses the configured Groq fast model; it does not enter
-// normal chat routing or fall back to another provider.
+func (router *Router) voiceCandidates() []string {
+	primary, backup := router.routing.VoicePrimaryModel, router.routing.VoiceBackupModel
+	if primary == "" {
+		primary = router.routing.PrimaryModel
+	}
+	if backup == "" {
+		backup = router.routing.FastModel
+	}
+	result := []string{}
+	for _, id := range []string{primary, backup} {
+		if id != "" && !containsModel(result, id) {
+			result = append(result, id)
+		}
+	}
+	return result
+}
+
+// StreamVoice uses the voice-specific text route, preserving ordinary chat
+// routing. Fallback is safe only before any text reaches TTS; a partial answer
+// fails and is cancelled instead of appending a second model's response.
 func (router *Router) StreamVoice(ctx context.Context, request Request, onDelta func(string) error) (Response, error) {
 	if !router.SupportsGroqVoiceStreaming() {
-		return Response{}, errors.New("the configured Groq voice model is unavailable")
+		return Response{}, errors.New("voice text streaming is unavailable")
 	}
 	if err := validateRequest(request); err != nil {
 		return Response{}, err
 	}
 	request.Voice = true
 	if request.Task == "" || request.Complexity == "" {
-		inferredTask, inferredComplexity := InferTaskAndComplexity(request.Messages)
+		task, complexity := InferTaskAndComplexity(request.Messages)
 		if request.Task == "" {
-			request.Task = inferredTask
+			request.Task = task
 		}
 		if request.Complexity == "" {
-			request.Complexity = inferredComplexity
+			request.Complexity = complexity
 		}
 	}
 	request = withPADIInstructions(request)
 	if request.MaxOutputTokens == 0 {
 		request.MaxOutputTokens = defaultMaxOutputTokens
 	}
+	var lastErr error
+	for _, id := range router.voiceCandidates() {
+		delivered := false
+		result, err := router.streamWithModel(ctx, id, request, func(delta string) error {
+			if delta != "" {
+				delivered = true
+			}
+			if onDelta != nil {
+				return onDelta(delta)
+			}
+			return nil
+		})
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		if delivered || ctx.Err() != nil || (!retryable(err) && !errors.Is(err, ErrCircuitOpen) && !errors.Is(err, ErrUsageLimitReached)) {
+			return Response{}, err
+		}
+	}
+	return Response{}, lastErr
+}
 
-	modelID := router.routing.FastModel
+func (router *Router) streamWithModel(ctx context.Context, modelID string, request Request, onDelta func(string) error) (Response, error) {
 	model := router.models[modelID]
 	if router.limiter == nil {
 		return Response{}, ErrUsageLimiterUnavailable
@@ -258,14 +308,14 @@ func (router *Router) StreamVoice(ctx context.Context, request Request, onDelta 
 	}
 	modelContext, cancel := context.WithTimeout(ctx, timeout)
 	started := router.now()
-	result, err := router.providers[ProviderGroq].(StreamingProvider).Stream(modelContext, model, request, onDelta)
+	result, err := router.providers[model.Provider].(StreamingProvider).Stream(modelContext, model, request, onDelta)
 	cancel()
 	duration := router.now().Sub(started)
 	if err == nil && (result.Usage.InputTokens < 0 || result.Usage.OutputTokens < 0) {
-		err = &ProviderError{Provider: ProviderGroq, Err: ErrInvalidProviderUsage}
+		err = &ProviderError{Provider: model.Provider, Err: ErrInvalidProviderUsage}
 	}
 	if err == nil && strings.TrimSpace(result.Content) == "" {
-		err = &ProviderError{Provider: ProviderGroq, Retryable: true, Err: ErrEmptyProviderResponse}
+		err = &ProviderError{Provider: model.Provider, Retryable: true, Err: ErrEmptyProviderResponse}
 	}
 	if err != nil {
 		if !router.disableLimits {
@@ -394,10 +444,7 @@ func isFastTask(task Task) bool {
 
 func (router *Router) candidates(request Request) []string {
 	if request.Voice {
-		candidates := []string{
-			router.routing.PrimaryModel,
-			router.routing.FastModel,
-		}
+		candidates := router.voiceCandidates()
 		seen := make(map[string]bool, len(candidates))
 		unique := candidates[:0]
 		for _, modelID := range candidates {

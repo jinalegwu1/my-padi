@@ -1,0 +1,10 @@
+import {spawn} from 'node:child_process';
+import {readFileSync} from 'node:fs';
+import {dirname,join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {parseEnv} from 'node:util';
+const root=dirname(dirname(fileURLToPath(import.meta.url)));
+const env={...parseEnv(readFileSync(join(root,'backend/.env'),'utf8')),...process.env,PADI_VERIFY_VOICE_MODELS:'1'};
+const selected=process.argv.includes('--fallback-only')?'^TestVoiceTextModelsReachConfiguredSpeech$/controlled':process.argv.includes('--gemini-only')?'^TestVoiceTextModelsReachConfiguredSpeech$/gemini':process.argv.includes('--groq-only')?'^TestVoiceTextModelsReachConfiguredSpeech$/groq':'^TestVoiceTextModelsReachConfiguredSpeech$';
+const child=spawn('go',['test','-count=1','-timeout=5m','-v','-run',selected,'./internal/httpapi'],{cwd:join(root,'backend'),env,stdio:'inherit'});
+child.once('exit',code=>{process.exitCode=code??1;});

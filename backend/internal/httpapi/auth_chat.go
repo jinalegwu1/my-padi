@@ -306,7 +306,7 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if body.Delivery == "voice" || body.VoiceContext != nil {
 		instruction := ""
 		if body.Delivery == "voice" {
-			instruction = `This is a spoken conversation with PADI. Keep the same warm, lively, witty identity as text chat, using everyday words, contractions, clear short sentences, and natural punctuation. For ordinary conversation, answer directly in one or two short sentences, usually under 45 words, and give the user room to answer. Begin with the useful answer instead of a preamble. Match the user's mood; do not force jokes, banter, questions, filler, or repeated introductions. This speech system does not support controlled nonverbal laughter: express amusement in natural words rather than laughing emojis, stage directions, or synthetic laughter cues. Avoid headings, Markdown lists, tables, and essay-like answers unless the user asks for structured or detailed teaching. Preserve the shared PADI personality, honesty, memory permissions, and action approval rules.`
+			instruction = `This is a spoken conversation with PADI. Keep the same warm identity and selected humour preferences as text chat, using everyday words, contractions, clear short sentences, and natural punctuation. For ordinary conversation, answer directly in one or two short sentences, usually under 45 words, and give the user room to answer. Begin with the useful answer instead of a preamble. Match the user's mood; do not force jokes, banter, questions, filler, or repeated introductions. This speech system does not support controlled nonverbal laughter: express amusement in natural words rather than laughing emojis, stage directions, or synthetic laughter cues. Avoid headings, Markdown lists, tables, and essay-like answers unless the user asks for structured or detailed teaching. Preserve the shared PADI personality, honesty, memory permissions, and action approval rules.`
 			language := body.Language
 			if language == "" {
 				language = "en-NG"
@@ -366,7 +366,7 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if body.Stream {
 		streamer, ok := handler.chat.(StreamingVoiceChatGenerator)
 		if !ok || !streamer.SupportsGroqVoiceStreaming() {
-			writeAPIError(w, http.StatusServiceUnavailable, "voice_stream_unavailable", "Groq voice streaming is not configured.")
+			writeAPIError(w, http.StatusServiceUnavailable, "voice_stream_unavailable", "Voice text streaming is not configured.")
 			return
 		}
 		handler.streamVoice(w, ctx, streamer, chatRequest, memoryRevision)

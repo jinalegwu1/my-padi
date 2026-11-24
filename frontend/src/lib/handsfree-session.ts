@@ -155,8 +155,16 @@ export class HandsfreeSession {
               this.wakeActivated=false;
             },20_000);
           }
-          if(/^(?:please\s+)?stop(?:\s+please)?[.!?]*$/i.test(recognised)){
+          if(/^(?:please\s+)?stop(?:\s+(?:talking|speaking))?(?:\s+please)?[.!?]*$/i.test(recognised)){
             this.pending='';this.change({userText:recognised,error:null});continue;
+          }
+          if(/^(?:please\s+)?(?:end(?: (?:the )?(?:call|conversation|voice(?: mode)?))?|hang up|stop listening)(?:\s+please)?[.!?]*$/i.test(recognised)) {
+            this.pending='';await this.cancel();return;
+          }
+          if(/^(?:please\s+)?start(?:\s+please)?[.!?]*$/i.test(recognised)) {
+            // A one-word acoustic near-neighbour is not permission to start
+            // playback. Keep listening; never silently turn Start into Stop.
+            this.pending='';this.change({userText:recognised,phase:'listening',error:'Please say what you would like to start.'});continue;
           }
           if(recognised)this.pending=[this.pending,recognised].filter(Boolean).join('\n');
           this.change({userText:this.pending,error:null});

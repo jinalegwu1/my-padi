@@ -38,3 +38,24 @@ test('speaker-only PCM cannot start a turn, while speech over it triggers onset'
   for(let i=0;i<4;i++){activity.feed(f.suppressPlaybackEcho(f.frame(true)));f.advance(.05);}
   assert.equal(began,1);f.stop();
 });
+
+test('a weak far-end match cannot rewrite the consonants of an interruption',()=>{
+  const f=fixture();
+  const data=new ArrayBuffer(1600),view=new DataView(data);
+  const base=new DataView(f.frame().data);
+  for(let i=0;i<800;i++)view.setInt16(i*2,Math.round(base.getInt16(i*2,true)*.25+9000*Math.sin(i*2*Math.PI*230/16000)),true);
+  const original=new Uint8Array(data).slice();
+  const result=f.suppressPlaybackEcho({data,sampleRate:16000,channels:1});
+  assert.deepEqual(new Uint8Array(result.data),original,'Uncertain correlation must leave genuine speech samples untouched');
+  f.stop();
+});
+
+test('late worklet delivery aligns echo to capture time rather than callback time',()=>{
+  const f=fixture();
+  const frame=f.frame();
+  const capturedAt=performance.now()/1000;
+  f.advance(.85);
+  const output=f.suppressPlaybackEcho({...frame,capturedAt:capturedAt-.85});
+  assert.equal(output.voiceLevel,-140,'Queued microphone frames still match the original played samples');
+  f.stop();
+});

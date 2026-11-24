@@ -17,7 +17,7 @@ async function fixture() {
     APIError: class extends Error {},
     sendChat: async (...args) => { calls.push(args); return backend(...args); },
     streamVoiceChat: async (token, messages, memoryRevision, signal, onText, voiceContext, languageCode, greeting) => {
-      const request = backend(token, messages, memoryRevision, signal, 'voice', voiceContext, languageCode);
+      const request = backend(token, messages, memoryRevision, signal, 'voice', voiceContext, languageCode,onText);
       calls.push([token, messages, memoryRevision, signal, 'voice', voiceContext, languageCode, greeting]);
       return new Promise((resolve, reject) => {
         const abort = () => reject(Object.assign(new Error('Cancelled'), { name: 'AbortError' }));
@@ -150,6 +150,30 @@ test('voice turns preserve the explicitly selected language through shared chat'
     assert.equal(f.calls.at(-1)[4],'voice');
     assert.equal(f.calls.at(-1)[6],'en-GB');
   }finally{await f.close();}
+});
+
+test('interrupting a partial stream preserves the user turn, spoken prefix and valid memory boundary',async()=>{
+  const f=await fixture();const held=deferred();let sending;
+  try {
+    await act(async()=>{await f.text.send('My project is PADI.','a');});
+    f.backend(async(_token,_messages,_revision,_signal,_delivery,_voiceContext,_language,onText)=>{
+      onText?.('Your project is PADI. We can discuss ');
+      return held.promise;
+    });
+    const controller=new AbortController();
+    await act(async()=>{sending=f.voice.sendVoice('Tell me about our project.','a',controller.signal);});
+    const partial=f.voice.messages.at(-1);
+    await act(async()=>{f.voice.delivered(partial.id,'Your project is PADI.',true,'a');controller.abort();await sending;});
+    assert.equal(f.text.messages.at(-1).backendChat,true);
+    assert.equal(f.text.messages.at(-1).memoryRevision,7);
+    f.backend(async()=>({reply:'We can discuss the next step.',memory_revision:7}));
+    await act(async()=>{await f.voice.sendVoice('Continue.','a',new AbortController().signal);});
+    const request=f.calls.at(-1);
+    assert.ok(request[1].some(message=>message.content==='Tell me about our project.'));
+    assert.deepEqual(request[5],{interrupted_reply:'Your project is PADI. We can discuss ',spoken_prefix:'Your project is PADI.'});
+    held.resolve({reply:'Stale old continuation.',memory_revision:7});
+    assert.equal(f.text.messages.at(-1).text,'We can discuss the next step.');
+  }finally{held.resolve({reply:'Discarded.',memory_revision:7});await f.close();}
 });
 
 test('text sends expose the exact committed reply for the speech integration', async () => {

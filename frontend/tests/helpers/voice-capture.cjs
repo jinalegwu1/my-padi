@@ -53,7 +53,7 @@ exports.captureHarness = (options = {}) => {
       let Processor;
       const port = this.port;
       this.globals = {
-        currentFrame: 0,
+        currentFrame: options.startFrame ?? 0,
         sampleRate: context.sampleRate, ArrayBuffer, DataView, Float64Array,
         AudioWorkletProcessor: class { constructor() { this.port = { postMessage: data => port.onmessage?.({ data }) }; } },
         registerProcessor: (_name, implementation) => { Processor = implementation; },

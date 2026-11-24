@@ -106,6 +106,14 @@ running and database-ready when required, the launcher reuses it. Restart that
 backend to apply backend `.env` changes. Ctrl+C stops the processes started by
 the launcher.
 
+The launcher also reuses Expo when the configured port already serves this
+checkout, and verifies that a reused API accepts that browser origin. Open the
+printed frontend URL. If Expo offers to move from `8081` to `8082`, cancel and
+use the existing `http://localhost:8081` instance: the API may only allow the
+configured port. To deliberately change ports, set `PADI_FRONTEND_PORT` in
+`backend/.env` and restart the backend through `npm run dev` so its CORS origins
+match. Another project's server is never reused or stopped automatically.
+
 | Service | Local address | Configuration |
 | --- | --- | --- |
 | Go API | `http://127.0.0.1:8080` | `PADI_HTTP_ADDR='0.0.0.0:8080'` in `backend/.env` |

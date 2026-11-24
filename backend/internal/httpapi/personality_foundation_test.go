@@ -46,10 +46,13 @@ func TestTextAndVoiceRequestsSharePreferenceAndEmotionalGuidance(t *testing.T) {
 				if generator.request.Voice != (delivery == "voice") {
 					t.Fatal("personality changed delivery routing")
 				}
+				if generator.request.SuppressHumour != !personality.Assess(test.user, preferences).HumourAllowed {
+					t.Fatal("request lost the no-humour boundary")
+				}
 				if delivery == "voice" {
 					found := false
 					for _, message := range generator.request.Messages {
-						if message.Role == ai.RoleSystem && strings.Contains(message.Content, "same warm, lively, witty identity") && strings.Contains(message.Content, "does not support controlled nonverbal laughter") {
+						if message.Role == ai.RoleSystem && strings.Contains(message.Content, "same warm identity and selected humour preferences") && strings.Contains(message.Content, "does not support controlled nonverbal laughter") {
 							found = true
 						}
 					}
