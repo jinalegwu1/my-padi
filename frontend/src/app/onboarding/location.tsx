@@ -9,7 +9,6 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { fonts, spacing, useColors, useType } from '@/constants/theme';
 import { usePreferences } from '@/hooks/use-preferences';
-import { useChat } from '@/hooks/use-chat';
 import { useTranslation } from '@/hooks/use-translation';
 import { speakPadiReply, stopPadiSpeech } from '@/lib/speech';
 import {
@@ -25,7 +24,6 @@ export default function LocationStep() {
   const colors = useColors();
   const type = useType();
   const { preferences, update } = usePreferences();
-  const { addGreeting } = useChat();
   const { t } = useTranslation();
   const [loading, setLoading] = useState(preferences.onboarded);
   const [permissionBlocked, setPermissionBlocked] = useState(false);
@@ -69,7 +67,6 @@ export default function LocationStep() {
         countryCode: detectedCountryCode ?? preferences.countryCode,
         onboarded: true,
       });
-      addGreeting(buildChatWelcome(preferences.displayName, preferences.languageCode));
       setGreeting(text);
       setSpeechError('');
       setError('');
@@ -80,7 +77,7 @@ export default function LocationStep() {
       }
       speakGreeting(text);
     },
-    [addGreeting, preferences.countryCode, speakGreeting, update],
+    [preferences.countryCode, speakGreeting, update],
   );
 
   const loadLocalGreeting = useCallback(
@@ -348,17 +345,6 @@ function buildWeatherUnavailableGreeting(
     return `Bonjour${name ? `, ${name}` : ''} ! Je suis PADI. Je ne peux pas consulter la météo actuelle à ${location} pour le moment, mais je suis là. De quoi aimeriez-vous parler ?`;
   }
   return `Hello${name ? `, ${name}` : ''}! I’m PADI. I could not get the current weather for ${location}, but I’m here and ready to talk.`;
-}
-
-function buildChatWelcome(displayName: string, languageCode: string): string {
-  const name = displayName.trim();
-  if (languageCode === 'pcm-NG') {
-    return `Hello${name ? `, ${name}` : ''}! Na me be PADI. Wetin you wan gist about today?`;
-  }
-  if (languageCode === 'fr-FR') {
-    return `Bonjour${name ? `, ${name}` : ''} ! Je suis PADI. De quoi aimeriez-vous parler aujourd’hui ?`;
-  }
-  return `Hello${name ? `, ${name}` : ''}! I’m PADI. What would you like to talk about today?`;
 }
 
 const styles = StyleSheet.create({

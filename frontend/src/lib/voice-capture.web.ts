@@ -1,4 +1,4 @@
-export type PCMFrame = { data: ArrayBuffer; sampleRate: number; channels: number };
+export type PCMFrame = { data: ArrayBuffer; sampleRate: number; channels: number; capturedAt?:number };
 
 // AudioWorklet captures 16 kHz PCM off the UI thread for local voice detection
 // and metering. The recording path compresses the microphone stream separately.
@@ -38,7 +38,7 @@ const worklet = `class PadiCapture extends AudioWorkletProcessor {
     return weights;
   }
 
-  append(sample) {
+  append(sample, endTime) {
     this.samples.push(sample);
     if (this.samples.length === 800) {
       const data = new ArrayBuffer(1600);
@@ -46,7 +46,7 @@ const worklet = `class PadiCapture extends AudioWorkletProcessor {
       for (let index = 0; index < this.samples.length; index++) {
         pcm.setInt16(index * 2, Math.max(-32768, Math.min(32767, Math.round(this.samples[index] * 32767))), true);
       }
-      this.port.postMessage({ data, sampleRate: 16000, channels: 1 }, [data]);
+      this.port.postMessage({ data, sampleRate: 16000, channels: 1, endTime }, [data]);
       this.samples = [];
     }
   }
@@ -55,7 +55,7 @@ const worklet = `class PadiCapture extends AudioWorkletProcessor {
     const channel = inputs[0]?.[0];
     if (!channel?.length) return true;
     if (sampleRate === 16000) {
-      for (const sample of channel) this.append(sample);
+      for (let index = 0; index < channel.length; index++) this.append(channel[index], (currentFrame + index + 1) / sampleRate);
       return true;
     }
     if (this.inputOffset === 0 && this.input.length === 0) this.firstSample = channel[0];
@@ -75,7 +75,7 @@ const worklet = `class PadiCapture extends AudioWorkletProcessor {
         const sourceIndex = newest - this.radius * 2 + index;
         sample += (sourceIndex < 0 ? this.firstSample : this.input[sourceIndex - this.inputOffset]) * weights[index];
       }
-      this.append(sample);
+      this.append(sample, (newest + 1 - this.radius) / sampleRate);
       this.outputIndex++;
     }
     const keepFrom = Math.max(0, Math.floor(this.outputIndex * sampleRate / 16000) - this.radius * 2);
@@ -107,8 +107,10 @@ export class VoiceCapture {
     this.detachAbort = () => signal.removeEventListener('abort', abort);
     // Resume directly from the start-button gesture, before awaiting permission.
     if (!navigator.mediaDevices?.getUserMedia || typeof AudioWorkletNode === 'undefined') return Promise.reject(new Error('Hands-free voice requires a supported browser on localhost or HTTPS.'));
-    try { this.context = new AudioContext({ sampleRate: 16000 }); }
-    catch { this.context = new AudioContext(); }
+    // Use the device's audio clock for full-duplex capture/playback. Asking
+    // for a separate 16 kHz engine can desynchronise MediaStream input from
+    // speaker playback. The worklet still exports mono 16 kHz PCM.
+    this.context = new AudioContext({ latencyHint: 'interactive' });
     void this.context.resume().catch(() => undefined);
     this.starting = this.prepare(signal);
     return this.starting;
@@ -137,7 +139,14 @@ export class VoiceCapture {
       URL.revokeObjectURL(this.url); this.url = null;
       if (signal.aborted || this.stopped) { this.release(); return; }
       this.node = new AudioWorkletNode(context, 'padi-capture', { channelCount: 1, channelCountMode: 'explicit', outputChannelCount: [1] });
-      this.node.port.onmessage = event => { if (!signal.aborted && !this.stopped) this.onFrame(event.data); };
+      this.node.port.onmessage = event => {
+        if (signal.aborted || this.stopped) return;
+        const {endTime, ...frame} = event.data;
+        // Echo alignment follows the captured sample, even when JavaScript is
+        // busy decoding/preparing TTS and worklet messages arrive late.
+        const age = Number.isFinite(endTime) ? Math.max(0, context.currentTime - endTime) : 0;
+        this.onFrame({...frame, capturedAt: performance.now()/1000 - age});
+      };
       this.source = source;
       source.connect(this.node);
       // The worklet writes silence to its output, allowing processing to run

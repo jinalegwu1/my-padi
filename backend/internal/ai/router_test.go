@@ -254,6 +254,27 @@ func TestRouterVoiceUsesOnlyGeminiThenGroqFallback(t *testing.T) {
 	}
 }
 
+func TestRouterGroqVoiceStreamingRequiresAgreedFastModel(t *testing.T) {
+	router := testRouter(t, []ModelConfig{
+		{ID: "gemini-main", Provider: ProviderGemini, Model: "gemini-model"},
+		{ID: "groq-fast", Provider: ProviderGroq, Model: "openai/gpt-oss-20b"},
+	}, map[string]Provider{ProviderGemini: &fakeProvider{}, ProviderGroq: groqProvider{}},
+		RoutingConfig{PrimaryModel: "gemini-main", FastModel: "groq-fast"}, nil)
+	if !router.SupportsGroqVoiceStreaming() {
+		t.Fatal("configured Groq fast model should enable voice streaming")
+	}
+
+	request := Request{Messages: []Message{{Role: RoleUser, Content: "Hello"}}, Voice: true}
+	if _, err := router.StreamVoice(context.Background(), request, nil); err == nil {
+		t.Fatal("streaming without a configured Groq credential unexpectedly succeeded")
+	}
+
+	router.routing.FastModel = "gemini-main"
+	if router.SupportsGroqVoiceStreaming() {
+		t.Fatal("a non-Groq fast model enabled Groq voice streaming")
+	}
+}
+
 func TestRouterFallsBackOnRetryableFailureAndObservesUsage(t *testing.T) {
 	primary := &fakeProvider{err: &ProviderError{Provider: "primary", Status: 503, Retryable: true}}
 	backup := &fakeProvider{response: Response{
@@ -424,6 +445,9 @@ func TestRouterOpensCircuitAfterRepeatedTransientFailures(t *testing.T) {
 	router := testRouter(t, []ModelConfig{{ID: "primary", Provider: "primary", Model: "p-model"}},
 		map[string]Provider{"primary": provider},
 		RoutingConfig{PrimaryModel: "primary"}, nil)
+	// Test the circuit independently of daily budgets as the shared prompt grows.
+	// Usage-cap enforcement has its own tests below.
+	router.limiter = &timestampUsageLimiter{}
 
 	for i := 0; i < circuitFailureLimit; i++ {
 		if _, err := router.Generate(context.Background(), testRequest(TaskConversation, ComplexityNormal)); err == nil {

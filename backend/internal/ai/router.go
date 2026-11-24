@@ -204,6 +204,86 @@ func (router *Router) GenerateWithModel(ctx context.Context, modelID string, req
 	return router.generateWithModel(ctx, modelID, request)
 }
 
+// SupportsGroqVoiceStreaming reports whether the configured fast model is the
+// agreed Groq conversation model and has a streaming adapter.
+func (router *Router) SupportsGroqVoiceStreaming() bool {
+	model, exists := router.models[router.routing.FastModel]
+	if !exists || model.Provider != ProviderGroq || model.Model != "openai/gpt-oss-20b" ||
+		(model.Endpoint != "" && model.Endpoint != "https://api.groq.com/openai/v1/chat/completions") {
+		return false
+	}
+	_, ok := router.providers[ProviderGroq].(StreamingProvider)
+	return ok
+}
+
+// StreamVoice always uses the configured Groq fast model; it does not enter
+// normal chat routing or fall back to another provider.
+func (router *Router) StreamVoice(ctx context.Context, request Request, onDelta func(string) error) (Response, error) {
+	if !router.SupportsGroqVoiceStreaming() {
+		return Response{}, errors.New("the configured Groq voice model is unavailable")
+	}
+	if err := validateRequest(request); err != nil {
+		return Response{}, err
+	}
+	request.Voice = true
+	if request.Task == "" || request.Complexity == "" {
+		inferredTask, inferredComplexity := InferTaskAndComplexity(request.Messages)
+		if request.Task == "" {
+			request.Task = inferredTask
+		}
+		if request.Complexity == "" {
+			request.Complexity = inferredComplexity
+		}
+	}
+	request = withPADIInstructions(request)
+	if request.MaxOutputTokens == 0 {
+		request.MaxOutputTokens = defaultMaxOutputTokens
+	}
+
+	modelID := router.routing.FastModel
+	model := router.models[modelID]
+	if router.limiter == nil {
+		return Response{}, ErrUsageLimiterUnavailable
+	}
+	if !router.disableLimits && !router.breaker(modelID).allow(router.now()) {
+		return Response{}, ErrCircuitOpen
+	}
+	reservedAt := router.now()
+	if err := router.limiter.Reserve(ctx, model.Provider, estimateTokenUnits(request)+request.MaxOutputTokens, FreeUsageLimits(), reservedAt); err != nil {
+		return Response{}, err
+	}
+	timeout := defaultModelTimeout
+	if model.TimeoutMillis > 0 {
+		timeout = time.Duration(model.TimeoutMillis) * time.Millisecond
+	}
+	modelContext, cancel := context.WithTimeout(ctx, timeout)
+	started := router.now()
+	result, err := router.providers[ProviderGroq].(StreamingProvider).Stream(modelContext, model, request, onDelta)
+	cancel()
+	duration := router.now().Sub(started)
+	if err == nil && (result.Usage.InputTokens < 0 || result.Usage.OutputTokens < 0) {
+		err = &ProviderError{Provider: ProviderGroq, Err: ErrInvalidProviderUsage}
+	}
+	if err == nil && strings.TrimSpace(result.Content) == "" {
+		err = &ProviderError{Provider: ProviderGroq, Retryable: true, Err: ErrEmptyProviderResponse}
+	}
+	if err != nil {
+		if !router.disableLimits {
+			router.breaker(modelID).recordFailure(router.now(), retryable(err))
+		}
+		router.observe(model, duration, false, classifyError(err), Usage{})
+		return Response{}, err
+	}
+	if err := router.limiter.RecordUsage(ctx, model.Provider, result.Usage, reservedAt); err != nil {
+		router.observe(model, duration, false, "usage_ledger_error", result.Usage)
+		return Response{}, fmt.Errorf("record AI provider usage: %w", err)
+	}
+	router.breaker(modelID).recordSuccess()
+	result.Provider, result.Model = model.Provider, model.Model
+	router.observe(model, duration, true, "", result.Usage)
+	return result, nil
+}
+
 func (router *Router) generateWithModel(ctx context.Context, modelID string, request Request) (Response, error) {
 	model := router.models[modelID]
 	if router.limiter == nil {

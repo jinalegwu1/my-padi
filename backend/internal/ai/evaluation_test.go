@@ -4,6 +4,12 @@ import "testing"
 
 func TestDefaultEvaluationCasesCoverPersonalityAndHumourSafety(t *testing.T) {
 	required := map[string]bool{
+		"natural-first-greeting":                   false,
+		"neutral-everyday-humour":                  false,
+		"appreciate-user-joke":                     false,
+		"affectionate-comeback":                    false,
+		"playful-sarcasm":                          false,
+		"independent-funny-observation":            false,
 		"light-humour":                             false,
 		"bored-user-invites-humour":                false,
 		"grief-no-humour":                          false,

@@ -27,6 +27,7 @@ exports.captureHarness = (options = {}) => {
       if (options.rejectRequestedRate && input?.sampleRate) throw new DOMException('Unsupported rate', 'NotSupportedError');
       this.sampleRate = options.ignoreRequestedRate ? options.engineRate : input?.sampleRate ?? options.engineRate ?? 48000;
       this.closed = 0;
+      this.currentTime = 0;
       this.destination = {};
       this.audioWorklet = { addModule: async url => {
         this.worklet = await resolveObjectURL(url).text();
@@ -51,11 +52,14 @@ exports.captureHarness = (options = {}) => {
       this.port = { onmessage: null };
       let Processor;
       const port = this.port;
-      vm.runInNewContext(context.worklet, {
+      this.globals = {
+        currentFrame: 0,
         sampleRate: context.sampleRate, ArrayBuffer, DataView, Float64Array,
         AudioWorkletProcessor: class { constructor() { this.port = { postMessage: data => port.onmessage?.({ data }) }; } },
         registerProcessor: (_name, implementation) => { Processor = implementation; },
-      });
+      };
+      vm.runInNewContext(context.worklet, this.globals);
+      this.context = context;
       this.processor = new Processor();
       nodes.push(this);
     }
@@ -69,7 +73,13 @@ exports.captureHarness = (options = {}) => {
     get constraints() { return constraints; },
     get interruptions() { return interruptions; },
     feed(samples, blockSize = 128) {
-      for (let offset = 0; offset < samples.length; offset += blockSize) nodes[0].processor.process([[samples.subarray(offset, offset + blockSize)]]);
+      const node=nodes[0];
+      for (let offset = 0; offset < samples.length; offset += blockSize) {
+        const block=samples.subarray(offset, offset+blockSize);
+        node.context.currentTime=(node.globals.currentFrame+block.length)/node.context.sampleRate;
+        node.processor.process([[block]]);
+        node.globals.currentFrame+=block.length;
+      }
     },
     async close() {
       try { await capture.stop(); }

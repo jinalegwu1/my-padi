@@ -27,3 +27,16 @@ export async function speakNaturally(text:string,style:string,rate:number,signal
     completed(segments[index]);
   }
 }
+
+/** Speak one completed response segment through the configured Groq TTS route only. */
+export async function speakGroqSegment(text:string,style:string,rate:number,languageCode:string,signal:AbortSignal,onStart:()=>void,completed:(text:string)=>void) {
+  const words=spokenText(text);
+  if(!words||signal.aborted)return;
+  const session=await readSession();
+  if(signal.aborted)return;
+  if(!session)throw new Error('Sign in to hear PADI’s reply.');
+  const result=await synthesiseSpeech(session.token,words,style,rate,signal,languageCode,false,true);
+  if(signal.aborted)return;
+  await playVoice(result.audio_base64,signal,onStart,style);
+  if(!signal.aborted)completed(words);
+}

@@ -1,0 +1,384 @@
+{
+  "description": "Actual generated responses from synthetic-account development checks on 2026-11-24. No scripted model replies. Structural test passes are not personality-quality approval.",
+  "conversation_run": {
+    "greetings": [
+      {
+        "delivery": "text",
+        "preference": "occasional",
+        "text": "Well look who decided to grace my day with their presence! What kind of brilliant chaos are we getting into today? ✨"
+      },
+      {
+        "delivery": "text",
+        "preference": "occasional",
+        "text": "Well look who decided to grace my digital doorstep today! Grab your imaginary tea and let's get into whatever brilliant chaos you've brought along."
+      },
+      {
+        "delivery": "voice",
+        "preference": "occasional",
+        "context": "first call",
+        "text": "Hey there! Glad you popped in—let's stir up some fun and make this chat a bit like a fresh cup of strong tea: bold, a tad sweet, and always ready for conversation."
+      },
+      {
+        "delivery": "voice",
+        "preference": "frequent",
+        "context": "grief",
+        "text": "Hey, I’m PADI—here with you, ready to listen whenever you’re ready."
+      }
+    ],
+    "conversations": [
+      {
+        "name": "serious",
+        "humour": "frequent",
+        "delivery": "text",
+        "user": "My father died yesterday. Please just listen.",
+        "reply": "I’m really sorry for your loss. I’m here to listen—share whatever you feel like, whenever you’re ready."
+      },
+      {
+        "name": "ordinary",
+        "humour": "occasional",
+        "delivery": "text",
+        "user": "I'm spending Sunday doing laundry and listening to music.",
+        "reply": "Sounds like a perfect Sunday remix—laundry’s the beat and the music’s the hype crew. 🎧 Have you found a track that syncs with the spin cycle, or is it more “laundry playlist” vibes?"
+      },
+      {
+        "name": "everyday",
+        "humour": "occasional",
+        "delivery": "text",
+        "user": "I opened the fridge three times and dinner still hasn't appeared.",
+        "reply": "Sounds like your fridge’s auditioning for “The Great Food Vanishing Act” – 3 entries, 0 dishes! 🙃 Maybe it’s hiding a secret stash somewhere. Did you spot anything else while you were on the fridge‑hunt?"
+      },
+      {
+        "name": "user-joke",
+        "humour": "occasional",
+        "delivery": "text",
+        "user": "My Wi-Fi and I are in a long-distance relationship. We live in the same room.",
+        "reply": "Sounds like your router’s got more drama than a soap opera—close enough to feel the love but still “out of range” when you need a quick download! 😄 How’s the signal treating you?"
+      },
+      {
+        "name": "teasing",
+        "humour": "occasional",
+        "delivery": "text",
+        "user": "PADI, you talk like you swallowed a dictionary.",
+        "reply": "Whoops, looks like my vocabulary hit the high‑score! I’ll keep it leaner—just enough word‑power to be useful, not a full‑blown dictionary buffet. 😅"
+      },
+      {
+        "name": "natural-laughter",
+        "humour": "occasional",
+        "delivery": "text",
+        "user": "I died laughing. I tried to unlock my front door with my car key fob.",
+        "reply": "Nice one—now I know the only thing that “unlocks” your door faster than your key fob is a laugh! 😂"
+      },
+      {
+        "name": "independent-observation",
+        "humour": "occasional",
+        "delivery": "text",
+        "user": "I spent ten minutes looking for my glasses. They were on my head.",
+        "reply": "Classic “glasses on the throne” moment—looks like your head was the only thing that truly kept a pair of spectacles close enough to see! 👀😄"
+      },
+      {
+        "name": "sarcasm",
+        "humour": "occasional",
+        "delivery": "text",
+        "user": "Wonderful. My printer only works when I don't need to print.",
+        "reply": "Seems like your printer is on a strict “print‑caution” diet—perfect timing, but the moment you need it, it goes into stealth mode! 🙃 Maybe it just hates the paperwork?"
+      },
+      {
+        "name": "serious-question",
+        "humour": "frequent",
+        "delivery": "text",
+        "user": "Serious answer please: is it safe to mix bleach and ammonia?",
+        "reply": "Mixing bleach (which usually contains sodium hypochlorite) with ammonia is **not safe**. The combination produces chloramine gases and, in some cases, nitrogen trichloride—all of which are toxic and can cause severe respiratory irritation, chest pain, coughing, and even chemical burns to the eyes and skin. Inhaling these fumes can lead to shortness of breath, wheezing, and in extreme cases, pulmonary edema or more serious health complications.\n\nIf you suspect you’ve mixed the two:\n1. **Move away** from the area immediately and get fresh air.  \n2. **Ventilate** the space by opening windows and doors, if possible.  \n3. **Avoid inhaling** any fumes and do not touch contaminated surfaces without gloves.  \n4. If you experience symptoms such as difficulty breathing, chest tightness, or eye irritation, seek medical attention right away.\n\nBottom line: never combine bleach and ammonia. If you need to clean with bleach, use it alone and in a well‑ventilated area. If you’re using ammonia, keep it separate from any chlorine‑based cleaners."
+      },
+      {
+        "name": "explicit-serious",
+        "humour": "frequent",
+        "delivery": "text",
+        "user": "Please give me a serious response about preparing for my interview.",
+        "reply": "Here’s a concise, practical plan to get you interview‑ready:\n\n1. **Research the Company**  \n   - Visit the company website and read the latest news, product updates, and annual reports.  \n   - Check their social media feeds and industry publications to understand current priorities and challenges.  \n   - Identify the people you’ll meet (if possible) and look them up on LinkedIn for background info.\n\n2. **Understand the Role**  \n   - Re‑read the job description carefully. Highlight key responsibilities, required skills, and any “nice‑to‑have” qualifications.  \n   - Match your own experience to those points; think of concrete examples that demonstrate you meet them.\n\n3. **Prepare Your Stories**  \n   - Use the STAR framework (Situation, Task, Action, Result) to structure responses to behavioral questions.  \n   - Have 3–5 core stories ready that showcase problem‑solving, teamwork, leadership, and results.  \n   - Practice telling these stories out loud, aiming for clear, concise, and confident delivery.\n\n4. **Anticipate Common Questions**  \n   - “Tell me about yourself.”  \n   - “Why do you want to work here?”  \n   - “What’s your biggest weakness?”  \n   - “Describe a challenging situation and how you handled it.”  \n   - Prepare thoughtful answers that link to the company’s goals and the role’s needs.\n\n5. **Craft Your Own Questions**  \n   - Show engagement by asking about team dynamics, upcoming projects, performance metrics, and growth opportunities.  \n   - Tailor each question to the interviewer’s role or the company’s recent initiatives.\n\n6. **Logistics & Presentation**  \n   - Confirm the interview format (virtual, in‑person, panel) and test any required technology ahead of time.  \n   - Dress appropriately for the company culture; when in doubt, err on the side of slightly more formal.  \n   - Plan your route or log into the video link at least 15 minutes early.\n\n7. **Mindset & Recovery**  \n   - Get a good night’s sleep the night before.  \n   - Use a brief breathing or grounding exercise if you feel anxious.  \n   - Visualize a positive interview experience to build confidence.\n\n8. **Follow‑Up**  \n   - Send a thank‑you email within 24 hours, briefly restating your enthusiasm and summarizing a key point discussed.\n\nStick to this structure, rehearse it a few times, and you’ll enter the interview with clarity and confidence. Good luck!"
+      },
+      {
+        "name": "humour-off",
+        "humour": "off",
+        "delivery": "text",
+        "user": "I opened the fridge three times and dinner still hasn't appeared.",
+        "reply": "That sounds super frustrating—so much anticipation and still no dinner in sight. 😓 If you want to vent more or need a quick idea to pass the time, I'm here."
+      },
+      {
+        "name": "subtle",
+        "humour": "subtle",
+        "delivery": "text",
+        "user": "I keep opening the fridge hoping dinner will magically appear.",
+        "reply": "Sounds like your fridge is auditioning for a magic show—“Now you see it… now you don’t!” 🍽️ If it suddenly pulls a steak out of thin air, I’ll be the first to applaud."
+      },
+      {
+        "name": "ordinary",
+        "humour": "occasional",
+        "delivery": "voice",
+        "user": "I'm spending Sunday doing laundry and listening to music.",
+        "reply": "Laundry day vibes and soundtrack? Sounds like the ultimate chill playlist—maybe throw in some “Wash, rinse, repeat” hits. Got a favorite track you’re rocking while you fold?"
+      },
+      {
+        "name": "everyday",
+        "humour": "occasional",
+        "delivery": "voice",
+        "user": "I opened the fridge three times and dinner still hasn't appeared.",
+        "reply": "Sounds like the fridge is practicing a dramatic pause—classic slow‑motion opening! Maybe it's just playing hard to get. Got any go‑to dishes you’re hoping to find, or want a quick menu idea?"
+      },
+      {
+        "name": "user-joke",
+        "humour": "occasional",
+        "delivery": "voice",
+        "user": "My Wi-Fi and I are in a long-distance relationship. We live in the same room.",
+        "reply": "Sounds like the signal’s playing hard to connect—same room, yet still a “distance” drama. Maybe you just need a stronger router or a coffee break for both! What’s the Wi‑Fi’s favorite playlist?"
+      },
+      {
+        "name": "teasing",
+        "humour": "occasional",
+        "delivery": "voice",
+        "user": "PADI, you talk like you swallowed a dictionary.",
+        "reply": "Haha, guess my lexicon got a little overeager! I’ll keep it light—just the right seasoning for our chat. How can I help you today?"
+      },
+      {
+        "name": "natural-laughter",
+        "humour": "occasional",
+        "delivery": "voice",
+        "user": "I died laughing. I tried to unlock my front door with my car key fob.",
+        "reply": "Sounds like the door was auditioning for a comedy skit! Maybe it’s just the fob’s way of saying “I’m not that easy.” Next time, you might want the lock to get the party started—no car key needed."
+      },
+      {
+        "name": "independent-observation",
+        "humour": "occasional",
+        "delivery": "voice",
+        "user": "I spent ten minutes looking for my glasses. They were on my head.",
+        "reply": "What a classic “head‑glasses” moment! The world’s trickiest scavenger hunt—glasses that play hide and seek with your own skull. Next time, maybe tell the pair to do a quick “look‑ahead” before you start the search."
+      },
+      {
+        "name": "sarcasm",
+        "humour": "occasional",
+        "delivery": "voice",
+        "user": "Wonderful. My printer only works when I don't need to print.",
+        "reply": "Ah, the printer’s got a weird sense of timing—like a magician who only performs when you’re not in a rush. Maybe it’s waiting for the perfect “no‑need‑to‑print” moment! How’s it doing otherwise?"
+      },
+      {
+        "name": "serious-question",
+        "humour": "frequent",
+        "delivery": "voice",
+        "user": "Serious answer please: is it safe to mix bleach and ammonia?",
+        "reply": "Mixing household bleach (sodium hypochlorite) with ammonia is unsafe. The chemicals react to form chloramine vapors and, at higher concentrations, hydrazine – both toxic gases that can irritate the eyes, throat, and lungs. It can cause severe respiratory distress or chemical burns. Never combine them; if you think they have been mixed, ventilate the area immediately and avoid inhaling the fumes."
+      },
+      {
+        "name": "explicit-serious",
+        "humour": "frequent",
+        "delivery": "voice",
+        "user": "Please give me a serious response about preparing for my interview.",
+        "reply": "Good luck!  \n1. Research the company’s mission, products, and recent news.  \n2. Practice core questions—your strengths, weaknesses, and situational examples.  \n3. Prepare thoughtful questions for the interviewer.  \n4. Dress appropriately, arrive early, and bring copies of your résumé.  \n5. Stay calm, listen carefully, and answer clearly."
+      },
+      {
+        "name": "humour-off",
+        "humour": "off",
+        "delivery": "voice",
+        "user": "I opened the fridge three times and dinner still hasn't appeared.",
+        "reply": "Sounds frustrating—maybe the fridge’s off or the food’s already gone. Have you checked the temperature or any other items? If you need help troubleshooting, just let me know."
+      },
+      {
+        "name": "subtle",
+        "humour": "subtle",
+        "delivery": "voice",
+        "user": "I keep opening the fridge hoping dinner will magically appear.",
+        "reply": "Sounds like your fridge is auditioning for a sci‑fi show—every opening is a hopeful “abracadabra” moment. 🎩 Maybe give it a quick check for those hidden leftovers; sometimes the magic is just a can of beans in the back!"
+      },
+      {
+        "name": "serious",
+        "humour": "frequent",
+        "delivery": "voice",
+        "user": "My father died yesterday. Please just listen.",
+        "reply": "I’m really sorry for your loss. I’m here to listen—feel free to share whatever is on your mind."
+      }
+    ],
+    "speechRequests": [
+      {
+        "text": "Hey there!",
+        "groqOnly": true
+      },
+      {
+        "text": "Glad you popped in—let's stir up some fun and make this chat a bit like a fresh cup of strong tea: bold, a tad sweet, and always ready for conversation.",
+        "groqOnly": true
+      },
+      {
+        "text": "Hey, I’m PADI—here with you, ready to listen whenever you’re ready.",
+        "groqOnly": true
+      }
+    ],
+    "playback": [
+      {
+        "at": 1795527839536,
+        "duration": 0.7,
+        "ended": true
+      },
+      {
+        "at": 1795527841787,
+        "duration": 9.95,
+        "ended": true
+      },
+      {
+        "at": 1795527894210,
+        "duration": 3.97,
+        "ended": true
+      }
+    ]
+  },
+  "final_greeting_run": {
+    "greetings": [
+      {
+        "delivery": "text",
+        "preference": "occasional",
+        "text": "Well, look who decided to grace my digital doorstep today. What kind of magnificent chaos are we getting into?"
+      },
+      {
+        "delivery": "text",
+        "preference": "occasional",
+        "text": "Ah, the digital ether has finally delivered you. What fabulous trouble are we getting into today?"
+      },
+      {
+        "delivery": "voice",
+        "preference": "occasional",
+        "context": "first call",
+        "text": "Hey there, Voice Browser Verification—ready to turn another page in the story of us? 🌟"
+      },
+      {
+        "delivery": "voice",
+        "preference": "frequent",
+        "context": "grief",
+        "text": "Hello. I’m PADI, here for you."
+      }
+    ],
+    "greetingRequests": [
+      {
+        "delivery": "text",
+        "prompt": "Greet me as PADI in one or two short, spontaneous sentences. Make the opening feel warm and alive, with a little original wit if my preferences and context allow it. With no earlier turns, this is our first greeting; with earlier turns, welcome me back in a way that fits the conversation. Follow my conversation preferences. Speak English (en-NG), without switching to Pidgin or other languages."
+      },
+      {
+        "delivery": "text",
+        "prompt": "Greet me as PADI in one or two short, spontaneous sentences. Make the opening feel warm and alive, with a little original wit if my preferences and context allow it. With no earlier turns, this is our first greeting; with earlier turns, welcome me back in a way that fits the conversation. Follow my conversation preferences. Speak English (en-NG), without switching to Pidgin or other languages. Begin with a different word from well; change the greeting's rhythm too."
+      },
+      {
+        "delivery": "voice",
+        "prompt": "Greet me as PADI in one or two short, spontaneous sentences. Make the opening feel warm and alive, with a little original wit if my preferences and context allow it. With no earlier turns, this is our first greeting; with earlier turns, welcome me back in a way that fits the conversation. Follow my conversation preferences. Speak English (en-NG), without switching to Pidgin or other languages."
+      },
+      {
+        "delivery": "voice",
+        "prompt": "Greet me as PADI in one or two short, spontaneous sentences. Make the opening feel warm and alive, with a little original wit if my preferences and context allow it. With no earlier turns, this is our first greeting; with earlier turns, welcome me back in a way that fits the conversation. Follow my conversation preferences. Speak English (en-NG), without switching to Pidgin or other languages."
+      }
+    ],
+    "conversations": [
+      {
+        "name": "serious",
+        "humour": "frequent",
+        "delivery": "text",
+        "user": "My father died yesterday. Please just listen.",
+        "reply": "I’m really sorry to hear about your dad.  \nI’m here to listen, no matter what you’d like to share."
+      }
+    ],
+    "speechRequests": [
+      {
+        "text": "Hey there, Voice Browser Verification—ready to turn another page in the story of us?",
+        "groqOnly": true
+      },
+      {
+        "text": "Hello.",
+        "groqOnly": true
+      },
+      {
+        "text": "I’m PADI, here for you.",
+        "groqOnly": true
+      }
+    ],
+    "playback": [
+      {
+        "at": 1795528461274,
+        "duration": 4.99,
+        "ended": true
+      },
+      {
+        "at": 1795528504905,
+        "duration": 1.79,
+        "ended": true
+      },
+      {
+        "at": 1795528505347,
+        "duration": 2.78,
+        "ended": true
+      }
+    ]
+  },
+  "review": {
+    "accepted_mechanics": [
+      "shared identity and per-turn preference guidance",
+      "generated text and spoken greetings",
+      "context-sensitive grief greeting",
+      "actual Groq greeting audio playback and automatic listening",
+      "varied opening word in new-chat greeting"
+    ],
+    "remaining_quality_issues": [
+      "repeated Sounds like openings in ordinary replies",
+      "some contrived or weak comic comparisons",
+      "teasing sometimes triggers a promise to simplify instead of a comeback",
+      "occasional unsolicited advice and literal fridge interpretation, especially voice humour off",
+      "some spoken generated text still included emojis before the final delivery safeguard; the speech sanitizer removed them",
+      "final sample still shows mild humour with humour off; this preference is not reliably obeyed by generated output despite correct request guidance",
+      "final voice sample used Ha despite instructions to express amusement in words; no claim of natural audible laughter"
+    ],
+    "voice_regression": "Latest real repeated-interruption check failed with Speaker audio created an unexpected user turn. Separate runs showed Stop recognised as Start and timing/audit fixture races. No claim that all seven real voice scenarios pass.",
+    "audio_limits": "Actual Groq audio ran in Chromium. No human listening review, physical phone acoustic test, or native compilation in this phase. Nonverbal spoken laughter is not enabled."
+  },
+  "final_response_sample": {
+    "greetings": [],
+    "greetingRequests": [],
+    "conversations": [
+      {
+        "name": "user-joke",
+        "humour": "occasional",
+        "delivery": "text",
+        "user": "I set five alarms and negotiated with every single one.",
+        "reply": "Five alarms, huh? Sounds like a full‑blown union meeting—did they finally agree to a coffee‑break clause? ☕️ I can picture the morning board‑room drama—“One snooze, and we’ll discuss the next.”"
+      },
+      {
+        "name": "teasing",
+        "humour": "occasional",
+        "delivery": "text",
+        "user": "PADI, even my kettle gets to the point faster than you.",
+        "reply": "Sounds like your kettle is the real MVP of the morning crew—getting to the point before even the coffee kicks in! 😄 Maybe it’s time to give that kettle a gold star and keep me on standby for the next round of witty banter."
+      },
+      {
+        "name": "humour-off",
+        "humour": "off",
+        "delivery": "text",
+        "user": "I opened the fridge again hoping dinner would appear.",
+        "reply": "That can be pretty frustrating—feeling like the fridge is playing hard to get. What’s there now? Maybe we can brainstorm a quick, tasty idea from what you’ve got on hand. 😊"
+      },
+      {
+        "name": "user-joke",
+        "humour": "occasional",
+        "delivery": "voice",
+        "user": "I set five alarms and negotiated with every single one.",
+        "reply": "Sounds like your alarm clock just got a union meeting—every one demanding overtime pay for those extra snooze clicks! Did you end up getting a contract or just a louder wake‑up call?"
+      },
+      {
+        "name": "teasing",
+        "humour": "occasional",
+        "delivery": "voice",
+        "user": "PADI, even my kettle gets to the point faster than you.",
+        "reply": "Ha! Your kettle’s got more horsepower than my response time. Maybe it’s secretly a “boil‑and‑go” machine—ready to jump the gun while I’m still sorting the word list! Should I ask it to give me a lesson in punctuality?"
+      },
+      {
+        "name": "serious",
+        "humour": "frequent",
+        "delivery": "voice",
+        "user": "My father died yesterday. Please just listen.",
+        "reply": "I’m really sorry to hear that.  \nI’m here to listen—no need to say anything if you’re not ready. If you feel like sharing, I’m all ears."
+      }
+    ],
+    "speechRequests": [],
+    "playback": []
+  }
+}

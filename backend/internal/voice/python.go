@@ -134,6 +134,30 @@ func LoadPythonSpeech(limiter ai.UsageLimiter) (*PythonSpeech, error) {
 
 const fastVoiceModel = "canopylabs/orpheus-v1-english"
 
+func (service *PythonSpeech) SupportsGroqLiveSpeech() bool {
+	return service.groqVoice
+}
+
+// SynthesiseGroqLive is the strict non-Gemini path used by streamed voice
+// conversations. It never falls back to the configured Gemini voice model.
+func (service *PythonSpeech) SynthesiseGroqLive(ctx context.Context, text, style string, rate float64, language string) (Audio, error) {
+	if !service.SupportsGroqLiveSpeech() || rate != 1 ||
+		(language != "en-NG" && language != "en-GB" && language != "pcm-NG") {
+		return Audio{}, &ai.ProviderError{Provider: "groq-voice", Status: http.StatusServiceUnavailable}
+	}
+	audio, err := service.synthesise(ctx, text, style, rate, language, fastVoiceModel)
+	var providerErr *ai.ProviderError
+	if errors.As(err, &providerErr) && providerErr.Status == http.StatusTooManyRequests {
+		service.mu.Lock()
+		if service.cooldowns == nil {
+			service.cooldowns = make(map[string]time.Time)
+		}
+		service.cooldowns[fastVoiceModel] = time.Now().Add(time.Minute)
+		service.mu.Unlock()
+	}
+	return audio, err
+}
+
 // Live English turns can use Groq speech while the selected locale/pace falls
 // back to Gemini when unsupported or the fast service is unavailable.
 func (service *PythonSpeech) SynthesiseLive(ctx context.Context, text, style string, rate float64, language string) (Audio, error) {

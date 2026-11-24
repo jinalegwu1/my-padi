@@ -1,5 +1,10 @@
 # Hands-free Python Voice Engine verification
 
+The portrait interaction and turn behavior were revised on 24 November 2026.
+See [the current voice flow](./live-voice-conversation.md) for the simple screen,
+automatic listening, echo protection, and updated verification commands. The
+dated checks below describe earlier versions.
+
 Date: 2026-11-20. Status: **Testing**, pending iOS native compilation, physical
 Android/iPhone checks, and human review of voice naturalness. Android's local
 development APK build passed and includes the PadiVoice module. Revised voice

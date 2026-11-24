@@ -1,5 +1,5 @@
 /** Short PCM windows stay on the device until a speaking turn ends. */
-export type PCMFrame = { data: ArrayBuffer; sampleRate: number; channels: number };
+export type PCMFrame = { data: ArrayBuffer; sampleRate: number; channels: number; voiceLevel?:number; capturedAt?:number };
 export type Utterance = { pcm: Uint8Array; sampleRate: number };
 
 export class VoiceActivity {
@@ -13,7 +13,8 @@ export class VoiceActivity {
   private active = false;
   private noise = -65;
 
-  constructor(private began: () => void, private ended: (utterance: Utterance) => void) {}
+  constructor(private began: () => void, private ended: (utterance: Utterance) => void,
+    private options:{onsetMs?:number;silenceMs?:number}={}) {}
   get speaking() { return this.active; }
 
   reset() {
@@ -29,7 +30,7 @@ export class VoiceActivity {
     const samples = new DataView(pcm.buffer);
     let sum = 0;
     for (let offset=0;offset<pcm.length;offset+=2) { const value=samples.getInt16(offset,true)/32768; sum+=value*value; }
-    const db = 20*Math.log10(Math.max(1e-7,Math.sqrt(sum/(pcm.length/2))));
+    const db = frame.voiceLevel??20*Math.log10(Math.max(1e-7,Math.sqrt(sum/(pcm.length/2))));
     const ms = pcm.length / 2 / frame.sampleRate * 1000;
     const voiced = db > Math.max(-48, Math.min(-26, this.noise+12));
     if (!this.active) {
@@ -37,7 +38,7 @@ export class VoiceActivity {
       while (this.preDuration > 500 && this.preRoll.length > 1) this.preDuration -= this.preRoll.shift()!.length / 2 / this.rate * 1000;
       if (!voiced) this.noise = 0.95*this.noise+0.05*db;
       this.speechMs = voiced ? this.speechMs+ms : 0;
-      if (this.speechMs >= 180) {
+      if (this.speechMs >= (this.options.onsetMs??180)) {
         this.active = true; this.frames = this.preRoll; this.preRoll = []; this.preDuration = 0; this.durationMs = this.speechMs; this.quietMs = 0;
         this.began();
       }
@@ -45,7 +46,7 @@ export class VoiceActivity {
     }
     this.frames.push(pcm); this.durationMs += ms;
     this.quietMs = voiced ? 0 : this.quietMs+ms;
-    if (this.quietMs >= 750 || this.durationMs >= Math.min(55_000,7*1024*1024/(2*this.rate)*1000)) {
+    if (this.quietMs >= (this.options.silenceMs??750) || this.durationMs >= Math.min(55_000,7*1024*1024/(2*this.rate)*1000)) {
       const audio = new Uint8Array(this.frames.reduce((size,buffer)=>size+buffer.length,0));
       let offset=0; this.frames.forEach(buffer=>{ audio.set(buffer,offset); offset+=buffer.length; });
       const rate=this.rate;

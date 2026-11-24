@@ -193,7 +193,7 @@ let browser;
         assert.equal(state.valid, true); assert.equal(state.interrupted, 1);
         assert.equal(state.closed, true); assert.equal(state.stopped, true);
         assert.deepEqual(state.constraints, { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true });
-        assert.deepEqual(state.attempts, mode === 'reject' || mode === 'source-reject' ? [16000, null] : [16000]);
+        assert.deepEqual(state.attempts, [null]);
       }
       console.log(`PASS real browser capture: ${mode}, PCM format and microphone cleanup.`);
       await context.close();

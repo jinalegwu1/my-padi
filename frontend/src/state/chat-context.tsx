@@ -1,10 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 
-import { WELCOME_MESSAGE, nextId } from '@/data/mock-conversations';
+import { nextId } from '@/data/mock-conversations';
 import { usePersistentState } from '@/hooks/use-persistent-state';
-import { APIError, sendChat, submitResponseFeedback } from '@/lib/api';
+import { APIError, sendChat, streamVoiceChat, submitResponseFeedback } from '@/lib/api';
 import { hasBackend } from '@/lib/config';
 import { chatContext } from '@/lib/chat-context';
+import { greetingOpening, greetingRequest } from '@/lib/greeting';
 import { clearSession, readSession, subscribeSession } from '@/lib/session';
 import type { Message, ResponseRating } from '@/types';
 
@@ -20,17 +21,20 @@ function useChatState() {
   const [sendError, setSendError] = useState<string | null>(null);
   const active = useRef<AbortController | null>(null);
   const epoch = useRef(0);
+  const lastOpening = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     const unsubscribe = subscribeSession(() => {
       epoch.current++;
+      lastOpening.current = undefined;
       active.current?.abort();
       setSendError(null);
     });
     return () => { epoch.current++; active.current?.abort(); unsubscribe(); };
   }, []);
 
-  const performSend = useCallback(async (rawText: string, expectedUserID?: string, viaVoice = false, signal?: AbortSignal, languageCode?: string): Promise<SendResult> => {
+  const performSend = useCallback(async (rawText: string, expectedUserID?: string, viaVoice = false, signal?: AbortSignal, languageCode?: string,
+    onDelta?: (delta: string) => void, onStart?: (messageID: string) => void, greeting = false): Promise<SendResult> => {
     const text = rawText.trim();
     if (!text || active.current || status !== 'ready' || signal?.aborted) return { status: 'ignored' };
     if (!hasBackend) {
@@ -46,18 +50,30 @@ function useChatState() {
     setSendError(null);
     let userMessage: Message | undefined;
     let pending: Message | undefined;
+    let streamedText = '';
     const removeTurn = () => setMessages(prev => prev.filter(message => message.id !== pending?.id && message.id !== userMessage?.id));
+    const keepPartialStream = () => setMessages(prev => prev.map(message => message.id === pending?.id
+      ? { ...message, text: streamedText, pending: false, backendChat: false, voiceInterrupted: true }
+      : message));
     try {
       const session = await readSession();
       if (controller.signal.aborted || started !== epoch.current) return { status: 'ignored' };
       if (!session) return { status: 'unauthorized' };
       if (expectedUserID && session.user.id !== expectedUserID) return { status: 'ignored' };
-      userMessage = { id: nextId('user'), role: 'user', text, createdAt: Date.now(), backendUserID: session.user.id, viaVoice };
-      pending = { id: nextId('pending'), role: 'padi', text: '', createdAt: Date.now(), pending: true, backendUserID: session.user.id, viaVoice };
+      if (!greeting) userMessage = { id: nextId('user'), role: 'user', text, createdAt: Date.now(), backendUserID: session.user.id, viaVoice };
+      pending = { id: viaVoice ? nextId('padi') : nextId('pending'), role: 'padi', text: '', createdAt: Date.now(), pending: true, backendUserID: session.user.id, viaVoice };
       const context = chatContext(latest.current, session.user.id);
-      setMessages(prev => [...prev, userMessage!, pending!]);
+      setMessages(prev => [...prev, ...(userMessage ? [userMessage] : []), pending!]);
+      if (viaVoice) onStart?.(pending.id);
       try {
-        const response = await sendChat(session.token, [...context.messages, { role: 'user', content: text }], context.memoryRevision, controller.signal, viaVoice?'voice':'text',context.voiceContext,languageCode);
+        const messages = [...context.messages, { role: 'user' as const, content: text }];
+        const response = viaVoice
+          ? await streamVoiceChat(session.token, messages, context.memoryRevision, controller.signal, delta => {
+            streamedText += delta;
+            setMessages(prev => prev.map(message => message.id === pending!.id ? { ...message, text: streamedText } : message));
+            onDelta?.(delta);
+          }, context.voiceContext, languageCode, greeting)
+          : await sendChat(session.token, messages, context.memoryRevision, controller.signal, 'text', context.voiceContext, languageCode, greeting);
         const currentSession = await readSession();
         if (controller.signal.aborted || started !== epoch.current || currentSession?.token !== session.token) {
           removeTurn();
@@ -65,15 +81,20 @@ function useChatState() {
         }
         if (typeof response.reply !== 'string' || !response.reply.trim()) throw new Error('PADI could not get a response right now. Please try again.');
         const replyID=nextId('padi');
-        setMessages(prev => prev.map(message => message.id === userMessage!.id
+        setMessages(prev => prev.map(message => message.id === userMessage?.id
           ? { ...message, backendChat: true, memoryRevision: response.memory_revision }
           : message.id === pending!.id
           ? { ...message, id: replyID, text: response.reply, createdAt: Date.now(), pending: false, backendChat: true, memoryRevision: response.memory_revision }
           : message));
         return { status: 'sent', reply: response.reply, messageID: replyID };
       } catch (error) {
-        removeTurn();
-        if (controller.signal.aborted || started !== epoch.current) return { status: 'ignored' };
+        if (controller.signal.aborted || started !== epoch.current) {
+          if (started === epoch.current && viaVoice && streamedText.trim()) keepPartialStream();
+          else removeTurn();
+          return { status: 'ignored' };
+        }
+        if (viaVoice && streamedText.trim()) keepPartialStream();
+        else removeTurn();
         if (error instanceof APIError && error.status === 401) {
           const currentSession = await readSession();
           if (started !== epoch.current || currentSession?.token !== session.token) return { status: 'ignored' };
@@ -94,7 +115,16 @@ function useChatState() {
 
   const send = useCallback(async (text: string, expectedUserID?: string) => (await performSend(text, expectedUserID)).status, [performSend]);
   const sendWithResponse = useCallback((text: string, expectedUserID?: string) => performSend(text, expectedUserID), [performSend]);
-  const sendVoice = useCallback((text: string, expectedUserID: string, signal: AbortSignal, languageCode = 'en-NG') => performSend(text, expectedUserID, true, signal, languageCode), [performSend]);
+  const sendVoice = useCallback((text: string, expectedUserID: string, signal: AbortSignal, languageCode = 'en-NG',
+    onDelta?: (delta: string) => void, onStart?: (messageID: string) => void) =>
+    performSend(text, expectedUserID, true, signal, languageCode, onDelta, onStart), [performSend]);
+  const greet = useCallback((expectedUserID: string, languageCode = 'en-NG', signal?: AbortSignal,
+    onDelta?: (delta: string) => void) => {
+    return performSend(greetingRequest(languageCode, lastOpening.current), expectedUserID, !!signal, signal, languageCode, onDelta, undefined, true).then(result => {
+      if (result.status === 'sent' && result.reply) lastOpening.current = greetingOpening(result.reply);
+      return result;
+    });
+  }, [performSend]);
   const rateResponse = useCallback(async (messageID: string, rating: ResponseRating) => {
     const message = latest.current.find(item => item.id === messageID);
     if (!message || message.role !== 'padi' || !message.backendChat || !message.backendUserID) {
@@ -119,9 +149,9 @@ function useChatState() {
   const reset = useCallback(() => {
     active.current?.abort();
     setSendError(null);
-    setMessages([{ id: nextId('padi'), role: 'padi', text: WELCOME_MESSAGE, createdAt: Date.now() }]);
+    setMessages([]);
   }, [setMessages]);
-  return { messages, status, isThinking, sendError, send, sendWithResponse, sendVoice, rateResponse, delivered, addGreeting, reset };
+  return { messages, status, isThinking, sendError, send, sendWithResponse, sendVoice, greet, rateResponse, delivered, addGreeting, reset };
 }
 
 export function ChatProvider({ children }: { children: ReactNode }) {

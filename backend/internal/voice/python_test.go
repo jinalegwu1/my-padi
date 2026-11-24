@@ -156,6 +156,7 @@ func TestLiveSpeechUsesFastProviderAndRetainsWorkingFallback(t *testing.T) {
 			Text, Style, Language, Model string
 			Rate                         float64
 		}
+
 		json.NewDecoder(r.Body).Decode(&body)
 		if body.Text != "Hey!" || body.Style != "ada" || body.Rate != 1 {
 			t.Error("Fast transport changed the reply or persona")
@@ -182,5 +183,36 @@ func TestLiveSpeechUsesFastProviderAndRetainsWorkingFallback(t *testing.T) {
 	}
 	if len(ledger.providers) != 4 || ledger.providers[0] != "groq-voice" || ledger.providers[1] != "groq-voice" || ledger.providers[2] != "gemini-voice" || ledger.providers[3] != "gemini-voice" {
 		t.Fatal("Speech provider attempts were not accounted for separately")
+	}
+}
+
+func TestGroqLiveSpeechNeverFallsBackToGemini(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var body struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if body.Model != fastVoiceModel {
+			t.Errorf("speech model = %q, want Groq Orpheus", body.Model)
+		}
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+	speech := &PythonSpeech{
+		endpoint: server.URL, client: server.Client(), limiter: &speechLedger{},
+		groqVoice: true, fallbackModel: "gemini-3.1-flash-tts-preview",
+	}
+	if _, err := speech.SynthesiseGroqLive(context.Background(), "Hello.", "ada", 1, "en-NG"); err == nil {
+		t.Fatal("Groq speech failure was hidden by Gemini fallback")
+	}
+	if calls != 1 {
+		t.Fatalf("speech provider calls = %d, want one Groq-only call", calls)
+	}
+	if _, err := speech.SynthesiseGroqLive(context.Background(), "Bonjour.", "ada", 1, "fr-FR"); err == nil || calls != 1 {
+		t.Fatal("unsupported Groq speech language was sent to any provider")
 	}
 }

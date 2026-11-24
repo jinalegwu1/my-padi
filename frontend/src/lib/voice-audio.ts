@@ -47,3 +47,32 @@ export function speechSegments(text: string): string[] {
   if(current)segments.push(current);
   return segments;
 }
+
+/** Return only complete sentence boundaries; keep the unfinished tail buffered. */
+export function takeCompletedSentences(text: string): { sentences: string[]; remainder: string } {
+  const sentences: string[] = [];
+  let start = 0;
+  const boundary = /[.!?](?=\s|$)/g;
+  for (const match of text.matchAll(boundary)) {
+    const end = match.index! + 1;
+    const sentence = text.slice(start, end).trim();
+    if (!sentence) continue;
+    if (/\b(?:Mr|Mrs|Ms|Dr|Prof|St|e\.g|i\.e|vs|etc)\.$/i.test(sentence)) continue;
+    sentences.push(sentence);
+    start = end;
+    while (/\s/.test(text[start] ?? '') && start < text.length) start++;
+  }
+  return { sentences, remainder: text.slice(start) };
+}
+
+/** Release a usable first phrase instead of waiting on a long sentence's final
+ * punctuation. Later passages can be larger to maintain synthesis throughput. */
+export function takeReadySpeech(text:string,first=true):{sentences:string[];remainder:string} {
+  const limit=first?160:650;
+  const complete=takeCompletedSentences(text);
+  if(text.length>limit&&(!complete.sentences.length||complete.sentences[0].length>limit)) {
+    const cut=text.lastIndexOf(' ',limit);
+    if(cut>=40)return {sentences:[text.slice(0,cut).trim()],remainder:text.slice(cut).trimStart()};
+  }
+  return complete;
+}

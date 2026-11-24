@@ -20,16 +20,16 @@ const preferences = {
 const failuresOnly = process.env.PADI_VOICE_BROWSER_FAILURES_ONLY === '1';
 let browser;
 
-async function pageFor({ microphone = true } = {}) {
+async function pageFor({ microphone = true, initialMessages = [] } = {}) {
   const context = await browser.newContext({ viewport: { width: 430, height: 900 } });
   // Playwright scopes the override to this isolated browser context. An empty
   // list rejects microphone permission rather than leaving a pending prompt.
   await context.grantPermissions(microphone ? ['microphone'] : [], { origin: frontend });
-  await context.addInitScript(({ session, preferences }) => {
+  await context.addInitScript(({ session, preferences, initialMessages }) => {
     sessionStorage.setItem('padi.auth.session.v1', JSON.stringify(session));
     localStorage.setItem('app:v1:preferences', JSON.stringify(preferences));
-    localStorage.setItem('app:v1:chat-messages', '[]');
-    const state = window.__padiVoiceCheck = { tracks: [], playing: 0, ended: 0, paused: 0, deviceSpeech: 0, constraints: null };
+    localStorage.setItem('app:v1:chat-messages', JSON.stringify(initialMessages));
+    const state = window.__padiVoiceCheck = { tracks: [], playing: 0, activePlayback: 0, ended: 0, paused: 0, deviceSpeech: 0, constraints: null, echoPlayback: true };
     if (window.speechSynthesis) window.speechSynthesis.speak = () => {
       state.deviceSpeech++;
       throw new Error('PADI must not fall back to browser speech.');
@@ -70,17 +70,26 @@ async function pageFor({ microphone = true } = {}) {
     AudioBufferSourceNode.prototype.start = function (...args) {
       if (this.context !== state.input) {
         state.playing++;
+        state.activePlayback++;
         state.lastPlaybackStarted = performance.now();
         playing.add(this);
-        this.addEventListener('ended', () => { if (playing.has(this)) state.ended++; playing.delete(this); }, { once: true });
+        this.addEventListener('ended', () => { if (playing.delete(this)) { state.ended++; state.activePlayback--; } }, { once: true });
+        // Route a copy of actual TTS into the test microphone to exercise
+        // echo suppression through the real capture worklet, not just flags.
+        if (state.echoPlayback && state.input?.state === 'running') {
+          const echo = state.input.createBufferSource();
+          echo.buffer = this.buffer;
+          echo.connect(state.destination);
+          play.call(echo);
+        }
       }
       return play.apply(this, args);
     };
     AudioBufferSourceNode.prototype.stop = function (...args) {
-      if (playing.has(this)) { state.paused++; playing.delete(this); }
+      if (playing.delete(this)) { state.paused++; state.activePlayback--; }
       return pause.apply(this, args);
     };
-  }, { session, preferences });
+  }, { session, preferences, initialMessages });
   const page = await context.newPage();
   page.setDefaultTimeout(20000);
   // A fresh Expo development bundle can take longer than ordinary UI actions.
@@ -92,25 +101,29 @@ async function pageFor({ microphone = true } = {}) {
   return { context, page, requests };
 }
 
-async function textTurn(page, text) {
-  const reply = page.waitForResponse(response => response.url().endsWith('/v1/chat'), { timeout: 155000 });
-  await page.getByRole('textbox').first().fill(text);
-  await page.getByRole('button', { name: 'Send message', exact: true }).click();
-  const response = await reply;
-  assert.equal(response.status(), 200, 'Text chat must return a real successful reply.');
-  const body = await response.json();
-  assert.equal(typeof body.reply, 'string');
-  assert.ok(body.reply.trim());
-  await page.waitForFunction(() => {
-    const messages = JSON.parse(localStorage.getItem('app:v1:chat-messages') || '[]');
-    return messages.length > 0 && !messages.some(message => message.pending);
-  });
-  return body.reply;
+function completedStream(raw) {
+  const events = raw.split(/\r?\n\r?\n/).map(block => {
+    const event = block.match(/^event:\s*(.+)$/m)?.[1];
+    const data = block.match(/^data:\s*(.+)$/m)?.[1];
+    return event && data ? { event, data: JSON.parse(data) } : null;
+  }).filter(Boolean);
+  const deltas = events.filter(item => item.event === 'delta').map(item => item.data.text);
+  const done = events.find(item => item.event === 'done')?.data;
+  assert.ok(deltas.length > 0, 'Voice chat must stream at least one text delta.');
+  assert.ok(done?.reply?.trim(), 'Voice stream must end with a complete reply.');
+  assert.equal(deltas.join(''), done.reply, 'Streamed deltas must match the final reply.');
+  return done.reply;
 }
 
 async function start(page) {
-  await page.getByRole('button', { name: 'Tap to chat', exact: true }).click();
+  await page.getByRole('button', { name: /portrait, PADI idle$/ }).click();
   await page.waitForFunction(() => window.__padiVoiceCheck.tracks.some(track => track.readyState === 'live'));
+  await listening(page);
+}
+
+async function listening(page) {
+  await page.getByRole('button', { name: /portrait, PADI listening$/ }).waitFor({ timeout: 155000 });
+  assert.equal(await page.evaluate(() => window.__padiVoiceCheck.activePlayback), 0, 'Listening starts after playback finishes.');
 }
 
 async function assertClosed(page) {
@@ -126,27 +139,36 @@ async function waitForPlayback(page, count = 0) {
 }
 
 async function success() {
-  const { context, page, requests } = await pageFor();
+  // Represent an existing text conversation without depending on the
+  // separately configured text-chat provider. All voice turns use real Groq.
+  const marker = `HibiscusVoice${randomBytes(4).toString('hex')}`;
+  const initialMessages=[
+    {id:'fixture-user',role:'user',text:`During this voice check, answer in one concise sentence. Our temporary test word is ${marker}.`},
+    {id:'fixture-padi',role:'padi',text:`I will remember ${marker}.`},
+  ].map(message=>({...message,createdAt:Date.now(),backendChat:true,backendUserID:session.user.id,memoryRevision:0}));
+  const { context, page, requests } = await pageFor({initialMessages});
   const responses = [];
   const browserErrors = [];
+  let voiceConfig;
   page.on('pageerror', error => browserErrors.push(error.message));
   page.on('response', response => {
     const path = new URL(response.url()).pathname;
     if (path === '/v1/chat' || path.startsWith('/v1/voice/')) responses.push({ path, status: response.status() });
   });
   try {
-    await page.goto(`${frontend}/chat`);
-    const marker = `HibiscusVoice${randomBytes(4).toString('hex')}`;
-    await textTurn(page, `During this voice check, answer in one concise sentence. Our temporary test word is ${marker}.`);
-    console.log('PASS: authenticated text conversation started.');
-
-    await page.getByRole('button', { name: 'Tap to chat', exact: true }).click();
-    await page.waitForFunction(() => window.__padiVoiceCheck.tracks.some(track => track.readyState === 'live'));
-    assert.equal(await page.getByRole('button', { name: 'Start conversation', exact: true }).count(), 0);
-    await waitForPlayback(page);
+    await page.goto(`${frontend}/voice`);
+    voiceConfig = await page.evaluate(async apiURL => (await fetch(`${apiURL}/v1/voice/config`)).json(), api);
+    assert.equal(voiceConfig.local_transcription,true);assert.equal(voiceConfig.groq_conversation,true);
+    await page.getByRole('button', { name: /portrait, PADI idle$/ }).waitFor();
+    await page.screenshot({path:'/tmp/my-padi-voice-simple.png'});
+    assert.equal(await page.evaluate(() => window.__padiVoiceCheck.tracks.length),0,'Opening the screen waits for the portrait tap.');
+    await start(page);
     const greetingPlayed = await page.evaluate(() => window.__padiVoiceCheck.playing);
-    console.log('PASS: one tap connected capture and PADI greeted first with real audio.');
-    assert.equal(await page.getByRole('button', { name: /Stop and send/i }).count(), 0);
+    assert.ok(greetingPlayed>0,'The portrait tap speaks a real greeting.');
+    console.log('PASS: one portrait tap greeted, then activated listening.');
+    assert.equal(await page.getByRole('button', { name: /Record|Submit|Stop and send|Stop listening|Voice to text|Show words|Hide words/i }).count(), 0);
+    assert.equal(await page.getByText(/Voice conversation active|I’m here. Let’s talk.|Talk freely.|Tap to chat to start/i).count(),0);
+    assert.equal(requests.length,0,'Greeting echo must not create a user turn.');
     const transcription = page.waitForResponse(response => new URL(response.url()).pathname === '/v1/voice/transcribe', { timeout: 60000 });
     const voiceReply = page.waitForResponse(response => response.url().endsWith('/v1/chat'), { timeout: 155000 });
     await page.evaluate(encoded => window.__padiVoiceCheck.playInput(encoded), publicSpeech);
@@ -156,44 +178,58 @@ async function success() {
     assert.match((await recognised.json()).text.toLowerCase(), /ask not what your country/);
     const answered = await voiceReply;
     assert.equal(answered.status(), 200);
-    assert.ok((await answered.json()).reply.trim());
+    const answerText = completedStream(await answered.text());
     assert.equal(requests.at(-1).language,'en-NG','The real chat request keeps selected English');
+    assert.equal(requests.at(-1).stream,true,'Voice replies use the streaming route.');
     await waitForPlayback(page, greetingPlayed);
     const latency = await page.evaluate(() => (window.__padiVoiceCheck.lastPlaybackStarted - window.__padiVoiceCheck.inputEndedAt) / 1000);
     console.log(`First spoken reply after input ended: ${latency.toFixed(2)} seconds.`);
-    console.log('PASS: public speech was captured, transcribed, answered, and played automatically.');
+    await listening(page);
+    console.log(`PASS: public speech was captured, transcribed, and streamed to a complete response (${answerText.length} characters).`);
 
+    await page.waitForTimeout(1000);
+    assert.equal(requests.length,1,'Reply echo and silence must not create another turn.');
     const secondReply = page.waitForResponse(response => response.url().endsWith('/v1/chat'), { timeout: 155000 });
-    const pausedBefore = await page.evaluate(() => window.__padiVoiceCheck.paused);
-    const endedBefore = await page.evaluate(() => window.__padiVoiceCheck.ended);
     await page.evaluate(encoded => window.__padiVoiceCheck.playInput(encoded), continuation);
-    await page.waitForFunction(count => window.__padiVoiceCheck.paused > count, pausedBefore);
     const continued = await secondReply;
     assert.equal(continued.status(), 200);
     const lastRequest = requests.at(-1);
     assert.equal(lastRequest.delivery, 'voice');
-    assert.ok(lastRequest.voice_context?.interrupted_reply);
+    assert.equal(lastRequest.stream,true);
+    assert.ok(lastRequest.messages.some(message=>message.content===answerText),'The second voice turn retains the first reply.');
     assert.match(lastRequest.messages.at(-1).content.toLowerCase(), /continue/);
-    await page.waitForFunction(count => window.__padiVoiceCheck.ended > count, endedBefore, { timeout: 65000 });
-    await page.getByText('I’m listening', { exact: true }).waitFor();
+    completedStream(await continued.text());
+    await listening(page);
     const constraints = await page.evaluate(() => window.__padiVoiceCheck.constraints.audio);
     assert.equal(constraints.echoCancellation, true);
     assert.equal(constraints.noiseSuppression, true);
-    console.log('PASS: speaking interrupted playback, sent continuation context, and returned to listening.');
+    assert.equal(await page.evaluate(()=>window.__padiVoiceCheck.tracks.length),1,'Both turns use the same microphone session.');
+    assert.equal(requests.length,2,'PADI cannot answer its own spoken audio.');
+    console.log('PASS: silence completed two voice turns, with automatic listening and echo rejection.');
 
-    await page.getByRole('button', { name: 'Pause chat', exact: true }).click();
+    await page.getByRole('button', { name: 'Switch to text', exact: true }).click();
     await assertClosed(page);
-    await page.getByRole('button', { name: 'End chat', exact: true }).first().click();
-    assert.match(await textTurn(page, 'What was our temporary test word? Reply with only the word.'), new RegExp(marker));
-    assert.equal(requests.at(-1).delivery, 'text');
-    assert.ok(requests.at(-1).messages.some(message => /ask not what your country/i.test(message.content)));
-    console.log('PASS: Pause closed capture; switching back to text retained the real conversation.');
+    await page.getByRole('textbox').first().waitFor();
+    const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('app:v1:chat-messages')||'[]'));
+    assert.ok(saved.some(message=>message.text===answerText));
+    assert.ok(saved.some(message=>message.text.includes(marker)));
+    assert.ok(saved.some(message=>/ask not what your country/i.test(message.text)));
+    console.log('PASS: switching to text closed capture and retained the real conversation.');
 
-    await page.getByRole('button', { name: 'Tap to chat', exact: true }).click();
-    await page.waitForFunction(() => window.__padiVoiceCheck.tracks.some(track => track.readyState === 'live'));
-    await page.getByRole('button', { name: 'End chat', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Switch to voice', exact: true }).click();
+    await start(page);
+    const resumedReply=page.waitForResponse(response=>response.url().endsWith('/v1/chat'),{timeout:155000});
+    const playedBefore=await page.evaluate(()=>window.__padiVoiceCheck.playing);
+    await page.evaluate(encoded=>window.__padiVoiceCheck.playInput(encoded),continuation);
+    const resumed=await resumedReply;
+    assert.equal(resumed.status(),200);completedStream(await resumed.text());
+    assert.ok(requests.at(-1).messages.some(message=>message.content===answerText));
+    assert.ok(requests.at(-1).messages.some(message=>message.content.includes(marker)),'Reopening voice mode retains the text and voice context.');
+    await waitForPlayback(page,playedBefore);
+    await page.getByRole('button', { name: 'Switch to text', exact: true }).click();
     await assertClosed(page);
-    console.log('PASS: End/navigation closed a restarted microphone.');
+    assert.equal(await page.evaluate(()=>window.__padiVoiceCheck.activePlayback),0);
+    console.log('PASS: calling PADI again resumed context; leaving during playback stopped audio and capture.');
   } catch (error) {
     const state = await page.evaluate(() => ({
       url: location.pathname,
@@ -217,7 +253,7 @@ async function denied() {
   try {
     await page.goto(`${frontend}/voice`);
     assert.equal(await page.evaluate(async () => (await navigator.permissions.query({ name: 'microphone' })).state), 'denied');
-    await page.getByRole('button', { name: 'Tap to chat', exact: true }).click();
+    await page.getByRole('button', { name: /portrait, PADI idle$/ }).click();
     await page.getByRole('alert').filter({ hasText: /microphone/i }).waitFor();
     await assertClosed(page);
     console.log('PASS: denied microphone permission produced an error and opened no capture.');
@@ -229,7 +265,7 @@ async function denied() {
 async function unavailable() {
   const { context, page, requests } = await pageFor();
   try {
-    await page.route('**/v1/voice/call?*', route => {
+    await page.route(url=>/\/v1\/voice\/(call|speak)$/.test(url.pathname), route => {
       if (route.request().method() === 'OPTIONS') return route.continue();
       return route.fulfill({status:200,contentType:'application/json',headers:{'Access-Control-Allow-Origin':new URL(frontend).origin},
         body:JSON.stringify({audio_base64:continuation,mime_type:'audio/wav',text:'Hey! How are you?'})});
@@ -247,7 +283,7 @@ async function unavailable() {
     await page.evaluate(encoded => window.__padiVoiceCheck.playInput(encoded), publicSpeech);
     await page.getByRole('alert').filter({ hasText: 'Verification service outage.' }).waitFor();
     assert.equal(requests.length, 0, 'Failed transcription must not invent a chat message.');
-    await page.getByRole('button', { name: 'Pause chat', exact: true }).click();
+    await page.getByRole('button', { name: 'Switch to text', exact: true }).click();
     await assertClosed(page);
     console.log('PASS: simulated service failure reported accurately, created no chat turn, and remained stoppable.');
   } finally {

@@ -10,6 +10,13 @@ test('natural speech segments preserve decimals, list numbers and every spoken w
   assert.deepEqual(speechSegments(''),[]);
 });
 
+test('streamed speech releases complete sentences and buffers an unfinished sentence',()=>{
+  const {takeCompletedSentences}=loadTS('src/lib/voice-audio.ts',{'react-native':{Platform:{OS:'web'}},'expo-file-system':{}});
+  assert.deepEqual(takeCompletedSentences('Hello there. How are').sentences,['Hello there.']);
+  assert.equal(takeCompletedSentences('Hello there. How are').remainder,'How are');
+  assert.deepEqual(takeCompletedSentences('Dr. Ada is here!').sentences,['Dr. Ada is here!']);
+});
+
 test('spoken text preserves words, numbers and maths while removing decorative Markdown and emojis', () => {
   const text = '# **Get eggs** 😊\n- Take *two* eggs.\n1. **Get bread** 🍞\nRead [the guide](https://padi.test). 2 * 3 = 6.\n```js\nconsole.log(1)\n```';
   const spoken = spokenText(text);

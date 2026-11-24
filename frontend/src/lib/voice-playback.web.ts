@@ -1,4 +1,5 @@
 import { portraitSpeech, speechEnvelope } from '@/lib/portrait-speech';
+import { preparePlaybackReference } from '@/lib/voice-echo';
 
 let output: AudioContext | null = null;
 
@@ -75,4 +76,87 @@ export async function playVoice(encoded: string, signal: AbortSignal, onStart: (
     face?.stop();
     source.onended = null; source.disconnect();
   }
+}
+
+/** One output context and one audio-clock timeline for the whole response.
+ * Buffer sources are single-use Web Audio nodes, not separate audio players. */
+export function createVoiceQueue(signal: AbortSignal, voiceId?: string) {
+  let scheduling = Promise.resolve();
+  const played: Promise<void>[] = [];
+  const clips = new Set<{ source: AudioBufferSourceNode; start: number; end: number;
+    envelope: ReturnType<typeof speechEnvelope> | null; began: boolean; onStart(): void; finish(): void }>();
+  let end = 0;
+  let face: ReturnType<typeof portraitSpeech> | undefined;
+  let progress: ReturnType<typeof setInterval> | undefined;
+  let sealed = false;
+  const stop = () => {
+    for (const clip of [...clips]) { try { clip.source.stop(); } finally { clip.finish(); } }
+    if(progress)clearInterval(progress);
+    face?.stop();
+  };
+  signal.addEventListener('abort', stop, { once: true });
+  const report = () => {
+    const now = output?.currentTime ?? 0;
+    for (const clip of clips) {
+      if (now < clip.start || now >= clip.end) continue;
+      if (!clip.began) { clip.began = true; clip.onStart(); }
+      face?.report(clip.envelope?.levelAt(now - clip.start) ?? 0);
+      return;
+    }
+    face?.report(0);
+  };
+  return {
+    enqueue(encoded: string, onStart: () => void, completed: () => void): Promise<void> {
+      if (sealed || signal.aborted) return Promise.resolve();
+      let resolve!: () => void;
+      let reject!: (error: unknown) => void;
+      const done = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+      played.push(done);
+      scheduling = scheduling.then(async () => {
+        if (signal.aborted) { resolve(); return; }
+        await unlockVoicePlayback();
+        const context = output!;
+        const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+        let buffer: AudioBuffer;
+        try { buffer = await context.decodeAudioData(bytes.buffer); }
+        catch { throw new Error('Voice audio could not be decoded. The reply is available in text chat.'); }
+        if (signal.aborted) { resolve(); return; }
+        const source = context.createBufferSource(); source.buffer = buffer;
+        source.connect(context.destination);
+        // Do CPU work before reserving an audio-clock slot. Otherwise decoding
+        // the envelope can make the first slot stale and overlap the next clip.
+        const envelope=voiceId?speechEnvelope(encoded):null;
+        const reference=preparePlaybackReference(buffer.getChannelData(0),buffer.sampleRate);
+        const start = Math.max(context.currentTime+256/context.sampleRate, end);
+        end = start + buffer.duration;
+        const clip = { source, start, end, began: false, onStart,
+          envelope,
+          stopReference:reference(()=>context.currentTime-start),
+          finish() {
+            if (!clips.delete(clip)) return;
+            clip.stopReference();
+            source.onended = null; source.disconnect();
+            if (!signal.aborted) { if (!clip.began) onStart(); completed(); }
+            resolve();
+          } };
+        clips.add(clip); source.onended = clip.finish;
+        try { source.start(start); }
+        catch (error) { clips.delete(clip); clip.stopReference(); source.onended = null; source.disconnect(); throw error; }
+        if (!face && voiceId) face = portraitSpeech(voiceId);
+        progress ??= setInterval(report, 20);
+        report();
+      }).catch(error => { reject(error); throw error; });
+      void scheduling.catch(() => undefined);
+      return done;
+    },
+    async finish() {
+      sealed = true;
+      try { await scheduling; await Promise.all(played); }
+      finally {
+        if (progress) clearInterval(progress);
+        face?.stop(); signal.removeEventListener('abort', stop);
+        stop();
+      }
+    },
+  };
 }

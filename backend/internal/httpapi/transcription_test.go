@@ -124,6 +124,9 @@ func TestCancelledUploadCancelsCoordinatorWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	request.Header = template.Header
+	// Preserve the fixture's known body length instead of accidentally sending
+	// chunked HTTP, whose unread trailer can mask disconnect cancellation.
+	request.ContentLength = template.ContentLength
 	done := make(chan error, 1)
 	go func() {
 		response, err := server.Client().Do(request)

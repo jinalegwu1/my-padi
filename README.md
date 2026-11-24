@@ -43,7 +43,9 @@ keeping the PostgreSQL ledger; provider limits still apply. See the
 [usage-cap bypass instructions](./backend/README.md#temporary-development-usage-cap-bypass).
 Voice now supports a hands-free conversation flow through a separate Python
 Voice Engine: automatic speaking-turn detection, speech recognition, expressive
-spoken replies, and interruption when the user starts talking. Go retains
+spoken replies, and automatic listening after each reply. Tapping PADI's picture
+wakes the conversation; silence ends a turn, and genuine speech interrupts PADI
+while echo cancellation rejects its speaker audio. Go retains
 account authentication, shared chat context, memory permissions, and usage
 tracking. The browser flow passed an end-to-end test. Android/iPhone require
 an Expo development build with the new native echo-cancelled capture module;

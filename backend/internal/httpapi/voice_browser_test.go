@@ -18,10 +18,22 @@ func TestHandsfreeBrowser(t *testing.T) {
 	if os.Getenv("PADI_VERIFY_VOICE_BROWSER") != "1" {
 		t.Skip("explicit browser voice verification disabled")
 	}
+	runBrowserVerification(t, 6*time.Minute)
+}
+
+func TestPersonalityBrowser(t *testing.T) {
+	if os.Getenv("PADI_VERIFY_PERSONALITY_BROWSER") != "1" {
+		t.Skip("explicit live personality verification disabled")
+	}
+	runBrowserVerification(t, 14*time.Minute)
+}
+
+func runBrowserVerification(t *testing.T, timeout time.Duration) {
+	t.Helper()
 	if os.Getenv("PADI_ENV") != "development" {
 		t.Fatal("browser test requires development mode")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	db, err := database.Open(ctx, config.Load().DatabaseURL)
 	if err != nil {

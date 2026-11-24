@@ -16,6 +16,18 @@ async function fixture() {
   const api = {
     APIError: class extends Error {},
     sendChat: async (...args) => { calls.push(args); return backend(...args); },
+    streamVoiceChat: async (token, messages, memoryRevision, signal, onText, voiceContext, languageCode, greeting) => {
+      const request = backend(token, messages, memoryRevision, signal, 'voice', voiceContext, languageCode);
+      calls.push([token, messages, memoryRevision, signal, 'voice', voiceContext, languageCode, greeting]);
+      return new Promise((resolve, reject) => {
+        const abort = () => reject(Object.assign(new Error('Cancelled'), { name: 'AbortError' }));
+        signal.addEventListener('abort', abort, { once: true });
+        request.then(response => {
+          signal.removeEventListener('abort', abort);
+          if (!signal.aborted) { onText(response.reply); resolve(response); }
+        }, error => { signal.removeEventListener('abort', abort); reject(error); });
+      });
+    },
     submitResponseFeedback: async (...args) => { feedbackCalls.push(args); },
   };
   let id = 0;
@@ -23,6 +35,7 @@ async function fixture() {
     '@/data/mock-conversations': { WELCOME_MESSAGE: 'Welcome', nextId: prefix => `${prefix}-${++id}` },
     '@/hooks/use-persistent-state': { usePersistentState: () => { const [items, update] = React.useState([]); return [items, update, 'ready']; } },
     '@/lib/api': api, '@/lib/config': { hasBackend: true }, '@/lib/chat-context': context,
+    '@/lib/greeting': loadTS('src/lib/greeting.ts'),
     '@/lib/session': {
       readSession: async () => session,
       subscribeSession: fn => { listeners.add(fn); return () => listeners.delete(fn); },
@@ -56,6 +69,77 @@ test('text and voice share replies, consent revision, and conversation context',
     assert.equal(f.text.messages.length, 4);
     assert.equal(f.text.messages[2].viaVoice, true);
     assert.equal(f.text.messages[3].backendUserID, 'a');
+  } finally { await f.close(); }
+});
+
+test('first text greeting uses real chat guidance without displaying a synthetic user turn', async () => {
+  const f = await fixture();
+  try {
+    f.backend(async () => ({ reply: 'Hey! Good to see you. What has your day been up to?', memory_revision: 0 }));
+    await act(async () => { assert.equal((await f.text.greet('a', 'fr-FR')).status, 'sent'); });
+    assert.equal(f.calls[0][4], 'text');
+    assert.equal(f.calls[0][7], true);
+    assert.match(f.calls[0][1][0].content, /spontaneous/);
+    assert.match(f.calls[0][1][0].content, /fr-FR/);
+    assert.equal(f.text.messages.length, 1);
+    assert.equal(f.text.messages[0].role, 'padi');
+    assert.equal(f.text.messages[0].backendUserID, 'a');
+    await act(async () => { await f.text.send('My day is going well.', 'a'); });
+    assert.equal(f.calls[1][1][0].content, 'Hey! Good to see you. What has your day been up to?');
+    assert.equal(f.calls[1][1].length, 2);
+  } finally { await f.close(); }
+});
+
+test('voice greeting resumes existing context through the voice stream, and reset generates a fresh greeting', async () => {
+  const f = await fixture();
+  try {
+    await act(async () => { await f.text.send('I am practising for an interview.', 'a'); });
+    const deltas = [];
+    await act(async () => { await f.voice.greet('a', 'pcm-NG', new AbortController().signal, delta => deltas.push(delta)); });
+    assert.equal(f.calls[1][4], 'voice');
+    assert.equal(f.calls[1][7], true);
+    assert.equal(f.calls[1][1][0].content, 'I am practising for an interview.');
+    assert.equal(f.calls[1][6], 'pcm-NG');
+    assert.deepEqual(deltas, ['Real reply 😊']);
+    assert.equal(f.voice.messages.filter(m => m.role === 'user').length, 1);
+    await act(async () => { f.text.reset(); });
+    assert.equal(f.text.messages.length, 0);
+    f.backend(async () => ({ reply: 'Hey! What are we exploring today?', memory_revision: 0 }));
+    await act(async () => { await f.text.greet('a'); });
+    assert.equal(f.calls.at(-1)[1].length, 1);
+    assert.equal(f.text.messages[0].text, 'Hey! What are we exploring today?');
+  } finally { await f.close(); }
+});
+
+test('new chat varies the greeting opening and account changes clear that hint', async () => {
+  const f = await fixture();
+  try {
+    f.backend(async () => ({ reply: 'Hey! What are we exploring today?', memory_revision: 0 }));
+    await act(async () => { await f.text.greet('a'); });
+    await act(async () => { f.text.reset(); });
+    f.backend(async () => ({ reply: 'Hello! Fresh start.', memory_revision: 0 }));
+    await act(async () => { await f.text.greet('a'); });
+    assert.match(f.calls.at(-1)[1][0].content, /different word from hey/);
+    await f.switchAccount();
+    await act(async () => { await f.text.greet('b'); });
+    assert.doesNotMatch(f.calls.at(-1)[1][0].content, /different word from/);
+  } finally { await f.close(); }
+});
+
+test('cancelled or stale greetings cannot appear in the next conversation', async () => {
+  const f = await fixture();
+  const pending = deferred();
+  try {
+    f.backend(() => pending.promise);
+    const controller = new AbortController();
+    let greeting;
+    await act(async () => { greeting = f.voice.greet('a', 'en-NG', controller.signal); });
+    await act(async () => { controller.abort(); pending.resolve({ reply: 'Late greeting', memory_revision: 0 }); await greeting; });
+    assert.equal(f.text.messages.length, 0);
+    assert.equal(f.text.isThinking, false);
+    await f.switchAccount();
+    await act(async () => { assert.equal((await f.text.greet('a')).status, 'ignored'); });
+    assert.equal(f.text.messages.length, 0);
   } finally { await f.close(); }
 });
 

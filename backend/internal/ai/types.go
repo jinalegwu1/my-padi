@@ -54,6 +54,7 @@ type Request struct {
 	StructuredOutput bool       `json:"structured_output,omitempty"`
 	MaxOutputTokens  int        `json:"max_output_tokens,omitempty"`
 	StyleGuidance    string     `json:"-"`
+	SuppressHumour   bool       `json:"-"`
 }
 
 type Usage struct {
@@ -113,6 +114,10 @@ type UsageLimiter interface {
 
 type Provider interface {
 	Generate(context.Context, ModelConfig, Request) (Response, error)
+}
+
+type StreamingProvider interface {
+	Stream(context.Context, ModelConfig, Request, func(string) error) (Response, error)
 }
 
 type Event struct {

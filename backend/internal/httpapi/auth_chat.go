@@ -40,6 +40,11 @@ type ChatGenerator interface {
 	Generate(context.Context, ai.Request) (ai.Response, error)
 }
 
+type StreamingVoiceChatGenerator interface {
+	SupportsGroqVoiceStreaming() bool
+	StreamVoice(context.Context, ai.Request, func(string) error) (ai.Response, error)
+}
+
 type Dependencies struct {
 	Auth                 AuthAPI
 	Chat                 ChatGenerator
@@ -204,6 +209,8 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Delivery     string `json:"delivery"`
+		Stream       bool   `json:"stream"`
+		Greeting     bool   `json:"greeting"`
 		Language     string `json:"language"`
 		VoiceContext *struct {
 			InterruptedReply string `json:"interrupted_reply"`
@@ -226,6 +233,10 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Delivery != "" && body.Delivery != "text" && body.Delivery != "voice" {
 		writeAPIError(w, 400, "invalid_request", "Choose text or voice delivery.")
+		return
+	}
+	if body.Stream && body.Delivery != "voice" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "Streaming is only available for voice conversations.")
 		return
 	}
 	if body.Language != "" && !validSpeechLanguage(body.Language) {
@@ -295,7 +306,7 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if body.Delivery == "voice" || body.VoiceContext != nil {
 		instruction := ""
 		if body.Delivery == "voice" {
-			instruction = `This is a spoken conversation with PADI. Speak naturally like a thoughtful friend, using everyday words, contractions, clear short sentences, and natural punctuation. For ordinary conversation, answer directly in one or two short sentences, usually under 45 words, and give the user room to answer. Begin with the useful answer instead of a preamble. Match the user's mood; do not force jokes, banter, questions, filler, or repeated introductions. Avoid headings, Markdown lists, tables, and essay-like answers unless the user asks for structured or detailed teaching. Preserve the shared PADI personality, honesty, memory permissions, and action approval rules.`
+			instruction = `This is a spoken conversation with PADI. Keep the same warm, lively, witty identity as text chat, using everyday words, contractions, clear short sentences, and natural punctuation. For ordinary conversation, answer directly in one or two short sentences, usually under 45 words, and give the user room to answer. Begin with the useful answer instead of a preamble. Match the user's mood; do not force jokes, banter, questions, filler, or repeated introductions. This speech system does not support controlled nonverbal laughter: express amusement in natural words rather than laughing emojis, stage directions, or synthetic laughter cues. Avoid headings, Markdown lists, tables, and essay-like answers unless the user asks for structured or detailed teaching. Preserve the shared PADI personality, honesty, memory permissions, and action approval rules.`
 			language := body.Language
 			if language == "" {
 				language = "en-NG"
@@ -323,11 +334,25 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		messages = append([]ai.Message{{Role: ai.RoleSystem, Content: context}}, messages...)
 	}
 	latestUserMessage := messages[len(messages)-1].Content
+	if body.Greeting {
+		// Assess a returning greeting against the valid conversation after the
+		// memory-revision boundary, rather than the synthetic greeting request.
+		for index := len(messages) - 2; index >= 0; index-- {
+			if messages[index].Role == ai.RoleUser {
+				latestUserMessage = messages[index].Content
+				break
+			}
+		}
+	}
 	chatRequest := ai.Request{
-		Messages:      messages,
-		Task:          ai.TaskConversation,
-		Voice:         body.Delivery == "voice",
-		StyleGuidance: personality.ResponseGuidance(latestUserMessage, personalityPreferences),
+		Messages:       messages,
+		Task:           ai.TaskConversation,
+		Voice:          body.Delivery == "voice",
+		StyleGuidance:  personality.ResponseGuidance(latestUserMessage, personalityPreferences),
+		SuppressHumour: !personality.Assess(latestUserMessage, personalityPreferences).HumourAllowed,
+	}
+	if body.Greeting {
+		chatRequest.StyleGuidance = personality.GreetingGuidance(latestUserMessage, personalityPreferences)
 	}
 	if body.Delivery == "voice" {
 		_, complexity := ai.InferTaskAndComplexity(messages)
@@ -337,6 +362,15 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			chatRequest.Complexity = ai.ComplexitySimple
 			chatRequest.MaxOutputTokens = 512
 		}
+	}
+	if body.Stream {
+		streamer, ok := handler.chat.(StreamingVoiceChatGenerator)
+		if !ok || !streamer.SupportsGroqVoiceStreaming() {
+			writeAPIError(w, http.StatusServiceUnavailable, "voice_stream_unavailable", "Groq voice streaming is not configured.")
+			return
+		}
+		handler.streamVoice(w, ctx, streamer, chatRequest, memoryRevision)
+		return
 	}
 	response, err := handler.chat.Generate(ctx, chatRequest)
 	if err != nil {
@@ -355,6 +389,58 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Reply          string `json:"reply"`
 		MemoryRevision int64  `json:"memory_revision"`
 	}{Reply: response.Content, MemoryRevision: memoryRevision})
+}
+
+func (handler chatHandler) streamVoice(w http.ResponseWriter, ctx context.Context, streamer StreamingVoiceChatGenerator, request ai.Request, memoryRevision int64) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeAPIError(w, http.StatusInternalServerError, "stream_unavailable", "This server cannot stream voice responses.")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	response, err := streamer.StreamVoice(ctx, request, func(delta string) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if delta == "" {
+			return nil
+		}
+		if err := writeServerEvent(w, "delta", map[string]string{"text": delta}); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	})
+	if err != nil {
+		_, code, message := classifyChatError(err)
+		if handler.logger != nil {
+			handler.logger.Warn("streaming AI chat request failed", "class", code)
+		}
+		_ = writeServerEvent(w, "error", map[string]string{"error": code, "message": message})
+		flusher.Flush()
+		return
+	}
+	if strings.TrimSpace(response.Content) == "" {
+		_ = writeServerEvent(w, "error", map[string]string{"error": "empty_provider_response", "message": "PADI could not get a response right now. Please try again."})
+		flusher.Flush()
+		return
+	}
+	_ = writeServerEvent(w, "done", map[string]any{"reply": response.Content, "memory_revision": memoryRevision})
+	flusher.Flush()
+}
+
+func writeServerEvent(w io.Writer, name string, value any) error {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, encoded)
+	return err
 }
 
 func voiceReplyLanguage(language string) string {

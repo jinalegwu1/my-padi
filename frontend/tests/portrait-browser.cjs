@@ -125,8 +125,9 @@ async function transformChanges(locator) {
     if (!idleOnly) {
       const before=await page.evaluate(()=>window.__portraitAudit.starts);
       await portrait.click();
-      await page.waitForFunction(before=>window.__portraitAudit.starts>before,before);
-      assert.equal(await page.getByRole('button',{name:'Tap to chat',exact:true}).isEnabled(),true,'Portrait greeting does not start microphone chat');
+      await page.getByRole('alert').filter({hasText:/Sign in to talk with PADI/}).waitFor();
+      assert.equal(await page.evaluate(()=>window.__portraitAudit.starts),before,'Signed-out portrait taps do not play speech or open a conversation');
+      assert.equal(await page.getByRole('button',{name:'Tap to chat',exact:true}).count(),0,'The portrait is the voice interaction');
     }
     assert.equal(await transformChanges(page.getByTestId('padi-portrait-ada-face')), true);
     await page.screenshot({ path: '/tmp/my-padi-portrait-motion/live.png' });

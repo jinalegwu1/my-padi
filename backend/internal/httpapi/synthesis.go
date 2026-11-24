@@ -18,6 +18,11 @@ type LiveSpeechSynthesiser interface {
 	SynthesiseLive(context.Context, string, string, float64, string) (voice.Audio, error)
 }
 
+type GroqLiveSpeechSynthesiser interface {
+	SupportsGroqLiveSpeech() bool
+	SynthesiseGroqLive(context.Context, string, string, float64, string) (voice.Audio, error)
+}
+
 func validSpeechLanguage(language string) bool {
 	switch language {
 	case "en-NG", "pcm-NG", "en-GB", "fr-FR", "pt-BR", "es-ES", "ar-SA", "sw-KE", "ha-NG", "yo-NG", "ig-NG", "am-ET", "hi-IN", "zh-CN":
@@ -54,6 +59,7 @@ func synthesisHandler(deps Dependencies) http.HandlerFunc {
 			Rate     float64 `json:"rate"`
 			Language string  `json:"language"`
 			Live     bool    `json:"live"`
+			GroqOnly bool    `json:"groq_only"`
 		}
 		if decodeRequest(w, r, 64*1024, &body) != nil || !utf8.ValidString(body.Text) || strings.TrimSpace(body.Text) == "" || len(body.Text) > 8192 || body.Rate < 0.5 || body.Rate > 1.5 {
 			writeAPIError(w, 400, "invalid_request", "The spoken reply is invalid.")
@@ -79,7 +85,14 @@ func synthesisHandler(deps Dependencies) http.HandlerFunc {
 		defer cancel()
 		var audio voice.Audio
 		var err error
-		if fast, ok := deps.Synthesis.(LiveSpeechSynthesiser); ok && body.Live {
+		if body.GroqOnly {
+			fast, ok := deps.Synthesis.(GroqLiveSpeechSynthesiser)
+			if !ok || !fast.SupportsGroqLiveSpeech() {
+				writeAPIError(w, http.StatusServiceUnavailable, "groq_speech_unavailable", "Groq speech is not configured for this voice.")
+				return
+			}
+			audio, err = fast.SynthesiseGroqLive(ctx, body.Text, body.Style, body.Rate, body.Language)
+		} else if fast, ok := deps.Synthesis.(LiveSpeechSynthesiser); ok && body.Live {
 			audio, err = fast.SynthesiseLive(ctx, body.Text, body.Style, body.Rate, body.Language)
 		} else {
 			audio, err = deps.Synthesis.Synthesise(ctx, body.Text, body.Style, body.Rate, body.Language)

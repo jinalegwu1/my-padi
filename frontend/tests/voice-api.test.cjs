@@ -3,6 +3,24 @@ const assert = require('node:assert/strict');
 const { loadTS } = require('./helpers/load-ts.cjs');
 const api = loadTS('src/lib/api.ts', { '@/lib/config': { API_URL: 'https://padi.test' } });
 
+test('greeting metadata uses the existing text chat endpoint without altering ordinary sends', async () => {
+  const previous = global.fetch;
+  const bodies = [];
+  global.fetch = async (url, request) => {
+    assert.equal(url, 'https://padi.test/v1/chat');
+    bodies.push(JSON.parse(request.body));
+    return { ok: true, status: 200, text: async () => JSON.stringify({ reply: 'Hey!', memory_revision: 0 }) };
+  };
+  try {
+    const messages = [{ role: 'user', content: 'Greet me briefly.' }];
+    await api.sendChat('token', messages, 0, undefined, 'text', undefined, 'en-NG', true);
+    await api.sendChat('token', messages, 0);
+    assert.equal(bodies[0].greeting, true);
+    assert.equal(Object.hasOwn(bodies[1], 'greeting'), false);
+    assert.equal(bodies[0].delivery, 'text');
+  } finally { global.fetch = previous; }
+});
+
 test('personal speech carries the selected voice, pace and Pidgin language behind authentication', async () => {
   const previous = global.fetch;
   global.fetch = async (url, request) => {
@@ -65,6 +83,41 @@ test('live speech remains compatible with existing servers and enables routing o
     await api.synthesiseSpeech('token','Hello','ada',1,new AbortController().signal,'en-NG',true);
     assert.equal(body.live,true);
   } finally {global.fetch=previous;}
+});
+
+test('voice chat sends authenticated Groq-stream request and exposes deltas before completion',async()=>{
+  const previous=global.XMLHttpRequest;
+  const chunks=[
+    'event: delta\ndata: {"text":"Hello "}\n\n',
+    'event: delta\ndata: {"text":"there."}\n\n',
+    'event: done\ndata: {"reply":"Hello there.","memory_revision":7}\n\n',
+  ];
+  let request;
+  global.XMLHttpRequest=class {
+    responseText='';status=0;timeout=0;headers={};
+    open(method,url){this.method=method;this.url=url;}
+    setRequestHeader(name,value){this.headers[name]=value;}
+    getResponseHeader(){return 'text/event-stream; charset=utf-8';}
+    send(body){
+      this.body=JSON.parse(body);request=this;
+      for(const chunk of chunks){this.responseText+=chunk;this.onprogress();}
+      this.status=200;this.onload();
+    }
+    abort(){this.onabort?.();}
+  };
+  const received=[];
+  try {
+    const result=await api.streamVoiceChat('session-token',[{role:'user',content:'Hello'}],7,new AbortController().signal,text=>received.push(text));
+    assert.equal(request.url,'https://padi.test/v1/chat');
+    assert.equal(request.method,'POST');
+    assert.equal(request.headers.Authorization,'Bearer session-token');
+    assert.equal(request.body.delivery,'voice');assert.equal(request.body.stream,true);
+    assert.deepEqual(received,['Hello ','there.']);
+    assert.deepEqual(result,{reply:'Hello there.',memory_revision:7});
+    assert.equal(Object.hasOwn(request.body,'greeting'),false);
+    await api.streamVoiceChat('session-token',[{role:'user',content:'Greet me briefly.'}],7,new AbortController().signal,()=>{},undefined,'en-NG',true);
+    assert.equal(request.body.greeting,true);
+  } finally {global.XMLHttpRequest=previous;}
 });
 
 test('selected voice language travels to transcription, chat and previews when supported',async()=>{

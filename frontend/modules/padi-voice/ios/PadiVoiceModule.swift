@@ -12,6 +12,9 @@ public class PadiVoiceModule: Module {
   private let player = AVAudioPlayerNode()
   private var playback: Promise?
   private var playbackGeneration = 0
+  private var queuedPlayback: [Int: Promise] = [:]
+  private var queueFinisher: Promise?
+  private var nextClip = 0
   private var hasTap = false
 
   public func definition() -> ModuleDefinition {
@@ -21,6 +24,12 @@ public class PadiVoiceModule: Module {
     Function("stop") { self.onMain { self.stopCapture() } }
     AsyncFunction("play") { (encoded: String, promise: Promise) in self.playAudio(encoded, promise) }.runOnQueue(.main)
     Function("stopPlayback") { self.onMain { self.stopPlayback() } }
+    Function("beginQueuedPlayback") { self.onMain { self.stopPlayback() } }
+    AsyncFunction("enqueueAudio") { (encoded: String, promise: Promise) in self.enqueueAudio(encoded, promise) }.runOnQueue(.main)
+    AsyncFunction("finishQueuedPlayback") { (promise: Promise) in
+      if self.queuedPlayback.isEmpty { self.player.stop(); promise.resolve(nil) }
+      else { self.queueFinisher = promise }
+    }.runOnQueue(.main)
     OnDestroy { self.onMain { self.stopCapture() } }
   }
 
@@ -91,6 +100,8 @@ public class PadiVoiceModule: Module {
     playbackGeneration += 1
     player.stop()
     playback?.resolve(nil); playback = nil
+    queuedPlayback.values.forEach { $0.resolve(nil) }; queuedPlayback.removeAll()
+    queueFinisher?.resolve(nil); queueFinisher = nil
   }
 
   private func playAudio(_ encoded: String, _ promise: Promise) {
@@ -120,6 +131,38 @@ public class PadiVoiceModule: Module {
       }
     }
     player.play()
+  }
+
+  private func enqueueAudio(_ encoded: String, _ promise: Promise) {
+    guard engine != nil, let bytes = Data(base64Encoded: encoded), bytes.count > 44,
+      bytes.count <= 8 * 1024 * 1024, String(data: bytes.prefix(4), encoding: .ascii) == "RIFF",
+      let format = AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1),
+      let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount((bytes.count - 44) / 2)),
+      let output = buffer.floatChannelData else { promise.reject(VoiceCaptureError()); return }
+    let frames = (bytes.count - 44) / 2
+    buffer.frameLength = AVAudioFrameCount(frames)
+    bytes.withUnsafeBytes { raw in
+      let data = raw.bindMemory(to: UInt8.self)
+      for index in 0..<frames {
+        let sample = Int16(bitPattern: UInt16(data[44+index*2]) | UInt16(data[45+index*2]) << 8)
+        output[0][index] = Float(sample) / 32768
+      }
+    }
+    nextClip += 1
+    let clip = nextClip, started = playbackGeneration
+    queuedPlayback[clip] = promise
+    // AVAudioPlayerNode concatenates untimed scheduled buffers. Keep it running
+    // between clips and stop only on cancellation or after the entire queue.
+    player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+      DispatchQueue.main.async { [weak self] in
+        guard let self, self.playbackGeneration == started else { return }
+        self.queuedPlayback.removeValue(forKey: clip)?.resolve(nil)
+        if self.queuedPlayback.isEmpty, let finish = self.queueFinisher {
+          self.queueFinisher = nil; self.player.stop(); finish.resolve(nil)
+        }
+      }
+    }
+    if !player.isPlaying { player.play() }
   }
 }
 

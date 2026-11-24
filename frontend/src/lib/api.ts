@@ -172,16 +172,140 @@ export function sendChat(
   delivery: 'text' | 'voice' = 'text',
   voiceContext?: { interrupted_reply: string; spoken_prefix: string },
   languageCode?: string,
+  greeting = false,
 ): Promise<{ reply: string; memory_revision: number }> {
   return requestJSON('/v1/chat', { messages, memory_revision: memoryRevision, delivery, voice_context: voiceContext,
+    ...(greeting ? { greeting: true } : {}),
     ...(delivery === 'voice' && voiceLanguageSupported && languageCode ? {language:languageCode} : {}),
   }, { token, timeoutMs: 155_000, signal });
+}
+
+export function streamVoiceChat(
+  token: string,
+  messages: { role: 'user' | 'assistant'; content: string }[],
+  memoryRevision: number,
+  signal: AbortSignal,
+  onText: (delta: string) => void,
+  voiceContext?: { interrupted_reply: string; spoken_prefix: string },
+  languageCode = 'en-NG',
+  greeting = false,
+): Promise<{ reply: string; memory_revision: number }> {
+  return new Promise((resolve, reject) => {
+    if (!API_URL) { reject(new Error('The PADI backend address is not configured in this app build.')); return; }
+    if (signal.aborted) { reject(Object.assign(new Error('Cancelled'), { name: 'AbortError' })); return; }
+    const xhr = new XMLHttpRequest();
+    let settled = false;
+    let readOffset = 0;
+    let buffered = '';
+    let eventName = '';
+    let eventData: string[] = [];
+    let reply = '';
+    let completed: { reply: string; memory_revision: number } | null = null;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      signal.removeEventListener('abort', abort);
+      xhr.onload = xhr.onerror = xhr.onabort = xhr.ontimeout = xhr.onprogress = null;
+      if (error) reject(error);
+      else if (completed) resolve(completed);
+      else reject(new Error('PADI ended the streamed response before it was complete.'));
+    };
+    const abort = () => xhr.abort();
+    const timeout = setTimeout(() => xhr.abort(), 155_000);
+    const failFromBody = (raw: string, status: number) => {
+      let payload: { message?: unknown; error?: unknown } = {};
+      try { payload = JSON.parse(raw) as typeof payload; } catch { /* use the standard message */ }
+      finish(new APIError(typeof payload.message === 'string' ? payload.message : 'PADI could not get a response right now. Please try again.',
+        status, typeof payload.error === 'string' ? payload.error : 'provider_unavailable'));
+    };
+    const dispatch = () => {
+      if (!eventName || eventData.length === 0) { eventName = ''; eventData = []; return; }
+      const name = eventName;
+      const raw = eventData.join('\n');
+      eventName = '';
+      eventData = [];
+      let data: unknown;
+      try { data = JSON.parse(raw); }
+      catch { throw new Error('PADI returned an invalid streamed response.'); }
+      if (!data || typeof data !== 'object') throw new Error('PADI returned an invalid streamed response.');
+      const value = data as { text?: unknown; reply?: unknown; memory_revision?: unknown; message?: unknown; error?: unknown };
+      if (name === 'delta') {
+        if (typeof value.text !== 'string' || !value.text) throw new Error('PADI returned invalid streamed text.');
+        reply += value.text;
+        if (reply.length > 200_000) throw new Error('PADI returned an oversized streamed response.');
+        onText(value.text);
+      } else if (name === 'error') {
+        throw new APIError(typeof value.message === 'string' ? value.message : 'PADI could not get a response right now. Please try again.',
+          502, typeof value.error === 'string' ? value.error : 'provider_unavailable');
+      } else if (name === 'done') {
+        if (typeof value.reply !== 'string' || value.reply !== reply ||
+            !Number.isSafeInteger(value.memory_revision) || Number(value.memory_revision) < 0) {
+          throw new Error('PADI returned an invalid completed response.');
+        }
+        completed = { reply: value.reply, memory_revision: Number(value.memory_revision) };
+      } else {
+        throw new Error('PADI returned an unsupported streamed event.');
+      }
+    };
+    const consume = (chunk: string) => {
+      buffered += chunk;
+      let newline = buffered.indexOf('\n');
+      while (newline >= 0) {
+        const line = buffered.slice(0, newline).replace(/\r$/, '');
+        buffered = buffered.slice(newline + 1);
+        if (!line) dispatch();
+        else if (line.startsWith('event:')) eventName = line.slice(6).trim();
+        else if (line.startsWith('data:')) eventData.push(line.slice(5).trimStart());
+        newline = buffered.indexOf('\n');
+      }
+    };
+    const readProgress = () => {
+      if (settled) return;
+      try {
+        const raw = xhr.responseText.slice(readOffset);
+        readOffset = xhr.responseText.length;
+        consume(raw);
+      } catch (error) { finish(error instanceof Error ? error : new Error('PADI returned an invalid streamed response.')); xhr.abort(); }
+    };
+    xhr.open('POST', `${API_URL}/v1/chat`);
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.timeout = 155_000;
+    xhr.onprogress = readProgress;
+    xhr.onerror = () => finish(new Error('The live voice connection was interrupted. Please try again.'));
+    xhr.ontimeout = () => finish(new Error('PADI took too long to respond. Please try again.'));
+    xhr.onabort = () => finish(Object.assign(new Error('Cancelled'), { name: 'AbortError' }));
+    xhr.onload = () => {
+      if (settled) return;
+      if (xhr.status < 200 || xhr.status >= 300) { failFromBody(xhr.responseText, xhr.status); return; }
+      if (!xhr.getResponseHeader('Content-Type')?.toLowerCase().includes('text/event-stream')) {
+        finish(new Error('PADI did not return a streamed voice response.'));
+        return;
+      }
+      try {
+        readProgress();
+        if (buffered) { const line = buffered.replace(/\r$/, ''); buffered = ''; if (line.startsWith('data:')) eventData.push(line.slice(5).trimStart()); else if (line.startsWith('event:')) eventName = line.slice(6).trim(); }
+        dispatch();
+        if (completed && completed.reply.trim()) finish();
+        else finish(new Error('PADI ended the streamed response before it was complete.'));
+      } catch (error) { finish(error instanceof Error ? error : new Error('PADI returned an invalid streamed response.')); }
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    try {
+      xhr.send(JSON.stringify({
+        messages, memory_revision: memoryRevision, delivery: 'voice', stream: true, voice_context: voiceContext,
+        ...(greeting ? { greeting: true } : {}),
+        ...(voiceLanguageSupported ? { language: languageCode } : {}),
+      }));
+    } catch (error) { finish(error instanceof Error ? error : new Error('The live voice request could not be sent.')); }
+  });
 }
 
 let liveSpeechSupported = false;
 let voiceLanguageSupported = false;
 
-export type VoiceConfiguration = { enabled: boolean; max_seconds: number; natural_speech?: boolean; live_speech?: boolean; language_selection?: boolean; local_transcription?: boolean; transcription_ready?: boolean; transcription_error?: string; transcription_model?: string };
+export type VoiceConfiguration = { enabled: boolean; max_seconds: number; natural_speech?: boolean; live_speech?: boolean; language_selection?: boolean; local_transcription?: boolean; transcription_ready?: boolean; transcription_error?: string; transcription_model?: string; groq_conversation?: boolean; groq_live_speech?: boolean };
 
 export async function getVoiceConfiguration(signal?: AbortSignal): Promise<VoiceConfiguration> {
   const result = await requestJSON<VoiceConfiguration>('/v1/voice/config', undefined, { method: 'GET', signal });
@@ -191,8 +315,8 @@ export async function getVoiceConfiguration(signal?: AbortSignal): Promise<Voice
   return result;
 }
 
-export async function synthesiseSpeech(token:string,text:string,style:string,rate:number,signal:AbortSignal,languageCode='en-NG',live=false):Promise<{audio_base64:string;mime_type:string}> {
-  const result=await requestJSON<{audio_base64:string;mime_type:string}>('/v1/voice/speak',{text,style,rate,language:languageCode,...(live&&liveSpeechSupported?{live:true}:{})},{token,signal,timeoutMs:65_000});
+export async function synthesiseSpeech(token:string,text:string,style:string,rate:number,signal:AbortSignal,languageCode='en-NG',live=false,groqOnly=false):Promise<{audio_base64:string;mime_type:string}> {
+  const result=await requestJSON<{audio_base64:string;mime_type:string}>('/v1/voice/speak',{text,style,rate,language:languageCode,...(live&&liveSpeechSupported?{live:true}:{}),...(groqOnly?{groq_only:true}:{})},{token,signal,timeoutMs:65_000});
   if(result?.mime_type!=='audio/wav' || typeof result.audio_base64!=='string' || !result.audio_base64 || result.audio_base64.length>12*1024*1024) throw new Error('PADI returned invalid speech audio.');
   return result;
 }

@@ -84,33 +84,33 @@ test('fractional-rate resampling remains identical across different render block
   assert.equal(results[0].length, 64000);
 });
 
-test('capture requests 16 kHz and keeps mono, echo cancellation, noise suppression and gain control', async () => {
+test('capture uses the device clock and keeps mono, echo cancellation, noise suppression and gain control', async () => {
   const f = captureHarness();
   try {
     await f.capture.start(new AbortController().signal);
-    assert.deepEqual(f.requested, [{ sampleRate: 16000 }]);
+    assert.deepEqual(f.requested, [{ latencyHint:'interactive' }]);
     assert.deepEqual(f.constraints.audio, { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true });
     assert.equal(f.nodes[0].options.channelCount, 1);
     assert.equal(f.nodes[0].options.channelCountMode, 'explicit');
   } finally { await f.close(); }
 });
 
-test('a rejected sample-rate option falls back to the default engine and resamples before WAV creation', async () => {
+test('a device that rejects forced rates still captures native-rate audio and uploads 16 kHz WAV', async () => {
   const f = captureHarness({ engineRate: 48000, rejectRequestedRate: true });
   try {
     await f.capture.start(new AbortController().signal);
-    assert.deepEqual(f.requested, [{ sampleRate: 16000 }, undefined]);
+    assert.deepEqual(f.requested, [{ latencyHint:'interactive' }]);
     f.feed(tone(48000, 0.1));
     assertWave(wavAudio({ pcm: joinPCM(f.frames), sampleRate: f.frames[0].sampleRate }), 0.1);
   } finally { await f.close(); }
 });
 
-test('an engine that cannot attach its microphone at 16 kHz reuses the stream at its default rate', async () => {
+test('a microphone that cannot attach at 16 kHz uses its native engine without reconnecting', async () => {
   const f = captureHarness({ engineRate: 44100, rejectSourceAt16k: true });
   try {
     await f.capture.start(new AbortController().signal);
-    assert.deepEqual(f.requested, [{ sampleRate: 16000 }, undefined]);
-    assert.equal(f.contexts[0].closed, 1);
+    assert.deepEqual(f.requested, [{ latencyHint:'interactive' }]);
+    assert.equal(f.contexts[0].closed, 0);
     assert.equal(f.track.stopped, 0, 'fallback retains the acquired microphone');
     f.feed(tone(44100, 0.1));
     assertWave(wavAudio({ pcm: joinPCM(f.frames), sampleRate: f.frames[0].sampleRate }), 0.1);
@@ -122,7 +122,7 @@ test('an engine that cannot attach its microphone at 16 kHz reuses the stream at
 test('the existing detector still requires 180 ms of speech and 750 ms of silence', async () => {
   let starts = 0, ended;
   const activity = new VoiceActivity(() => { starts++; }, utterance => { ended = utterance; });
-  const f = captureHarness({ onFrame: frame => activity.feed(frame) });
+  const f = captureHarness({ engineRate:16000,onFrame: frame => activity.feed(frame) });
   try {
     await f.capture.start(new AbortController().signal);
     f.feed(new Float32Array(16000));
@@ -185,7 +185,7 @@ test('microphone interruption cancels capture and late PCM cannot reach the sess
   const f = captureHarness({ onInterrupted: () => controller.abort() });
   try {
     await f.capture.start(controller.signal);
-    f.feed(tone(16000, 0.05));
+    f.feed(tone(48000, 0.05));
     const late = f.nodes[0].port.onmessage;
     f.track.onended();
     late({ data: { data: new ArrayBuffer(1600), sampleRate: 16000, channels: 1 } });

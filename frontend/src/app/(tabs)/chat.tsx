@@ -42,7 +42,7 @@ export default function ConversationScreen() {
   const type = useType();
   const { t } = useTranslation();
   const { preferences } = usePreferences();
-  const { messages, status, isThinking, sendError, sendWithResponse, rateResponse, reset } = useChat();
+  const { messages, status, isThinking, sendError, sendWithResponse, greet, rateResponse, reset } = useChat();
   const listRef = useRef<FlatList<Message>>(null);
   const [session, setSession] = useState<AppSession | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
@@ -51,6 +51,7 @@ export default function ConversationScreen() {
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [feedbackSavingID, setFeedbackSavingID] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const greetingAttempt = useRef<string | null>(null);
   const [speech, setSpeech] = useState<{
     messageID: string;
     state: 'loading' | 'speaking' | 'paused' | 'error';
@@ -268,7 +269,14 @@ export default function ConversationScreen() {
     }
   }, [reset, session, stopSpeech]);
 
-  const greeting = buildPadiGreeting(preferences.displayName, preferences.age, preferences.gender);
+  useEffect(() => {
+    if (!session) { greetingAttempt.current = null; return; }
+    if (status !== 'ready' || isThinking || greetingAttempt.current === session.user.id) return;
+    const history = visibleChatMessages(messages, session.user.id);
+    if (history.some(message => message.backendUserID === session.user.id || message.role === 'user')) return;
+    greetingAttempt.current = session.user.id;
+    void greet(session.user.id, preferences.languageCode);
+  }, [status, session, messages, isThinking, greet, preferences.languageCode]);
 
   if (status === 'loading') {
     return (
@@ -338,7 +346,7 @@ export default function ConversationScreen() {
         menuLabel="Open PADI menu"
         onSwitchToVoice={() => {
           void unlockVoicePlayback().catch(() => undefined);
-          router.push({ pathname: '/voice', params: { connect: '1' } });
+          router.push('/voice');
         }}
         voiceLabel="Switch to voice"
       />
@@ -347,7 +355,7 @@ export default function ConversationScreen() {
         visible={sidebarOpen}
         displayName={preferences.displayName}
         onClose={() => setSidebarOpen(false)}
-        onNewChat={() => { setSidebarOpen(false); stopSpeech(); setSpeech(null); reset(); }}
+        onNewChat={() => { setSidebarOpen(false); stopSpeech(); setSpeech(null); greetingAttempt.current = null; reset(); }}
         onSettings={() => { setSidebarOpen(false); router.push('/(tabs)/settings'); }}
         onMemory={() => { setSidebarOpen(false); router.push('/memory'); }}
         onDeviceActions={() => { setSidebarOpen(false); router.push('/device-actions'); }}
@@ -364,13 +372,9 @@ export default function ConversationScreen() {
           ref={listRef}
         data={visibleChatMessages(messages, session.user.id)}
           keyExtractor={(item) => item.id}
-          renderItem={({ item, index }) => (
+          renderItem={({ item }) => (
             <MessageBubble
-              message={
-                index === 0 && greeting && item.role === 'padi' && !item.visual
-                  ? { ...item, text: greeting }
-                  : item
-              }
+              message={item}
               voiceLabel={t('chat.voiceNote')}
               feedbackLabels={{
                 helpful: t('chat.feedback.helpful'),
@@ -405,7 +409,7 @@ export default function ConversationScreen() {
           onSend={handleSend}
           onOpenVoice={() => {
             void unlockVoicePlayback().catch(() => undefined);
-            router.push({ pathname: '/voice', params: { connect: '1' } });
+            router.push('/voice');
           }}
           placeholder={t('chat.placeholder')}
           sendLabel={t('chat.send')}
@@ -415,30 +419,6 @@ export default function ConversationScreen() {
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
-}
-
-function buildPadiGreeting(
-  displayName: string,
-  age: number | null,
-  gender: 'female' | 'male' | 'prefer_not_to_say' | null,
-): string {
-  const hour = new Date().getHours();
-  const timeGreeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-  const name = displayName.trim();
-  let title = 'Boss';
-
-  if (gender === 'male') {
-    title = age !== null && age >= 60 ? 'My Lord' : age !== null && age >= 25 ? 'Mr' : age !== null && age >= 18 ? 'Oga' : 'Boss';
-  } else if (gender === 'female') {
-    title = age !== null && age >= 60 ? 'My Lord' : age !== null && age >= 25 ? 'Mrs' : age !== null && age >= 18 ? 'Ma' : 'Boss';
-  } else if (age !== null && age >= 60) {
-    title = 'My Lord';
-  } else if (age !== null && age >= 18) {
-    title = 'Oga';
-  }
-
-  const address = name ? `${title} ${name}` : title;
-  return `${timeGreeting}, ${address}! 😊 I’m PADI. What would you like to talk about today?`;
 }
 
 const styles = StyleSheet.create({

@@ -51,11 +51,16 @@ reserves usage through Go. Provider retry timing prevents repeated requests to
 an exhausted model until its quota resets. The earlier model uses the selected
 persona's prebuilt voice, since it cannot use an original 3.8 voice profile.
 
-The app's **Tap to chat** entry connects the microphone and plays a short,
-localized greeting, then keeps listening and replying automatically. Greetings
-use fixed public phrases at `/v1/voice/call` and share the public clip cache;
-personal replies remain authenticated and uncached. Pause closes capture and
-Resume reconnects without repeating the greeting. Speaking interrupts playback.
+Tapping PADI's picture requests microphone permission and plays a short,
+greeting, then keeps listening and replying automatically. Live greetings and
+responses use authenticated Groq speech; voice conversations do not fall back
+to Gemini. Ordinary introductions/previews keep their separate public cache.
+Silence ends each listening turn without closing the conversation. The microphone
+continues monitoring during playback. Device AEC and a playback PCM reference
+reject speaker echo; genuine user speech cancels current and queued audio.
+The user turn closes after 1.4 seconds of silence, preserving brief pauses.
+Exiting or switching to text closes capture and
+playback; tapping PADI again greets and resumes the same shared conversation.
 Ordinary voice turns use short replies and the fast model route; long spoken
 answers can start their first sentence while the next passage is generated.
 The five-second response goal still depends on network and provider latency.
@@ -68,6 +73,10 @@ Until then, keep the default Gemini setting. Unsupported languages or paces
 and unavailable fast speech fall back to Gemini. Both providers retain their
 own usage reservations, and no device speech is substituted. Public preview
 cache keys include the live provider so previews follow the selected engine.
+
+Those fallback rules describe the general speech/preview endpoints. The live
+voice-conversation client selects `groq_only` for greetings and responses and
+reports failures instead of falling back to Gemini.
 
 For expressive delivery and the configured Nigerian English voice, use
 `PADI_LIVE_VOICE_PROVIDER=gemini` (the default). Orpheus uses a different set of
@@ -87,7 +96,7 @@ speech using a public audio sample and a temporary account. The test verifies
 cleanup and records normal provider usage in PostgreSQL.
 
 `npm run verify:voice:browser` additionally checks the app's voice/text context,
-automatic turns, playback interruption, continuation, Pause/End, microphone
+automatic turns, echo rejection, returning to listening, resuming context, microphone
 denial, and a controlled service failure. Install frontend dependencies first
 and use an installed Google Chrome, or set `PADI_VOICE_BROWSER_EXECUTABLE` to a
 compatible Chromium executable. The browser uses isolated test storage and

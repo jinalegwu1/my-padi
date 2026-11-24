@@ -33,7 +33,7 @@ const (
 
 type Preferences struct {
 	Humour            HumourPreference `json:"humour"`
-	HumourExplicit     bool             `json:"humour_explicit"`
+	HumourExplicit    bool             `json:"humour_explicit"`
 	Tone              TonePreference   `json:"tone"`
 	LearnFromFeedback bool             `json:"learn_from_feedback"`
 }
@@ -110,14 +110,20 @@ func NormalizeFeedback(feedback Feedback) (Feedback, error) {
 // labels or treating conversational signals as diagnoses.
 func Assess(text string, preferences Preferences) Assessment {
 	words := tokenSet(text)
-	serious := hasAny(words, "grief", "grieving", "funeral", "died", "death", "bereaved",
-		"trauma", "abuse", "cancer", "suicide", "suicidal", "emergency", "unsafe", "danger") ||
-		hasAnyPhrase(text, "passed away", "lost someone", "self-harm", "hurt myself")
+	// Everyday figurative language must not be mistaken for bereavement.
+	literalDeath := words["died"] && !hasAnyPhrase(text, "i died laughing", "we died laughing",
+		"phone died", "battery died", "laptop died", "computer died", "router died")
+	serious := literalDeath || hasAny(words, "grief", "grieving", "funeral", "death", "bereaved",
+		"trauma", "abuse", "cancer", "suicide", "suicidal", "emergency", "unsafe", "danger",
+		"miscarriage", "assault", "suffering") ||
+		hasAnyPhrase(text, "passed away", "lost someone", "self-harm", "hurt myself", "in pain", "seriously ill")
 	distressed := serious || hasAny(words, "sad", "lonely", "worried", "scared", "afraid",
 		"frustrated", "angry", "anxious", "depressed", "overwhelmed", "stressed", "tired", "vexed") ||
-		hasAnyPhrase(text, "rough day", "everything is going wrong", "i dey vex", "i no happy")
+		hasAnyPhrase(text, "rough day", "everything is going wrong", "i dey vex", "i no happy", "i no too dey okay")
 	explicitlySerious := hasAnyPhrase(text, "be serious", "stop joking", "no jokes", "just listen",
-		"i need you to listen", "i need encouragement")
+		"i need you to listen", "i need encouragement", "serious response", "serious answer",
+		"answer seriously", "take this seriously", "don't joke", "do not joke", "no humour", "no humor",
+		"without humour", "without humor", "wey go listen")
 	requestsHumour := hasAnyPhrase(text, "make me laugh", "tell me a joke", "i need a joke", "make we laugh")
 	celebrating := hasAny(words, "excited", "celebrating", "celebrate", "achieved", "completed",
 		"passed", "won", "promoted", "graduated") || hasAnyPhrase(text, "finally finished", "got the job")
@@ -132,20 +138,20 @@ func Assess(text string, preferences Preferences) Assessment {
 		return Assessment{Mode: "empathetic", HumourAllowed: false}
 	case requestsHumour:
 		return Assessment{Mode: "playful", HumourAllowed: true}
-	case celebrating:
-		return Assessment{Mode: "celebratory", HumourAllowed: preferences.Humour == HumourFrequent}
 	case preferences.Tone == ToneSerious || preferences.Tone == ToneDirect:
 		return Assessment{Mode: string(preferences.Tone), HumourAllowed: false}
+	case celebrating:
+		return Assessment{Mode: "celebratory", HumourAllowed: preferences.Humour != HumourOff}
 	case bored:
 		return Assessment{Mode: "playful", HumourAllowed: preferences.Humour != HumourOff}
 	case preferences.Tone == ToneGentle:
-		return Assessment{Mode: "gentle", HumourAllowed: preferences.Humour == HumourFrequent}
+		return Assessment{Mode: "gentle", HumourAllowed: preferences.Humour != HumourOff}
 	case preferences.Tone == TonePlayful:
 		return Assessment{Mode: "playful", HumourAllowed: preferences.Humour != HumourOff}
 	case preferences.Humour == HumourOff:
 		return Assessment{Mode: "friendly", HumourAllowed: false}
 	default:
-		return Assessment{Mode: "friendly", HumourAllowed: preferences.Humour == HumourFrequent}
+		return Assessment{Mode: "friendly", HumourAllowed: preferences.Humour != HumourOff}
 	}
 }
 
@@ -169,13 +175,48 @@ func ResponseGuidance(text string, preferences Preferences) string {
 	if assessment.Mode == "empathetic" {
 		article = "an"
 	}
+	purpose := ""
+	if isSocialSharing(text) && (assessment.Mode == "friendly" || assessment.Mode == "gentle" || assessment.Mode == "playful") {
+		purpose = " This reads as casual sharing or banter. Respond for connection: acknowledge the shared moment and leave room for the user."
+	}
 	if assessment.HumourAllowed {
-		return "Current-turn response guidance: use " + article + " " + assessment.Mode +
-			" tone. Humour is welcome only when it is relevant and respectful; keep the answer natural."
+		frequency := "Use occasional, light wit when an opening arises; a joke is not required in every reply."
+		switch preferences.Humour {
+		case HumourOff:
+			frequency = "The user invited humour for this turn only; their saved humour-off preference still applies to other turns."
+		case HumourSubtle:
+			frequency = "Keep humour subtle: a small clever observation, without a big punchline or extended banter."
+		case HumourFrequent:
+			frequency = "Use wit more often when it fits, while leaving room for useful answers and ordinary warmth."
+		}
+		tone := assessment.Mode
+		if tone == "friendly" {
+			tone = "warm, witty, conversational"
+		}
+		return "Current-turn response guidance: use " + article + " " + tone +
+			" tone. Humour is welcome only when it is relevant and respectful; keep the answer natural. " + frequency +
+			" Notice the relatable absurdity already present instead of inventing a new comic premise. Respond like a quick-witted friend, in ordinary language. Acknowledge a funny joke with earned amusement; respond to teasing with a short affectionate comeback, not a promise to change. Keep a single good observation and stop. Avoid repeated 'Sounds like' openings and generic follow-up questions." + purpose
 	}
 	guidance := "Current-turn response guidance: use " + article + " " + assessment.Mode +
-		" tone. Humour is not appropriate for this turn; prioritize the user's request, care, and clear help."
-	return guidance
+		" tone. Humour is not appropriate for this turn; prioritize the user's request, care, and clear help. Do not add jokes, teasing, laughter, comic comparisons, or playful exaggeration. Remain warm, attentive, and personable. Understand figurative language without inventing a problem. When asked to just listen, make room for the user instead of asking how you can help."
+	return guidance + purpose
+}
+
+func isSocialSharing(text string) bool {
+	return !strings.ContainsAny(text, "?？") && !hasAny(tokenSet(text),
+		"help", "explain", "show", "find", "fix", "teach", "write", "plan", "recommend",
+		"calculate", "schedule", "remind", "call", "send", "what", "how", "why", "which", "need",
+		"repeat", "translate", "summarize", "summarise", "check", "compare", "analyze", "analyse", "solve", "list", "answer")
+}
+
+// GreetingGuidance applies the same preferences and emotional assessment to
+// the opening, using only conversation context validated by the chat handler.
+func GreetingGuidance(context string, preferences Preferences) string {
+	guidance := ResponseGuidance(context, preferences)
+	if Assess(context, preferences).HumourAllowed {
+		return guidance + " This is a greeting: sound pleased to see the user, relaxed and curious. A fresh, light observation may fit, but a joke is optional. Use everyday language, not a dramatic entrance, digital metaphor, pet name, or ceremonial welcome."
+	}
+	return guidance + " This is a greeting: offer a brief, personal welcome suited to the existing conversation. If the user asked you to listen, acknowledge that gently and give them room; do not restart with a service question."
 }
 
 func tokenSet(text string) map[string]bool {

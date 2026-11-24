@@ -181,10 +181,11 @@ func TestChatLearnsFromFeedbackAcrossConversationsWithoutCrossingAccounts(t *tes
 		}
 		chatResponse := send(ownerRouter, http.MethodPost, "/v1/chat",
 			`{"messages":[{"role":"user","content":"Can you explain how rain forms?"}]}`)
-		wantHumour := conversation == 3
+		wantFrequent := conversation == 3
 		if chatResponse.Code != http.StatusOK || feedback.calls != conversation ||
 			feedback.userID != "owner" ||
-			strings.Contains(generator.request.StyleGuidance, "Humour is welcome") != wantHumour {
+			!strings.Contains(generator.request.StyleGuidance, "Humour is welcome") ||
+			strings.Contains(generator.request.StyleGuidance, "Use wit more often") != wantFrequent {
 			t.Fatalf("conversation %d: status=%d queries=%d user=%q guidance=%q",
 				conversation, chatResponse.Code, feedback.calls, feedback.userID, generator.request.StyleGuidance)
 		}
@@ -211,7 +212,7 @@ func TestChatLearnsFromFeedbackAcrossConversationsWithoutCrossingAccounts(t *tes
 	otherResponse := send(otherRouter, http.MethodPost, "/v1/chat",
 		`{"messages":[{"role":"user","content":"Can you explain how rain forms?"}]}`)
 	if otherResponse.Code != http.StatusOK || feedback.userID != "other" ||
-		strings.Contains(otherGenerator.request.StyleGuidance, "Humour is welcome") {
+		strings.Contains(otherGenerator.request.StyleGuidance, "Use wit more often") {
 		t.Fatalf("another account inherited feedback: status=%d user=%q guidance=%q",
 			otherResponse.Code, feedback.userID, otherGenerator.request.StyleGuidance)
 	}

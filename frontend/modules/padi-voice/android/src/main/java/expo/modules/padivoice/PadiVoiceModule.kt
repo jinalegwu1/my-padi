@@ -25,6 +25,7 @@ import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.jni.NativeArrayBuffer
 import java.nio.ByteBuffer
+import java.util.concurrent.Executors
 
 /** Foreground VOICE_COMMUNICATION capture, using OS acoustic echo cancellation. */
 class PadiVoiceModule : Module() {
@@ -40,6 +41,8 @@ class PadiVoiceModule : Module() {
   private val main = Handler(Looper.getMainLooper())
   @Volatile private var playbackGeneration = 0
   @Volatile private var track: AudioTrack? = null
+  private val speechWriter = Executors.newSingleThreadExecutor()
+  private var queuedFrames = 0
   private var telephonyListener: PhoneStateListener? = null
 
   override fun definition() = ModuleDefinition {
@@ -48,6 +51,54 @@ class PadiVoiceModule : Module() {
     AsyncFunction("start") { startCapture() }
     Function("stop") { stopCapture() }
     Function("stopPlayback") { stopPlayback() }
+    Function("beginQueuedPlayback") { beginQueuedPlayback() }
+    AsyncFunction("enqueueAudio") { encoded: String, promise: Promise ->
+      val started = playbackGeneration
+      speechWriter.execute {
+        try {
+          if (!active || started != playbackGeneration) { promise.resolve(null); return@execute }
+          val data = Base64.decode(encoded, Base64.DEFAULT)
+          require(data.size > 44 && data.size <= 8 * 1024 * 1024 && String(data, 0, 4) == "RIFF")
+          val output = synchronized(this) {
+            if (started != playbackGeneration) null else track ?: makeSpeechTrack().also { track = it; it.play() }
+          }
+          if (output == null) { promise.resolve(null); return@execute }
+          var offset = 44
+          while (offset < data.size && active && started == playbackGeneration) {
+            val written = output.write(data, offset, minOf(4096, data.size - offset), AudioTrack.WRITE_BLOCKING)
+            if (written <= 0) throw IllegalStateException("Audio output interrupted")
+            offset += written
+          }
+          val endFrame = synchronized(this) {
+            if (started != playbackGeneration) null else {
+              queuedFrames += (data.size - 44) / 2
+              queuedFrames
+            }
+          }
+          if (endFrame == null) { promise.resolve(null); return@execute }
+          // Completion tracking never blocks the writer from filling the next
+          // buffer. All clips use the same streaming AudioTrack.
+          Thread({
+            while (active && started == playbackGeneration && output.playbackHeadPosition < endFrame) Thread.sleep(10)
+            promise.resolve(null)
+          }, "PadiVoiceClipCompletion").start()
+        } catch (error: Exception) {
+          if (started != playbackGeneration) promise.resolve(null)
+          else promise.reject("ERR_VOICE_PLAYBACK", "PADI playback failed.", error)
+        }
+      }
+    }
+    AsyncFunction("finishQueuedPlayback") { promise: Promise ->
+      val started = playbackGeneration
+      speechWriter.execute {
+        try {
+          val output = track
+          while (output != null && active && started == playbackGeneration && output.playbackHeadPosition < queuedFrames) Thread.sleep(10)
+          synchronized(this) { if (started == playbackGeneration) stopPlayback() }
+          promise.resolve(null)
+        } catch (error: Exception) { promise.reject("ERR_VOICE_PLAYBACK", "PADI playback failed.", error) }
+      }
+    }
     AsyncFunction("dial") { phone: String ->
       val context = appContext.reactContext ?: throw IllegalStateException("Phone context unavailable")
       val normalized = phone.filter { it.isDigit() || it == '+' }
@@ -96,7 +147,7 @@ class PadiVoiceModule : Module() {
         }
       }, "PadiVoicePlayback").start()
     }
-    OnDestroy { stopCapture(); stopCallListener() }
+    OnDestroy { stopCapture(); stopCallListener(); speechWriter.shutdownNow() }
   }
 
   private fun startCallListener() {
@@ -193,6 +244,8 @@ class PadiVoiceModule : Module() {
     try { audio?.pause(); audio?.flush(); audio?.stop(); audio?.release() } catch (_: Exception) {}
   }
 
+  @Synchronized private fun beginQueuedPlayback() { stopPlayback(); queuedFrames = 0 }
+
   private fun playAudio(encoded: String, started: Int) {
     val data = Base64.decode(encoded, Base64.DEFAULT)
     if (data.size <= 44 || data.size > 8 * 1024 * 1024 || !active || started != playbackGeneration) return
@@ -214,4 +267,10 @@ class PadiVoiceModule : Module() {
       while (active && started == playbackGeneration && output.playbackHeadPosition < frames) Thread.sleep(20)
     } finally { synchronized(this) { if (track === output) { track = null; output.stop(); output.release() } } }
   }
+
+  private fun makeSpeechTrack() = AudioTrack.Builder()
+    .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+    .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(24000).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+    .setBufferSizeInBytes(maxOf(24000, AudioTrack.getMinBufferSize(24000, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)))
+    .setTransferMode(AudioTrack.MODE_STREAM).build()
 }
