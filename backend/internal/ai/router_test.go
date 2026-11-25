@@ -548,6 +548,9 @@ func TestRouterRetriesTransientFailureWithinConfiguredLimit(t *testing.T) {
 		{ID: "backup", Provider: "backup", Model: "b-model"},
 	}, map[string]Provider{"primary": primary, "backup": backup},
 		RoutingConfig{PrimaryModel: "primary", BackupModel: "backup"}, nil)
+	// Exercise retries independently of usage caps as the shared prompt grows.
+	// Usage-cap enforcement is covered by separate tests below.
+	router.limiter = &timestampUsageLimiter{}
 
 	if _, err := router.Generate(context.Background(), testRequest(TaskConversation, ComplexityNormal)); err != nil {
 		t.Fatalf("Generate() error = %v", err)

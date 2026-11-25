@@ -84,6 +84,7 @@ func (provider geminiProvider) Stream(ctx context.Context, model ModelConfig, re
 						InlineData json.RawMessage `json:"inlineData"`
 					} `json:"parts"`
 				} `json:"content"`
+				FinishReason string `json:"finishReason"`
 			} `json:"candidates"`
 			Usage struct {
 				Input  int `json:"promptTokenCount"`
@@ -102,6 +103,9 @@ func (provider geminiProvider) Stream(ctx context.Context, model ModelConfig, re
 		}
 		if len(chunk.Candidates) == 0 {
 			continue
+		}
+		if reason := chunk.Candidates[0].FinishReason; reason != "" {
+			result.FinishReason = reason
 		}
 		for _, part := range chunk.Candidates[0].Content.Parts {
 			if len(part.InlineData) > 0 {
@@ -124,8 +128,8 @@ func (provider geminiProvider) Stream(ctx context.Context, model ModelConfig, re
 	if err := scanner.Err(); err != nil {
 		return Response{}, &ProviderError{Provider: ProviderGemini, Retryable: true, Err: errors.New("could not read text stream")}
 	}
-	if strings.TrimSpace(result.Content) == "" {
-		return Response{}, &ProviderError{Provider: ProviderGemini, Retryable: true, Err: ErrEmptyProviderResponse}
+	if err := completionError(ProviderGemini, result.FinishReason, true); err != nil {
+		return result, err
 	}
-	return result, nil
+	return result, validateCompleteText(ProviderGemini, result.Content)
 }

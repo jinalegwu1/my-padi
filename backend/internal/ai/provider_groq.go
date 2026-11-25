@@ -82,6 +82,7 @@ func (provider groqProvider) Stream(ctx context.Context, model ModelConfig, requ
 			Delta struct {
 				Content string `json:"content"`
 			} `json:"delta"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 		Usage *struct {
 			PromptTokens     int `json:"prompt_tokens"`
@@ -92,6 +93,7 @@ func (provider groqProvider) Stream(ctx context.Context, model ModelConfig, requ
 		} `json:"error"`
 	}
 	var result Response
+	streamEnded := false
 	scanner := bufio.NewScanner(io.LimitReader(response.Body, maxProviderResponseBytes+1))
 	scanner.Buffer(make([]byte, 4096), maxProviderResponseBytes)
 	total := 0
@@ -102,6 +104,7 @@ func (provider groqProvider) Stream(ctx context.Context, model ModelConfig, requ
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "[DONE]" {
+			streamEnded = true
 			break
 		}
 		var chunk streamChunk
@@ -114,7 +117,13 @@ func (provider groqProvider) Stream(ctx context.Context, model ModelConfig, requ
 		if chunk.Usage != nil {
 			result.Usage = Usage{InputTokens: chunk.Usage.PromptTokens, OutputTokens: chunk.Usage.CompletionTokens}
 		}
-		if len(chunk.Choices) == 0 || chunk.Choices[0].Delta.Content == "" {
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+		if reason := chunk.Choices[0].FinishReason; reason != "" {
+			result.FinishReason = reason
+		}
+		if chunk.Choices[0].Delta.Content == "" {
 			continue
 		}
 		delta := chunk.Choices[0].Delta.Content
@@ -132,8 +141,8 @@ func (provider groqProvider) Stream(ctx context.Context, model ModelConfig, requ
 	if err := scanner.Err(); err != nil {
 		return Response{}, &ProviderError{Provider: ProviderGroq, Retryable: true, Err: errors.New("could not read provider stream")}
 	}
-	if strings.TrimSpace(result.Content) == "" {
-		return Response{}, &ProviderError{Provider: ProviderGroq, Retryable: true, Err: ErrEmptyProviderResponse}
+	if err := completionError(ProviderGroq, result.FinishReason, streamEnded); err != nil {
+		return result, err
 	}
-	return result, nil
+	return result, validateCompleteText(ProviderGroq, result.Content)
 }

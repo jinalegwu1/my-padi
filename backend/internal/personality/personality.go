@@ -39,12 +39,13 @@ type Preferences struct {
 }
 
 type CoreSettings struct {
-	Warm             bool `json:"warm"`
-	Funny            bool `json:"funny"`
-	Witty            bool `json:"witty"`
-	Intelligent      bool `json:"intelligent"`
-	Playful          bool `json:"playful"`
-	EmotionallyAware bool `json:"emotionally_aware"`
+	Warm             bool   `json:"warm"`
+	Funny            bool   `json:"funny"`
+	Witty            bool   `json:"witty"`
+	Intelligent      bool   `json:"intelligent"`
+	Playful          bool   `json:"playful"`
+	EmotionallyAware bool   `json:"emotionally_aware"`
+	WarmthGuidance   string `json:"warmth_guidance"`
 }
 
 type PreferencesPatch struct {
@@ -86,7 +87,11 @@ func (settings CoreSettings) Guidance() string {
 	if len(traits) == 0 {
 		return ""
 	}
-	return "Core PADI personality traits: " + strings.Join(traits, ", ") + "."
+	guidance := "Core PADI personality traits: " + strings.Join(traits, ", ") + "."
+	if settings.Warm && settings.WarmthGuidance != "" {
+		guidance += "\n\n" + settings.WarmthGuidance
+	}
+	return guidance
 }
 
 func DefaultPreferences() Preferences {
@@ -217,22 +222,24 @@ func ApplyFeedbackTrend(preferences Preferences, trend FeedbackTrend) Preference
 	return preferences
 }
 
+// ResponseGuidance supplies current-turn signals and the existing humour controls.
+// Warmth behaviour is authored in Python and delivered by CoreSettings.Guidance.
 func ResponseGuidance(text string, preferences Preferences) string {
 	assessment := Assess(text, preferences)
 	if assessment.Mode == "friendly" && isReciprocalCheckIn(text) {
 		frequency := "A touch of wit may fit if the exchange gives you a natural opening; do not force a joke."
 		switch preferences.Humour {
 		case HumourOff:
-			frequency = "Keep the response warm and entirely non-jokey."
+			frequency = "Keep the response entirely non-jokey."
 		case HumourSubtle:
 			frequency = "Keep any wit understated and only use it if it fits naturally."
 		case HumourFrequent:
 			frequency = "A quick, fresh playful observation is welcome when it suits the exchange; avoid forced jokes."
 		}
-		return "This is friendly small talk. Answer as a warm companion, not a service agent: acknowledge their check-in naturally, stay honest without inventing a human day, and keep it brief. Respond to the social connection rather than giving a stock self-status or pivoting to service. " + frequency
+		return "Social intent: reciprocal check-in. " + frequency
 	}
 	if assessment.Mode == "celebratory" {
-		guidance := "Share the user's excitement before adding anything else. Name what they accomplished, match their energy, and avoid a generic congratulations card; a natural question about how it happened can keep the moment theirs."
+		guidance := "Conversation signal: celebratory."
 		if assessment.HumourAllowed {
 			switch preferences.Humour {
 			case HumourSubtle:
@@ -243,7 +250,7 @@ func ResponseGuidance(text string, preferences Preferences) string {
 				guidance += " A light touch of wit is optional, not required."
 			}
 		} else {
-			guidance += " Keep it warm and sincere without jokes or teasing."
+			guidance += " Respond without jokes or teasing."
 		}
 		return guidance
 	}
@@ -260,26 +267,18 @@ func ResponseGuidance(text string, preferences Preferences) string {
 	if assessment.HumourAllowed && isJokeSetup(text) {
 		return "The user is setting up or sharing a joke. React like a companion: show amusement when it lands and play along briefly instead of explaining, grading, or troubleshooting it."
 	}
-	tone := assessment.Mode
-	if tone == "friendly" {
-		tone = "warm and conversational"
+	guidance := "Conversation signal: " + assessment.Mode + "."
+	if isSocialSharing(text) {
+		guidance += " Social intent: casual sharing."
 	}
-	article := "a"
-	if tone == "empathetic" {
-		article = "an"
+	if hasAnyPhrase(text, "just listen", "i need you to listen", "just wanted to tell someone") {
+		guidance += " The user requested listening or company."
 	}
 	if !assessment.HumourAllowed {
-		guidance := "Use " + article + " " + tone + " tone. Respond to what the user actually said; be warm and specific without jokes or teasing."
-		if isSocialSharing(text) {
-			guidance += " They are sharing a moment, not asking for fixes; connect with them, and don't pivot to troubleshooting or a service question unless invited."
-		}
-		if hasAnyPhrase(text, "just listen", "i need you to listen", "just wanted to tell someone") {
-			guidance += " Leave space for them instead of offering fixes or asking what you can do."
-		}
-		return guidance
+		return guidance + " Respond without jokes or teasing."
 	}
 
-	frequency := "A small bit of wit is welcome when the moment gives you a real opening; ordinary warmth is enough otherwise."
+	frequency := "A small bit of wit is welcome when the moment gives you a real opening; do not force a joke."
 	switch preferences.Humour {
 	case HumourSubtle:
 		frequency = "If wit naturally fits, keep it understated."
@@ -290,25 +289,21 @@ func ResponseGuidance(text string, preferences Preferences) string {
 			frequency = "The user is inviting play; respond with genuine humour rather than a canned joke."
 		}
 	}
-	guidance := "Use " + article + " " + tone + " tone. " + frequency + " Answer the user's actual point before adding anything extra."
-	if isSocialSharing(text) {
-		guidance += " They are sharing a moment, not asking for fixes; connect with them, and don't pivot to troubleshooting or a service question unless invited."
-	}
-	return guidance
+	return guidance + " " + frequency + " Answer the user's actual point before adding anything extra."
 }
 
-// RecommendedOutputTokens keeps unprompted social turns concise without
-// imposing a short budget on advice requests or serious conversations.
+// RecommendedOutputTokens leaves room for hidden reasoning as well as the reply.
+// Conversational brevity is defined by Python, not by cutting generation short.
 func RecommendedOutputTokens(text string, preferences Preferences) int {
 	assessment := Assess(text, preferences)
 	if assessment.Mode == "empathetic" || assessment.Mode == "serious" {
 		return 0
 	}
 	if assessment.Mode == "friendly" && isReciprocalCheckIn(text) {
-		return 96
+		return 1024
 	}
 	if isSocialSharing(text) {
-		return 256
+		return 1024
 	}
 	return 0
 }
@@ -339,19 +334,31 @@ func ContinuityGuidance(recentReplies []string) string {
 		}
 	}
 	if len(openings) == 0 {
-		return "Continue the conversation already underway instead of restarting; do not recycle the recent reply's joke or central image."
+		return "Do not recycle the recent reply's joke or central image."
 	}
 	quoted := make([]string, len(openings))
 	for i, opening := range openings {
 		quoted[i] = "\"" + opening + "\""
 	}
-	return "Continue the conversation already underway instead of restarting. Recent PADI replies already opened with " +
+	return "Recent PADI replies already opened with " +
 		strings.Join(quoted, ", ") + "; vary your opening and do not recycle their joke or central image."
 }
 
 func isReciprocalCheckIn(text string) bool {
-	return hasAnyPhrase(text, "and you", "and yourself", "how about you", "how about yourself",
-		"what about you", "what about yourself", "how are you", "how are things", "how you doing")
+	if hasAnyPhrase(text, "and you", "and yourself", "how about you", "how about yourself",
+		"what about you", "what about yourself", "how are you", "how are things", "how you doing") {
+		return true
+	}
+	// Require the new phrases to finish the question, avoiding matches inside
+	// "show your side", "sidebar", or questions about a "side project".
+	text = strings.TrimFunc(text, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsPunct(r)
+	})
+	text = " " + strings.ToLower(strings.Join(strings.Fields(text), " "))
+	return strings.HasSuffix(text, " how your side") ||
+		strings.HasSuffix(text, " how is your side") ||
+		strings.HasSuffix(text, " how's your side") ||
+		strings.HasSuffix(text, " how’s your side")
 }
 
 func isPlayfulTeasing(text string) bool {
@@ -384,11 +391,7 @@ func isSocialSharing(text string) bool {
 // GreetingGuidance applies the same preferences and emotional assessment to
 // the opening, using only conversation context validated by the chat handler.
 func GreetingGuidance(context string, preferences Preferences) string {
-	guidance := ResponseGuidance(context, preferences)
-	if Assess(context, preferences).HumourAllowed {
-		return guidance + " Greet the user warmly in ordinary language, with a touch of personality; avoid stock greeting formulas and let context set the tone."
-	}
-	return guidance + " Give a brief, warm welcome suited to what the user shared; do not restart with a joke or a generic service question."
+	return ResponseGuidance(context, preferences) + " This turn is a greeting."
 }
 
 func tokenSet(text string) map[string]bool {

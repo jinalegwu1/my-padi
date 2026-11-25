@@ -98,6 +98,7 @@ type openAIChatResponse struct {
 		Message struct {
 			Content string `json:"content"`
 		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage struct {
 		PromptTokens     int `json:"prompt_tokens"`
@@ -171,14 +172,26 @@ func generateOpenAICompatibleWithOptions(
 	); err != nil {
 		return Response{}, err
 	}
-	if len(result.Choices) == 0 || strings.TrimSpace(result.Choices[0].Message.Content) == "" {
+	if len(result.Choices) == 0 {
 		return Response{}, &ProviderError{Provider: model.Provider, Retryable: true, Err: ErrEmptyProviderResponse}
 	}
-	return Response{
-		Content: result.Choices[0].Message.Content,
+	return completedOpenAIResponse(model.Provider, result)
+}
+
+func completedOpenAIResponse(provider string, result openAIChatResponse) (Response, error) {
+	if len(result.Choices) == 0 {
+		return Response{}, &ProviderError{Provider: provider, Retryable: true, Err: ErrEmptyProviderResponse}
+	}
+	response := Response{
+		Content:      result.Choices[0].Message.Content,
+		FinishReason: result.Choices[0].FinishReason,
 		Usage: Usage{
 			InputTokens:  result.Usage.PromptTokens,
 			OutputTokens: result.Usage.CompletionTokens,
 		},
-	}, nil
+	}
+	if err := completionError(provider, response.FinishReason, true); err != nil {
+		return response, err
+	}
+	return response, validateCompleteText(provider, response.Content)
 }

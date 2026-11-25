@@ -8,6 +8,15 @@ import sys
 import unittest
 
 from padi_personality import core
+from padi_personality.conversation.response_style import build_warmth_guidance
+from padi_personality.conversation.understanding import UNDERSTANDING_GUIDANCE
+from padi_personality.emotions.emotion_recognition import EMOTION_RECOGNITION_GUIDANCE
+from padi_personality.emotions.emotional_responses import EMOTIONAL_RESPONSE_GUIDANCE
+from padi_personality.humour.jokes import JOKE_GUIDANCE
+from padi_personality.humour.playful_teasing import PLAYFUL_TEASING_GUIDANCE
+from padi_personality.humour.storytelling import HUMOROUS_STORYTELLING_GUIDANCE
+from padi_personality.personalities.comedian import COMEDIAN_GUIDANCE
+from padi_personality.personalities.intellectual import INTELLECTUAL_GUIDANCE
 from padi_personality.personality_config import PADI_PERSONALITY_CONFIG
 
 
@@ -48,6 +57,39 @@ class PersonalityConfigTests(unittest.TestCase):
             check=True,
         )
         self.assertEqual(json.loads(result.stdout), PADI_PERSONALITY_CONFIG.to_dict())
+
+    def test_personality_export_contains_all_enabled_guidance(self):
+        exported = core.export_personality()
+
+        self.assertEqual(set(exported), {"traits", "warmth_guidance"})
+        expected = "\n\n".join(
+            section.strip()
+            for section in (
+                UNDERSTANDING_GUIDANCE,
+                build_warmth_guidance(PADI_PERSONALITY_CONFIG),
+                EMOTION_RECOGNITION_GUIDANCE,
+                EMOTIONAL_RESPONSE_GUIDANCE,
+                COMEDIAN_GUIDANCE,
+                JOKE_GUIDANCE,
+                HUMOROUS_STORYTELLING_GUIDANCE,
+                PLAYFUL_TEASING_GUIDANCE,
+                INTELLECTUAL_GUIDANCE,
+            )
+        )
+        self.assertEqual(exported["warmth_guidance"], expected)
+
+    def test_personality_export_contains_all_six_traits(self):
+        exported = core.export_personality()
+
+        self.assertEqual(
+            exported["traits"],
+            PADI_PERSONALITY_CONFIG.to_dict(),
+        )
+
+    def test_warmth_guidance_is_exported(self):
+        exported = core.export_personality()
+
+        self.assertTrue(exported["warmth_guidance"].strip())
 
 
 if __name__ == "__main__":

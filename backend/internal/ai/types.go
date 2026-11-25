@@ -63,10 +63,11 @@ type Usage struct {
 }
 
 type Response struct {
-	Content  string `json:"content"`
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
-	Usage    Usage  `json:"usage"`
+	Content      string `json:"content"`
+	Provider     string `json:"provider"`
+	Model        string `json:"model"`
+	Usage        Usage  `json:"usage"`
+	FinishReason string `json:"-"`
 }
 
 type ModelConfig struct {
@@ -147,6 +148,8 @@ var ErrUsageLimiterUnavailable = errors.New("persistent AI usage limiter is unav
 var ErrUsageLimitReached = errors.New("AI provider usage limit reached")
 var ErrInvalidProviderUsage = errors.New("AI provider returned invalid token usage")
 var ErrEmptyProviderResponse = errors.New("response contained no message")
+var ErrIncompleteProviderResponse = errors.New("provider response did not complete")
+var ErrOutputTokenLimit = errors.New("provider exhausted the output token budget")
 
 type UsageLimitError struct {
 	Provider string

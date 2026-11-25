@@ -22,15 +22,19 @@ func TestProviderInstructionsLoadConfiguredCorePersonalityTraits(t *testing.T) {
 }
 
 func TestPersonalityFoundationIsSharedByTextAndVoice(t *testing.T) {
+	warmth := personality.DefaultCoreSettings().WarmthGuidance
 	for _, voice := range []bool{false, true} {
 		request := Request{Voice: voice, Messages: []Message{{Role: RoleUser, Content: "My fridge has food but nothing I want to eat."}},
 			StyleGuidance: personality.ResponseGuidance("My fridge has food but nothing I want to eat.", personality.DefaultPreferences())}
 		got := withPADIInstructions(request)
+		if warmth == "" || strings.Count(got.Messages[0].Content, warmth) != 1 {
+			t.Fatalf("voice=%t Python warmth guidance changed, duplicated, or missing", voice)
+		}
 		for _, rule := range []string{
 			"one consistent AI companion",
 			"Core PADI personality traits: warm, funny, witty, intelligent, playful, emotionally aware.",
-			"Humour preferences change how often humour appears", "friendly \"how are you?\" small talk",
-			"one to three short sentences", "real opening in what the user said",
+			"Humour preferences change how often humour appears", "For ordinary greetings, respond with a friendly greeting.",
+			"Keep ordinary conversations short and natural.", "real opening in what the user said",
 			"Enjoy a good joke without explaining it", "light, self-directed comeback",
 			"Do not reuse a joke or opening already in the conversation",
 			"age- or gender-based titles", "do not assume",
@@ -61,8 +65,33 @@ func TestDisabledHumourReceivesNoCompetingJokeInstruction(t *testing.T) {
 		if strings.Contains(system, padiHumourInstructions) ||
 			strings.Contains(system, "real opening in what the user said") ||
 			!strings.Contains(system, "This turn calls for a straightforward response") ||
-			!strings.Contains(system, "Keep PADI warm and personable without jokes or teasing") {
+			!strings.Contains(system, "without jokes or teasing") {
 			t.Fatalf("conflicting humour instruction in voice=%t", voice)
+		}
+		warmth := personality.DefaultCoreSettings().WarmthGuidance
+		if warmth == "" || strings.Count(system, warmth) != 1 {
+			t.Fatalf("voice=%t humour suppression dropped or changed Python warmth", voice)
+		}
+	}
+}
+
+func TestSeriousContextKeepsPythonWarmthAndSuppressesHumour(t *testing.T) {
+	p := personality.DefaultPreferences()
+	p.Humour = personality.HumourFrequent
+	text := "My father died yesterday. Please just listen."
+	for _, voice := range []bool{false, true} {
+		got := withPADIInstructions(Request{
+			Voice: voice, Messages: []Message{{Role: RoleUser, Content: text}},
+			StyleGuidance:  personality.ResponseGuidance(text, p),
+			SuppressHumour: !personality.Assess(text, p).HumourAllowed,
+		})
+		system := got.Messages[0].Content
+		warmth := personality.DefaultCoreSettings().WarmthGuidance
+		if strings.Count(system, warmth) != 1 || strings.Contains(system, padiHumourInstructions) ||
+			!strings.Contains(system, "Conversation signal: empathetic.") ||
+			!strings.Contains(system, "The user requested listening or company.") ||
+			!strings.Contains(system, "Grief, trauma, danger, and painful experiences always take priority") {
+			t.Fatalf("voice=%t serious context lost warmth or safety overrides", voice)
 		}
 	}
 }

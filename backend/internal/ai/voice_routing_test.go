@@ -49,7 +49,7 @@ func TestVoiceTextModelsShareContextAndFallbackBeforeFirstDeltaOnly(t *testing.T
 						w.WriteHeader(test.status)
 						return
 					}
-					_, _ = w.Write([]byte("data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"PADI is our project.\"}]}}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":5}}\n\n"))
+					_, _ = w.Write([]byte("data: {\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"text\":\"PADI is our project.\"}]}}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":5}}\n\n"))
 					if test.partial {
 						_, _ = w.Write([]byte("data: {\"error\":{\"message\":\"synthetic interrupted stream\"}}\n\n"))
 					}
@@ -63,7 +63,7 @@ func TestVoiceTextModelsShareContextAndFallbackBeforeFirstDeltaOnly(t *testing.T
 				if len(payload.Messages) != 4 || payload.Messages[1].Content != "Our project is PADI." || !strings.Contains(payload.Messages[0].Content, "one consistent AI companion") {
 					t.Error("fallback lost context/personality")
 				}
-				_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"PADI is our project.\"}}]}\n\ndata: [DONE]\n\n"))
+				_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"PADI is our project.\"}}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"))
 			}))
 			defer server.Close()
 			router := testRouter(t, []ModelConfig{
@@ -108,10 +108,10 @@ func TestGeminiVoiceStreamRejectsAudioAndDoesNotExposeThoughtParts(t *testing.T)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")
 				if audio {
-					_, _ = w.Write([]byte("data: {\"candidates\":[{\"content\":{\"parts\":[{\"inlineData\":{\"mimeType\":\"audio/wav\",\"data\":\"AAAA\"}}]}}]}\n\n"))
+					_, _ = w.Write([]byte("data: {\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"inlineData\":{\"mimeType\":\"audio/wav\",\"data\":\"AAAA\"}}]}}]}\n\n"))
 					return
 				}
-				_, _ = w.Write([]byte("data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"private reasoning\",\"thought\":true},{\"text\":\"Hello there.\"}]}}]}\n\n"))
+				_, _ = w.Write([]byte("data: {\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"text\":\"private reasoning\",\"thought\":true},{\"text\":\"Hello there.\"}]}}]}\n\n"))
 			}))
 			defer server.Close()
 			var delivered strings.Builder

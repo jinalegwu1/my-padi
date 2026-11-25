@@ -3,7 +3,6 @@ package ai
 import (
 	"context"
 	"net/http"
-	"strings"
 )
 
 const ProviderZAI = "zai"
@@ -54,11 +53,5 @@ func (provider zaiProvider) Generate(ctx context.Context, model ModelConfig, req
 	if err := postJSON(ctx, provider.client, model.Provider, endpoint, key, "Authorization", "Bearer ", payload, &result); err != nil {
 		return Response{}, err
 	}
-	if len(result.Choices) == 0 || strings.TrimSpace(result.Choices[0].Message.Content) == "" {
-		return Response{}, &ProviderError{Provider: model.Provider, Retryable: true, Err: ErrEmptyProviderResponse}
-	}
-	return Response{
-		Content: result.Choices[0].Message.Content,
-		Usage:   Usage{InputTokens: result.Usage.PromptTokens, OutputTokens: result.Usage.CompletionTokens},
-	}, nil
+	return completedOpenAIResponse(model.Provider, result)
 }

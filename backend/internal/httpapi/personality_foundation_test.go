@@ -20,14 +20,14 @@ func TestTextAndVoiceRequestsSharePreferenceAndEmotionalGuidance(t *testing.T) {
 			humour           personality.HumourPreference
 		}{
 			{"greeting", "Hi", "A small bit of wit is welcome", personality.HumourOccasional},
-			{"returning grief greeting", "Greet me briefly. Recent user turn for greeting continuity: My father died yesterday. Please just listen.", "empathetic tone. Respond to what the user actually said", personality.HumourFrequent},
+			{"returning grief greeting", "Greet me briefly. Recent user turn for greeting continuity: My father died yesterday. Please just listen.", "Conversation signal: empathetic.", personality.HumourFrequent},
 			{"everyday", "I opened the fridge three times and dinner still hasn't appeared.", "A small bit of wit is welcome", personality.HumourOccasional},
 			{"user joke", "My Wi-Fi and I live in the same room but have a long-distance relationship.", "A small bit of wit is welcome", personality.HumourOccasional},
 			{"teasing", "PADI, did you swallow a dictionary?", "A small bit of wit is welcome", personality.HumourOccasional},
 			{"subtle", "What should I cook today?", "keep it understated", personality.HumourSubtle},
 			{"off", "What should I cook today?", "without jokes or teasing", personality.HumourOff},
-			{"grief", "My father died. Tell me a joke.", "empathetic tone. Respond to what the user actually said", personality.HumourFrequent},
-			{"serious", "Give me a serious response about my interview.", "serious tone. Respond to what the user actually said", personality.HumourFrequent},
+			{"grief", "My father died. Tell me a joke.", "Conversation signal: empathetic.", personality.HumourFrequent},
+			{"serious", "Give me a serious response about my interview.", "Conversation signal: serious.", personality.HumourFrequent},
 		} {
 			t.Run(delivery+"/"+test.name, func(t *testing.T) {
 				generator := &testChatGenerator{}

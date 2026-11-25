@@ -2,13 +2,51 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/jinalegwu1/my-padi/backend/internal/ai"
 	"github.com/jinalegwu1/my-padi/backend/internal/memory"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestUnfinishedRepliesAreNeverDeliveredAsComplete(t *testing.T) {
+	t.Setenv("PADI_COMPLETION_KEY", "synthetic-key")
+	for _, stream := range []bool{false, true} {
+		for _, reason := range []string{"length", "stop", ""} {
+			t.Run(reason+"/"+map[bool]string{false: "text", true: "voice"}[stream], func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if stream {
+						w.Header().Set("Content-Type", "text/event-stream")
+						chunk, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]string{"content": "That's great news—"}, "finish_reason": reason}}})
+						_, _ = w.Write(append(append([]byte("data: "), chunk...), []byte("\n\ndata: [DONE]\n\n")...))
+					} else {
+						_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": "That's great news—"}, "finish_reason": reason}}})
+					}
+				}))
+				defer server.Close()
+				generator, err := ai.NewRouterWithUsageLimiter([]ai.ModelConfig{{ID: "main", Provider: ai.ProviderGroq, Model: "openai/gpt-oss-20b", Endpoint: server.URL, APIKeyEnv: "PADI_COMPLETION_KEY"}}, ai.NewProviderAdapters(server.Client()), ai.RoutingConfig{PrimaryModel: "main", FastModel: "main", VoicePrimaryModel: "main", ApprovedFreeModels: []string{"groq:openai/gpt-oss-20b"}}, nil, livePersonalityUsageLimiter{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				handler := NewRouter(nil, Dependencies{Auth: testAuthAPI{}, Chat: generator})
+				body, _ := json.Marshal(map[string]any{"delivery": map[bool]string{false: "text", true: "voice"}[stream], "stream": stream, "messages": []ai.Message{{Role: ai.RoleUser, Content: "PADI, I bought a new phone today."}}})
+				request := httptest.NewRequest("POST", "/v1/chat", strings.NewReader(string(body)))
+				request.Header.Set("Authorization", "Bearer test-token")
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, request)
+				if !strings.Contains(response.Body.String(), "incomplete_provider_response") || strings.Contains(response.Body.String(), "event: done") || strings.Contains(response.Body.String(), "\"reply\"") {
+					t.Fatalf("unfinished reply marked complete: status=%d body=%s", response.Code, response.Body.String())
+				}
+				if !stream && response.Code != http.StatusBadGateway {
+					t.Fatalf("text fragment returned success: %d", response.Code)
+				}
+			})
+		}
+	}
+}
 
 type testStreamingChat struct {
 	streamCalls   int
@@ -99,7 +137,7 @@ func TestVoiceDeliveryUsesSpokenStyleAndInterruptedContext(t *testing.T) {
 	if !generator.request.Voice {
 		t.Fatal("voice chat request was not marked for Gemini-to-Groq routing")
 	}
-	if generator.request.Complexity != ai.ComplexitySimple || generator.request.MaxOutputTokens != 512 {
+	if generator.request.Complexity != ai.ComplexitySimple || generator.request.MaxOutputTokens != 1024 {
 		t.Fatal("Ordinary live replies did not use the fast conversation route")
 	}
 }

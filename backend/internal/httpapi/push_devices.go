@@ -78,14 +78,14 @@ func (handler pushDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err != nil {
-		handler.fail(w, err)
+		handler.fail(w)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (handler pushDeviceHandler) fail(w http.ResponseWriter, err error) {
+func (handler pushDeviceHandler) fail(w http.ResponseWriter) {
 	if handler.logger != nil {
 		handler.logger.Warn("push device operation failed", "class", "push_unavailable")
 	}

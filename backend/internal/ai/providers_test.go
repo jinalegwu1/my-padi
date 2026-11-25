@@ -35,7 +35,7 @@ func TestProviderAdapters(t *testing.T) {
 					t.Errorf("request = %+v, want configured model and messages", body)
 				}
 				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Hello"}}],"usage":{"prompt_tokens":12,"completion_tokens":4}}`))
+				_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"content":"Hello"}}],"usage":{"prompt_tokens":12,"completion_tokens":4}}`))
 			},
 		},
 		{
@@ -45,7 +45,7 @@ func TestProviderAdapters(t *testing.T) {
 				if got := r.Header.Get("Authorization"); got != "Bearer provider-secret" {
 					t.Errorf("Authorization = %q, want bearer credential", got)
 				}
-				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Hello"}}],"usage":{"prompt_tokens":2,"completion_tokens":2}}`))
+				_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"content":"Hello"}}],"usage":{"prompt_tokens":2,"completion_tokens":2}}`))
 			},
 		},
 		{
@@ -68,7 +68,7 @@ func TestProviderAdapters(t *testing.T) {
 				if body.System != "You are PADI." || len(body.Messages) != 1 || body.Messages[0].Role != RoleUser {
 					t.Errorf("request = %+v, want separated system and user message", body)
 				}
-				_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"Hello"}],"usage":{"input_tokens":10,"output_tokens":5}}`))
+				_, _ = w.Write([]byte(`{"stop_reason":"end_turn","content":[{"type":"text","text":"Hello"}],"usage":{"input_tokens":10,"output_tokens":5}}`))
 			},
 		},
 		{
@@ -90,7 +90,7 @@ func TestProviderAdapters(t *testing.T) {
 				if len(body.Contents) != 1 || body.Contents[0].Role != "user" || len(body.SystemInstruction) == 0 {
 					t.Errorf("request = %+v, want system instruction and user content", body)
 				}
-				_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"Hello"}]}}],"usageMetadata":{"promptTokenCount":9,"candidatesTokenCount":3}}`))
+				_, _ = w.Write([]byte(`{"candidates":[{"finishReason":"STOP","content":{"parts":[{"text":"Hello"}]}}],"usageMetadata":{"promptTokenCount":9,"candidatesTokenCount":3}}`))
 			},
 		},
 		{
@@ -100,7 +100,7 @@ func TestProviderAdapters(t *testing.T) {
 				if got := r.Header.Get("Authorization"); got != "Bearer provider-secret" {
 					t.Errorf("Authorization = %q, want configured credential", got)
 				}
-				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Hello"}}],"usage":{"prompt_tokens":12,"completion_tokens":4}}`))
+				_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"content":"Hello"}}],"usage":{"prompt_tokens":12,"completion_tokens":4}}`))
 			},
 		},
 		{
@@ -110,7 +110,7 @@ func TestProviderAdapters(t *testing.T) {
 				if got := r.Header.Get("Authorization"); got != "Bearer provider-secret" {
 					t.Errorf("Authorization = %q, want configured credential", got)
 				}
-				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Hello"}}],"usage":{"prompt_tokens":12,"completion_tokens":4}}`))
+				_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"content":"Hello"}}],"usage":{"prompt_tokens":12,"completion_tokens":4}}`))
 			},
 		},
 		{
@@ -120,7 +120,7 @@ func TestProviderAdapters(t *testing.T) {
 				if got := r.Header.Get("Authorization"); got != "Bearer provider-secret" {
 					t.Errorf("Authorization = %q, want configured credential", got)
 				}
-				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Hello"}}],"usage":{"prompt_tokens":12,"completion_tokens":4}}`))
+				_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"content":"Hello"}}],"usage":{"prompt_tokens":12,"completion_tokens":4}}`))
 			},
 		},
 	}
@@ -194,11 +194,11 @@ func TestSharedPersonalityInstructionsReachEveryProviderAdapter(t *testing.T) {
 		systemByProvider[provider] = system
 		switch provider {
 		case ProviderGemini:
-			_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"Hello"}]}}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":2}}`))
+			_, _ = w.Write([]byte(`{"candidates":[{"finishReason":"STOP","content":{"parts":[{"text":"Hello"}]}}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":2}}`))
 		case ProviderAnthropic:
-			_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"Hello"}],"usage":{"input_tokens":2,"output_tokens":2}}`))
+			_, _ = w.Write([]byte(`{"stop_reason":"end_turn","content":[{"type":"text","text":"Hello"}],"usage":{"input_tokens":2,"output_tokens":2}}`))
 		default:
-			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Hello"}}],"usage":{"prompt_tokens":2,"completion_tokens":2}}`))
+			_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"content":"Hello"}}],"usage":{"prompt_tokens":2,"completion_tokens":2}}`))
 		}
 	}))
 	defer server.Close()
@@ -213,7 +213,7 @@ func TestSharedPersonalityInstructionsReachEveryProviderAdapter(t *testing.T) {
 	}
 	router := testRouter(t, models, adapters, RoutingConfig{PrimaryModel: models[0].ID}, nil)
 	request := Request{
-		StyleGuidance: "Use an empathetic tone. Respond to what the user actually said; be warm and specific without jokes or teasing.",
+		StyleGuidance: "Conversation signal: empathetic. Respond without jokes or teasing.",
 		Messages: []Message{
 			{Role: RoleSystem, Content: "Respond in the user's selected language."},
 			{Role: RoleUser, Content: "My mother died and I feel lost."},
@@ -265,9 +265,9 @@ func TestProviderDefaultEndpoints(t *testing.T) {
 						t.Errorf("OpenRouter model = %q, want configured model %q", payload.Model, test.model)
 					}
 				}
-				body := `{"choices":[{"message":{"content":"Hello"}}],"usage":{"prompt_tokens":12,"completion_tokens":4}}`
+				body := `{"choices":[{"finish_reason":"stop","message":{"content":"Hello"}}],"usage":{"prompt_tokens":12,"completion_tokens":4}}`
 				if test.provider == ProviderGemini {
-					body = `{"candidates":[{"content":{"parts":[{"text":"Hello"}]}}],"usageMetadata":{"promptTokenCount":9,"candidatesTokenCount":3}}`
+					body = `{"candidates":[{"finishReason":"STOP","content":{"parts":[{"text":"Hello"}]}}],"usageMetadata":{"promptTokenCount":9,"candidatesTokenCount":3}}`
 				}
 				return &http.Response{
 					StatusCode: http.StatusOK,
@@ -327,7 +327,7 @@ func TestOpenRouterDisablesReasoningOnlyForShortNemotronReplies(t *testing.T) {
 						t.Error("short Nemotron reply should disable reasoning")
 					}
 				}
-				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Hello"}}]}`))
+				_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"content":"Hello"}}]}`))
 			}))
 			defer server.Close()
 
@@ -336,7 +336,7 @@ func TestOpenRouterDisablesReasoningOnlyForShortNemotronReplies(t *testing.T) {
 				Provider: ProviderOpenRouter, Model: test.model, Endpoint: server.URL,
 				APIKeyEnv: "PADI_TEST_OPENROUTER_KEY",
 			}, Request{
-				Messages: []Message{{Role: RoleUser, Content: "Hi"}},
+				Messages:        []Message{{Role: RoleUser, Content: "Hi"}},
 				MaxOutputTokens: test.maxTokens,
 			})
 			if err != nil {
@@ -353,11 +353,11 @@ func TestProvidersRequestStructuredJSONWhenEnabled(t *testing.T) {
 	}{
 		{
 			provider: ProviderGroq,
-			jsonBody: `{"choices":[{"message":{"content":"{\"category\":\"question\"}"}}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`,
+			jsonBody: `{"choices":[{"finish_reason":"stop","message":{"content":"{\"category\":\"question\"}"}}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`,
 		},
 		{
 			provider: ProviderGemini,
-			jsonBody: `{"candidates":[{"content":{"parts":[{"text":"{\"category\":\"question\"}"}]}}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":2}}`,
+			jsonBody: `{"candidates":[{"finishReason":"STOP","content":{"parts":[{"text":"{\"category\":\"question\"}"}]}}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":2}}`,
 		},
 	}
 	for _, test := range tests {

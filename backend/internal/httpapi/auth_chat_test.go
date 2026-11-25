@@ -283,8 +283,8 @@ func TestChatAddsContextualPersonalityGuidanceWithoutLabelingUsers(t *testing.T)
 		message string
 		want    string
 	}{
-		{message: "I'm bored, please make me laugh.", want: "Use a playful tone. The user is inviting play"},
-		{message: "My mother died and I feel lost.", want: "Use an empathetic tone. Respond to what the user actually said"},
+		{message: "I'm bored, please make me laugh.", want: "The user is inviting play"},
+		{message: "My mother died and I feel lost.", want: "Conversation signal: empathetic."},
 	} {
 		generator := &testChatGenerator{}
 		router := NewRouter(nil, Dependencies{

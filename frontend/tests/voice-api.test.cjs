@@ -150,3 +150,23 @@ test('selected voice language travels to transcription, chat and previews when s
     supported=false;await api.getVoiceConfiguration();
   }finally{global.fetch=previous;}
 });
+
+test('unfinished voice text is never resolved as a completed response',async()=>{
+  const previous=global.XMLHttpRequest;
+  try {
+    for(const ending of ['', 'event: error\ndata: {"error":"incomplete_provider_response","message":"Response interrupted before it finished."}\n\n']) {
+      global.XMLHttpRequest=class {
+        responseText='';status=200;
+        open(){} setRequestHeader(){} getResponseHeader(){return 'text/event-stream';}
+        send(){
+          this.responseText='event: delta\ndata: {"text":"That’s great news—"}\n\n'+ending;
+          this.onprogress?.();this.onload?.();
+        }
+        abort(){this.onabort?.();}
+      };
+      const drafts=[];
+      await assert.rejects(api.streamVoiceChat('token',[{role:'user',content:'PADI, I bought a new phone today.'}],0,new AbortController().signal,delta=>drafts.push(delta)),/complete|interrupted/);
+      assert.deepEqual(drafts,['That’s great news—']);
+    }
+  }finally{global.XMLHttpRequest=previous;}
+});

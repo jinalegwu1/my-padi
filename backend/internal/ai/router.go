@@ -280,22 +280,33 @@ func (router *Router) StreamVoice(ctx context.Context, request Request, onDelta 
 	}
 	var lastErr error
 	for _, id := range router.voiceCandidates() {
-		delivered := false
-		result, err := router.streamWithModel(ctx, id, request, func(delta string) error {
-			if delta != "" {
-				delivered = true
+		completionRetried := false
+		for {
+			delivered := false
+			result, err := router.streamWithModel(ctx, id, request, func(delta string) error {
+				if delta != "" {
+					delivered = true
+				}
+				if onDelta != nil {
+					return onDelta(delta)
+				}
+				return nil
+			})
+			if err == nil {
+				return result, nil
 			}
-			if onDelta != nil {
-				return onDelta(delta)
+			lastErr = err
+			if errors.Is(err, ErrOutputTokenLimit) && !delivered && !completionRetried && ctx.Err() == nil {
+				if larger, ok := largerCompletionBudget(request); ok {
+					request = larger
+					completionRetried = true
+					continue
+				}
 			}
-			return nil
-		})
-		if err == nil {
-			return result, nil
-		}
-		lastErr = err
-		if delivered || ctx.Err() != nil || (!retryable(err) && !errors.Is(err, ErrCircuitOpen) && !errors.Is(err, ErrUsageLimitReached)) {
-			return Response{}, err
+			if delivered || ctx.Err() != nil || (!retryable(err) && !errors.Is(err, ErrIncompleteProviderResponse) && !errors.Is(err, ErrCircuitOpen) && !errors.Is(err, ErrUsageLimitReached)) {
+				return Response{}, err
+			}
+			break
 		}
 	}
 	return Response{}, lastErr
@@ -328,11 +339,19 @@ func (router *Router) streamWithModel(ctx context.Context, modelID string, reque
 	if err == nil && strings.TrimSpace(result.Content) == "" {
 		err = &ProviderError{Provider: model.Provider, Retryable: true, Err: ErrEmptyProviderResponse}
 	}
+	if err == nil {
+		err = validateCompleteText(model.Provider, result.Content)
+	}
 	if err != nil {
+		if errors.Is(err, ErrIncompleteProviderResponse) && result.Usage != (Usage{}) && result.Usage.InputTokens >= 0 && result.Usage.OutputTokens >= 0 {
+			if ledgerErr := router.limiter.RecordUsage(ctx, model.Provider, result.Usage, reservedAt); ledgerErr != nil {
+				return Response{}, fmt.Errorf("record incomplete AI provider usage: %w", ledgerErr)
+			}
+		}
 		if !router.disableLimits {
 			router.breaker(modelID).recordFailure(router.now(), retryable(err))
 		}
-		router.observe(model, duration, false, classifyError(err), Usage{})
+		router.observe(model, duration, false, classifyError(err), result.Usage)
 		return Response{}, err
 	}
 	if err := router.limiter.RecordUsage(ctx, model.Provider, result.Usage, reservedAt); err != nil {
@@ -353,7 +372,9 @@ func (router *Router) generateWithModel(ctx context.Context, modelID string, req
 	reservedTokens := estimateTokenUnits(request) + request.MaxOutputTokens
 	breaker := router.breaker(modelID)
 	var lastErr error
-	for attempt := 0; attempt <= model.Retries; attempt++ {
+	attempts := model.Retries + 1
+	completionRetried := false
+	for attempt := 0; attempt < attempts; attempt++ {
 		if !router.disableLimits && !breaker.allow(router.now()) {
 			return Response{}, ErrCircuitOpen
 		}
@@ -377,6 +398,9 @@ func (router *Router) generateWithModel(ctx context.Context, modelID string, req
 		if err == nil && strings.TrimSpace(result.Content) == "" {
 			err = &ProviderError{Provider: model.Provider, Retryable: true, Err: ErrEmptyProviderResponse}
 		}
+		if err == nil {
+			err = validateCompleteText(model.Provider, result.Content)
+		}
 		if err == nil && request.StructuredOutput && !json.Valid([]byte(result.Content)) {
 			err = &ProviderError{
 				Provider:  model.Provider,
@@ -386,11 +410,25 @@ func (router *Router) generateWithModel(ctx context.Context, modelID string, req
 		}
 
 		if err != nil {
+			if errors.Is(err, ErrIncompleteProviderResponse) && result.Usage != (Usage{}) && result.Usage.InputTokens >= 0 && result.Usage.OutputTokens >= 0 {
+				if ledgerErr := router.limiter.RecordUsage(ctx, model.Provider, result.Usage, reservedAt); ledgerErr != nil {
+					return Response{}, fmt.Errorf("record incomplete AI provider usage: %w", ledgerErr)
+				}
+			}
 			if !router.disableLimits {
 				breaker.recordFailure(router.now(), retryable(err))
 			}
-			router.observe(model, duration, false, classifyError(err), Usage{})
+			router.observe(model, duration, false, classifyError(err), result.Usage)
 			lastErr = err
+			if errors.Is(err, ErrOutputTokenLimit) && !completionRetried && ctx.Err() == nil {
+				if larger, ok := largerCompletionBudget(request); ok {
+					request = larger
+					reservedTokens = estimateTokenUnits(request) + request.MaxOutputTokens
+					completionRetried = true
+					attempts++
+					continue
+				}
+			}
 			if retryable(err) && !shouldFallbackImmediately(err) &&
 				!(request.Voice && shouldVoiceFallbackImmediately(err)) {
 				continue
@@ -504,6 +542,12 @@ func (router *Router) observe(model ModelConfig, duration time.Duration, success
 }
 
 func classifyError(err error) string {
+	if errors.Is(err, ErrOutputTokenLimit) {
+		return "output_token_limit"
+	}
+	if errors.Is(err, ErrIncompleteProviderResponse) {
+		return "incomplete_provider_response"
+	}
 	if errors.Is(err, ErrEmptyProviderResponse) {
 		return "empty_provider_response"
 	}

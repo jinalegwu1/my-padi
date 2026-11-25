@@ -44,6 +44,40 @@ type personalityLiveResult struct {
 	Events   []personalityLiveEvent `json:"provider_attempts"`
 }
 
+// These live checks catch the reported regressions; human review still judges tone.
+func warmthRegressionIssue(id, reply string) string {
+	lower := strings.ToLower(strings.ReplaceAll(reply, "’", "'"))
+	if strings.Contains(id, "warmth-hey-") {
+		for _, phrase := range []string{"feeling right now", "weighing on", "sorry", "lonely", "stressed", "sad", "ready to listen"} {
+			if strings.Contains(lower, phrase) {
+				return "neutral greeting received unsupported emotional-support language"
+			}
+		}
+	}
+	casual := strings.Contains(id, "warmth-phone") || strings.Contains(id, "warmth-neutral")
+	if casual {
+		for _, phrase := range []string{"i'm sorry", "sounds frustrating", "sounds stressful", "let-down", "let down", "here are", "you should", "you could try", "tips", "recommend", "help figuring", "recipe ideas", "if you need help", "if you'd like help"} {
+			if strings.Contains(lower, phrase) {
+				return "casual sharing received assumed distress or unsolicited practical help"
+			}
+		}
+	}
+	if strings.Contains(id, "warmth-phone-") && !strings.Contains(id, "follow-up") {
+		if !strings.Contains(lower, "phone") || !strings.Contains(reply, "?") {
+			return "new-phone sharing did not receive a relevant follow-up"
+		}
+	}
+	if strings.Contains(id, "warmth-negative") || strings.Contains(id, "warmth-serious") {
+		if strings.Contains(lower, "congratulations") || strings.Contains(lower, "haha") {
+			return "negative or serious context received inappropriate excitement or humour"
+		}
+	}
+	if strings.HasSuffix(strings.TrimSpace(reply), "—") {
+		return "unfinished clause was delivered as complete"
+	}
+	return ""
+}
+
 func TestLivePersonalityConversations(t *testing.T) {
 	if os.Getenv("PADI_RUN_LIVE_PERSONALITY_TESTS") != "true" {
 		t.Skip("set PADI_RUN_LIVE_PERSONALITY_TESTS=true to run real-provider conversation checks")
@@ -53,6 +87,9 @@ func TestLivePersonalityConversations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load configured AI models: %v", err)
 	}
+	warmthFilter := os.Getenv("PADI_PERSONALITY_LIVE_FILTER")
+	warmthRegression := strings.HasPrefix(warmthFilter, "warmth-regression")
+	warmthOnly := warmthFilter == "warmth" || warmthFilter == "warmth-recheck" || warmthRegression
 	var primary ai.ModelConfig
 	modelNames := make(map[string]string, len(configuration.Models))
 	for _, model := range configuration.Models {
@@ -61,7 +98,7 @@ func TestLivePersonalityConversations(t *testing.T) {
 			primary = model
 		}
 	}
-	if primary.Provider != ai.ProviderGroq || primary.Model != "openai/gpt-oss-20b" {
+	if !warmthOnly && (primary.Provider != ai.ProviderGroq || primary.Model != "openai/gpt-oss-20b") {
 		t.Fatalf("live personality test requires configured Groq primary openai/gpt-oss-20b; got %s:%s", primary.Provider, primary.Model)
 	}
 
@@ -104,7 +141,14 @@ func TestLivePersonalityConversations(t *testing.T) {
 	run := func(id, user, humour, delivery string, history []turn) string {
 		t.Helper()
 		if !lastRequest.IsZero() {
-			if wait := time.Until(lastRequest.Add(12 * time.Second)); wait > 0 {
+			interval := 12 * time.Second
+			if warmthRegression {
+				interval = 25 * time.Second
+				if warmthFilter == "warmth-regression-voice" {
+					interval = 45 * time.Second
+				}
+			}
+			if wait := time.Until(lastRequest.Add(interval)); wait > 0 {
 				time.Sleep(wait)
 			}
 		}
@@ -189,6 +233,11 @@ func TestLivePersonalityConversations(t *testing.T) {
 		if result.Reply == "" && result.Error == "" {
 			result.Error = "response did not contain a completed reply"
 		}
+		if warmthRegression && warmthFilter != "warmth-regression-before" && result.Reply != "" {
+			if issue := warmthRegressionIssue(id, result.Reply); issue != "" {
+				t.Errorf("%s: %s", id, issue)
+			}
+		}
 		results = append(results, result)
 		encodedResult, _ := json.Marshal(result)
 		t.Log(string(encodedResult))
@@ -196,6 +245,74 @@ func TestLivePersonalityConversations(t *testing.T) {
 			t.Logf("%s did not complete: %s", id, result.Error)
 		}
 		return result.Reply
+	}
+
+	if warmthOnly {
+		withReply := func(user, reply string) []turn {
+			history := []turn{{role: ai.RoleUser, content: user}}
+			if reply != "" {
+				history = append(history, turn{role: ai.RoleAssistant, content: reply})
+			}
+			return history
+		}
+		for _, delivery := range []string{"text", "voice"} {
+			if warmthFilter == "warmth-regression-voice" && delivery != "voice" {
+				continue
+			}
+			if warmthRegression {
+				hello := run("warmth-hey-"+delivery, "hey", "off", delivery, nil)
+				if hello == "" {
+					t.Logf("%s provider unavailable; dependent conversation checks cannot run", delivery)
+					continue
+				}
+				phone := "PADI, I bought a new phone today."
+				reply := run("warmth-phone-"+delivery, phone, "off", delivery, withReply("hey", hello))
+				phoneHistory := append(withReply("hey", hello), withReply(phone, reply)...)
+				detail := "An iPhone 15. I'd been saving for it for months."
+				detailReply := run("warmth-phone-follow-up-"+delivery, detail, "off", delivery, phoneHistory)
+				phoneHistory = append(phoneHistory, withReply(detail, detailReply)...)
+				run("warmth-neutral-"+delivery, "I opened the fridge again hoping dinner would appear.", "off", delivery, nil)
+				if warmthFilter == "warmth-regression-before" {
+					continue
+				}
+				neutral := "Just a quiet Sunday. I'm listening to music."
+				reply = run("warmth-neutral-sharing-"+delivery, neutral, "off", delivery, nil)
+				run("warmth-neutral-follow-up-"+delivery, "It's an Asa album. My sister used to play it while we cooked.", "off", delivery, withReply(neutral, reply))
+				negative := "I'm feeling low today. I just need some company."
+				reply = run("warmth-negative-"+delivery, negative, "off", delivery, nil)
+				run("warmth-negative-follow-up-"+delivery, "Can we just talk for a bit?", "off", delivery, withReply(negative, reply))
+				grief := "My father died yesterday. Please just listen."
+				reply = run("warmth-serious-"+delivery, grief, "frequent", delivery, nil)
+				run("warmth-serious-follow-up-"+delivery, "I don't know what to say.", "frequent", delivery, withReply(grief, reply))
+				run("warmth-requested-help-"+delivery, "Could you explain how to transfer my contacts to my new phone?", "off", delivery, phoneHistory)
+				continue
+			}
+			if warmthFilter != "warmth-recheck" {
+				sharing := "I'm spending Sunday doing laundry and listening to music."
+				reply := run("warmth-sharing-"+delivery, sharing, "occasional", delivery, nil)
+				run("warmth-detail-follow-up-"+delivery, "It's an old Asa album. My sister used to play it while we cooked.", "occasional", delivery,
+					withReply(sharing, reply))
+			}
+			run("warmth-humour-off-"+delivery, "I opened the fridge again hoping dinner would appear.", "off", delivery, nil)
+			if warmthFilter != "warmth-recheck" {
+				run("warmth-company-"+delivery, "It's been a long day. I just wanted some company.", "off", delivery, nil)
+				run("warmth-good-news-"+delivery, "I got the job! I've been hoping for this for months.", "occasional", delivery, nil)
+				run("warmth-banter-"+delivery, "I set five alarms and negotiated with every single one.", "occasional", delivery, nil)
+			}
+			grief := "My father died yesterday. Please just listen."
+			reply := run("warmth-listening-"+delivery, grief, "frequent", delivery, nil)
+			run("warmth-serious-follow-up-"+delivery, "I don't know what to say.", "frequent", delivery,
+				withReply(grief, reply))
+			run("warmth-requested-help-"+delivery, "Could you suggest a quick dinner with eggs and rice?", "off", delivery, nil)
+		}
+		writeEvidence()
+		for _, result := range results {
+			if result.Error != "" {
+				t.Errorf("%s did not complete: %s", result.ID, result.Error)
+			}
+		}
+		t.Log("Real warmth conversation sample recorded; human review is required, including voice listening separately.")
+		return
 	}
 
 	if os.Getenv("PADI_PERSONALITY_LIVE_FILTER") == "focused" {

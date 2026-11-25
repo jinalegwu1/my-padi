@@ -64,7 +64,7 @@ func TestZAIKeepsConversationContextAndControlsThinking(t *testing.T) {
 				if !request.StructuredOutput && body.ResponseFormat != nil {
 					t.Error("unexpected JSON response format")
 				}
-				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Ada","reasoning_content":"private reasoning"}}],"usage":{"prompt_tokens":32,"completion_tokens":4}}`))
+				_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"content":"Ada","reasoning_content":"private reasoning"}}],"usage":{"prompt_tokens":32,"completion_tokens":4}}`))
 			}))
 			defer server.Close()
 			response, err := NewProviderAdapters(server.Client())[ProviderZAI].Generate(context.Background(), ModelConfig{
@@ -83,7 +83,7 @@ func TestZAIKeepsConversationContextAndControlsThinking(t *testing.T) {
 func TestZAIRejectsReasoningOnlyResponse(t *testing.T) {
 	t.Setenv("PADI_TEST_ZAI_KEY", "synthetic-key")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"","reasoning_content":"private reasoning"}}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"content":"","reasoning_content":"private reasoning"}}]}`))
 	}))
 	defer server.Close()
 	_, err := NewProviderAdapters(server.Client())[ProviderZAI].Generate(context.Background(), ModelConfig{
@@ -102,7 +102,7 @@ func TestReasoningOnlyZAIResponseFailsAfterPreviousProviders(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"","reasoning_content":"private reasoning"}}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"content":"","reasoning_content":"private reasoning"}}]}`))
 	}))
 	defer server.Close()
 	groq := &fakeProvider{err: &ProviderError{Provider: ProviderGroq, Status: 503, Retryable: true}}

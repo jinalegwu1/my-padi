@@ -372,7 +372,7 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// Ordinary live turns use the configured fast model. Detailed work
 			// keeps the normal reasoning route and output budget.
 			chatRequest.Complexity = ai.ComplexitySimple
-			chatRequest.MaxOutputTokens = 512
+			chatRequest.MaxOutputTokens = 1024
 		}
 	}
 	if body.Delivery != "voice" {
@@ -512,6 +512,8 @@ func validateChatMessages(input []struct {
 func classifyChatError(err error) (int, string, string) {
 	var providerError *ai.ProviderError
 	switch {
+	case errors.Is(err, ai.ErrIncompleteProviderResponse):
+		return http.StatusBadGateway, "incomplete_provider_response", "PADI's response was interrupted before it finished. Please try again."
 	case errors.Is(err, ai.ErrUsageLimitReached):
 		return http.StatusTooManyRequests, "usage_limit_reached", "PADI has reached its current AI usage limit. Please try again later."
 	case errors.Is(err, ai.ErrUsageLimiterUnavailable):

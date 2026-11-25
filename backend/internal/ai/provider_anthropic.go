@@ -2,7 +2,6 @@ package ai
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strings"
 )
@@ -47,7 +46,8 @@ func (provider anthropicProvider) Generate(ctx context.Context, model ModelConfi
 		Messages:  messages,
 	}
 	var result struct {
-		Content []struct {
+		StopReason string `json:"stop_reason"`
+		Content    []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
@@ -67,14 +67,16 @@ func (provider anthropicProvider) Generate(ctx context.Context, model ModelConfi
 			content.WriteString(block.Text)
 		}
 	}
-	if strings.TrimSpace(content.String()) == "" {
-		return Response{}, &ProviderError{Provider: model.Provider, Err: errors.New("response contained no text")}
-	}
-	return Response{
-		Content: content.String(),
+	response := Response{
+		Content:      content.String(),
+		FinishReason: result.StopReason,
 		Usage: Usage{
 			InputTokens:  result.Usage.InputTokens,
 			OutputTokens: result.Usage.OutputTokens,
 		},
-	}, nil
+	}
+	if err := completionError(model.Provider, response.FinishReason, true); err != nil {
+		return response, err
+	}
+	return response, validateCompleteText(model.Provider, response.Content)
 }

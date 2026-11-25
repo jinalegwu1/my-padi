@@ -63,7 +63,8 @@ func (provider geminiProvider) Generate(ctx context.Context, model ModelConfig, 
 	}
 	var result struct {
 		Candidates []struct {
-			Content geminiContent `json:"content"`
+			Content      geminiContent `json:"content"`
+			FinishReason string        `json:"finishReason"`
 		} `json:"candidates"`
 		UsageMetadata struct {
 			PromptTokenCount     int `json:"promptTokenCount"`
@@ -80,16 +81,18 @@ func (provider geminiProvider) Generate(ctx context.Context, model ModelConfig, 
 	for _, part := range result.Candidates[0].Content.Parts {
 		content.WriteString(part.Text)
 	}
-	if strings.TrimSpace(content.String()) == "" {
-		return Response{}, &ProviderError{Provider: model.Provider, Retryable: true, Err: ErrEmptyProviderResponse}
-	}
-	return Response{
-		Content: content.String(),
+	response := Response{
+		Content:      content.String(),
+		FinishReason: result.Candidates[0].FinishReason,
 		Usage: Usage{
 			InputTokens:  result.UsageMetadata.PromptTokenCount,
 			OutputTokens: result.UsageMetadata.CandidatesTokenCount,
 		},
-	}, nil
+	}
+	if err := completionError(model.Provider, response.FinishReason, true); err != nil {
+		return response, err
+	}
+	return response, validateCompleteText(model.Provider, response.Content)
 }
 
 type geminiPart struct {
