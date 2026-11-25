@@ -40,24 +40,31 @@ func TestPythonPersonalityConfigurationReachesProvider(t *testing.T) {
 			_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"content":"Hello."}}]}`))
 		}))
 		defer server.Close()
-		want := "Core PADI personality traits: warm, witty, intelligent, emotionally aware."
 		expected := os.Getenv("PADI_PERSONALITY_TEST_GUIDANCE")
-		enabled := os.Getenv("PADI_PERSONALITY_TEST_WARMTH") == "enabled"
-		if enabled && expected == "" {
-			t.Fatal("independent Python export did not supply warmth guidance")
+		var exported struct {
+			Traits map[string]bool `json:"traits"`
 		}
-		if !enabled {
-			want = "Core PADI personality traits: witty, intelligent, emotionally aware."
+		if err := json.Unmarshal([]byte(os.Getenv("PADI_PERSONALITY_TEST_EXPORT")), &exported); err != nil {
+			t.Fatal(err)
+		}
+		settings, err := personality.LoadCoreSettings()
+		if err != nil {
+			t.Fatal(err)
+		}
+		actualTraits := map[string]bool{"warm": settings.Warm, "funny": settings.Funny, "witty": settings.Witty, "intelligent": settings.Intelligent, "playful": settings.Playful, "emotionally_aware": settings.EmotionallyAware}
+		for trait, want := range exported.Traits {
+			if actualTraits[trait] != want {
+				t.Fatalf("Go changed exported trait %s", trait)
+			}
 		}
 		for _, delivery := range []string{"text", "voice", "StreamVoice"} {
 			for _, scenario := range []struct {
 				name, text string
 				humour     personality.HumourPreference
-				suppress   bool
 			}{
-				{"casual", "I'm doing laundry and listening to music.", personality.HumourOccasional, false},
-				{"humour off", "I opened the fridge again hoping dinner would appear.", personality.HumourOff, true},
-				{"grief", "My father died yesterday. Please just listen.", personality.HumourFrequent, true},
+				{"casual", "I'm doing laundry and listening to music.", personality.HumourOccasional},
+				{"humour off", "I opened the fridge again hoping dinner would appear.", personality.HumourOff},
+				{"grief", "My father died yesterday. Please just listen.", personality.HumourFrequent},
 			} {
 				t.Run(delivery+"/"+scenario.name, func(t *testing.T) {
 					// Each delivery check gets a fresh synthetic usage allowance.
@@ -71,8 +78,7 @@ func TestPythonPersonalityConfigurationReachesProvider(t *testing.T) {
 						Voice: delivery != "text",
 						Messages: []Message{{Role: RoleUser, Content: "I picked an album for Sunday."},
 							{Role: RoleAssistant, Content: "Which album?"}, {Role: RoleUser, Content: scenario.text}},
-						StyleGuidance:  personality.ResponseGuidance(scenario.text, p),
-						SuppressHumour: !personality.Assess(scenario.text, p).HumourAllowed,
+						ConversationContext: &ConversationContext{Preferences: p},
 					}
 					var response Response
 					var err error
@@ -99,87 +105,65 @@ func TestPythonPersonalityConfigurationReachesProvider(t *testing.T) {
 						t.Fatalf("provider lost conversation context: %+v", delivered)
 					}
 					system := delivered[0].Content
-					if !strings.Contains(system, want) {
-						t.Fatal("provider lost the other configured trait values")
-					}
-					if enabled && strings.Count(system, expected) != 1 {
-						t.Fatal("provider changed, duplicated, or dropped the exact independently exported Python guidance")
-					}
-					if !enabled && (strings.Contains(system, "Warmth:") || strings.Contains(system, "Python bridge boundary")) {
-						t.Fatal("provider received disabled warmth behaviour")
-					}
-					if strings.Contains(system, padiHumourInstructions) == scenario.suppress ||
-						strings.Contains(system, "This turn calls for a straightforward response") != scenario.suppress {
-						t.Fatal("warmth integration changed humour suppression")
-					}
-					if scenario.name == "grief" && (!strings.Contains(system, "Conversation signal: empathetic.") ||
-						!strings.Contains(system, "The user requested listening or company.") ||
-						!strings.Contains(system, "Grief, trauma, danger, and painful experiences always take priority")) {
-						t.Fatal("provider lost serious-context signals or safety rules")
-					}
+					assertSystemInstructionBoundary(t, system, expected, request)
 				})
 			}
 		}
 		return
 	}
 
-	// Fresh processes exercise the startup cache with each actual Python configuration.
-	for _, mode := range []string{"enabled", "disabled"} {
-		t.Run(mode, func(t *testing.T) {
-			root := t.TempDir()
-			packageDir := filepath.Join(root, "padi_personality")
-			for _, name := range []string{"__init__.py", "core.py", "personality_config.py",
-				"personalities/__init__.py", "personalities/best_friend.py", "personalities/emotional_intelligence.py",
-				"personalities/comedian.py", "personalities/intellectual.py",
-				"conversation/__init__.py", "conversation/response_style.py", "conversation/understanding.py",
-				"emotions/__init__.py", "emotions/emotion_recognition.py", "emotions/emotional_responses.py",
-				"humour/__init__.py", "humour/jokes.py", "humour/playful_teasing.py", "humour/storytelling.py"} {
-				source, err := os.ReadFile(filepath.Join("..", "..", "..", "services", "padi_personality", name))
-				if err != nil {
-					t.Fatal(err)
-				}
-				if name == "personality_config.py" {
-					warm := "True"
-					if mode == "disabled" {
-						warm = "False"
-					}
-					source = append(source, []byte("\nPADI_PERSONALITY_CONFIG = PersonalityConfig(warm="+warm+", funny=False, playful=False)\n")...)
-				}
-				if name == "personalities/best_friend.py" {
-					source = append(source, []byte("\nWARMTH_GUIDANCE += '\\n  Python bridge boundary: exact wording 🙂  \\n'\n")...)
-				}
-				target := filepath.Join(packageDir, name)
-				if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(target, source, 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			python, err := exec.LookPath("python3")
+	// Each case exports the real protected Python package with an immutable
+	// configuration override. No Python file, including a copied module, is edited.
+	root, err := filepath.Abs(filepath.Join("..", "..", "..", "services"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		python, err = exec.LookPath("python")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("isolated configuration launcher requires /bin/sh")
+	}
+	cases := []struct{ name, overrides string }{{"enabled", "{}"}}
+	for _, trait := range []string{"warm", "funny", "witty", "intelligent", "playful", "emotionally_aware"} {
+		cases = append(cases, struct{ name, overrides string }{trait + " disabled", "{\"" + trait + "\":false}"})
+	}
+	cases = append(cases, struct{ name, overrides string }{"all disabled", `{"warm":false,"funny":false,"witty":false,"intelligent":false,"playful":false,"emotionally_aware":false}`})
+	const exportScript = "import json, sys; from dataclasses import replace; sys.path.insert(0, sys.argv[1]); from padi_personality.core import export_personality, PADI_PERSONALITY_CONFIG; print(json.dumps(export_personality(replace(PADI_PERSONALITY_CONFIG, **json.loads(sys.argv[2])))))"
+	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
+	for _, current := range cases {
+		t.Run(current.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			export := exec.CommandContext(ctx, python, "-I", "-B", "-c", exportScript, root, current.overrides)
+			output, err := export.Output()
 			if err != nil {
-				python, err = exec.LookPath("python")
+				t.Fatalf("independent Python export failed: %v", err)
 			}
-			if err != nil {
+			var exported struct {
+				Traits   map[string]bool `json:"traits"`
+				Guidance string          `json:"warmth_guidance"`
+			}
+			if err := json.Unmarshal(output, &exported); err != nil {
 				t.Fatal(err)
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			// Independently export Python's exact text before asking Go to load it.
-			export := exec.CommandContext(ctx, python, "-I", "-B", "-c",
-				"import sys; sys.path.insert(0, sys.argv[1]); from padi_personality.core import export_personality; sys.stdout.write(export_personality()['warmth_guidance'])", root)
-			expected, err := export.Output()
-			if err != nil {
+			launcher := filepath.Join(t.TempDir(), "python-config-launcher")
+			contents := "#!/bin/sh\nexec " + quote(python) + " -I -B -c " + quote(exportScript) + " " + quote(root) + " " + quote(current.overrides) + "\n"
+			if err := os.WriteFile(launcher, []byte(contents), 0o700); err != nil {
 				t.Fatal(err)
 			}
 			command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestPythonPersonalityConfigurationReachesProvider$", "-test.v")
 			command.Env = append(os.Environ(), "PADI_PERSONALITY_TEST_PROCESS=true", "PADI_PERSONALITY_ROOT="+root,
-				"PADI_PERSONALITY_TEST_WARMTH="+mode, "PADI_PERSONALITY_TEST_GUIDANCE="+string(expected))
-			output, err := command.CombinedOutput()
+				"PADI_PERSONALITY_PYTHON="+launcher, "PADI_PERSONALITY_TEST_GUIDANCE="+exported.Guidance, "PADI_PERSONALITY_TEST_EXPORT="+string(output))
+			result, err := command.CombinedOutput()
 			if err != nil {
-				t.Fatalf("Python-to-provider integration failed: %v\n%s", err, output)
+				t.Fatalf("Python-to-provider integration failed: %v\n%s", err, result)
 			}
-			t.Logf("%s", output)
+			t.Logf("%s", result)
 		})
 	}
 }

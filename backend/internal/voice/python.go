@@ -48,6 +48,7 @@ func ValidSpeechAudio(audio Audio) bool {
 type PythonSpeech struct {
 	endpoint, token string
 	fallbackModel   string
+	localVoice      bool
 	fastVoice       bool
 	groqVoice       bool
 	disableLimits   bool
@@ -83,6 +84,16 @@ func LoadPythonSpeech(limiter ai.UsageLimiter) (*PythonSpeech, error) {
 	parsed, err := url.Parse(endpoint)
 	if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != "" || (parsed.Scheme != "https" && !(parsed.Scheme == "http" && (parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost"))) {
 		return nil, errors.New("Python voice URL must use HTTPS or a loopback HTTP address with no path or credentials")
+	}
+	engine := os.Getenv("PADI_PYTHON_VOICE_ENGINE")
+	if engine == "" {
+		engine = "local"
+	}
+	if engine == "local" {
+		return &PythonSpeech{endpoint: endpoint + "/synthesise", token: token, localVoice: true, disableLimits: os.Getenv("PADI_DISABLE_ALL_LIMITS") == "true", limiter: limiter, client: &http.Client{Timeout: 55 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	}
+	if engine != "gemini" {
+		return nil, errors.New("Python voice engine must be local or gemini")
 	}
 	confirmed := false
 	for _, provider := range strings.Split(os.Getenv("PADI_AI_FREE_ACCOUNT_CONFIRMED"), ",") {
@@ -134,6 +145,37 @@ func LoadPythonSpeech(limiter ai.UsageLimiter) (*PythonSpeech, error) {
 
 const fastVoiceModel = "canopylabs/orpheus-v1-english"
 
+func (service *PythonSpeech) SupportsLocalSpeech() bool { return service.localVoice }
+
+// SpeechLanguages reads local-engine capabilities from Python, rather than
+// claiming that every application locale has an installed local voice.
+func (service *PythonSpeech) SpeechLanguages(ctx context.Context) []string {
+	if !service.localVoice {
+		return nil
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(service.endpoint, "/synthesise")+"/health", nil)
+	if err != nil {
+		return []string{}
+	}
+	response, err := service.client.Do(request)
+	if err != nil {
+		return []string{}
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return []string{}
+	}
+	var state struct {
+		Speech struct {
+			Languages []string `json:"supported_languages"`
+		} `json:"speech"`
+	}
+	if json.NewDecoder(io.LimitReader(response.Body, 8192)).Decode(&state) != nil {
+		return []string{}
+	}
+	return state.Speech.Languages
+}
+
 func (service *PythonSpeech) SupportsGroqLiveSpeech() bool {
 	return service.groqVoice
 }
@@ -161,6 +203,9 @@ func (service *PythonSpeech) SynthesiseGroqLive(ctx context.Context, text, style
 // Live English turns can use Groq speech while the selected locale/pace falls
 // back to Gemini when unsupported or the fast service is unavailable.
 func (service *PythonSpeech) SynthesiseLive(ctx context.Context, text, style string, rate float64, language string) (Audio, error) {
+	if service.localVoice {
+		return service.Synthesise(ctx, text, style, rate, language)
+	}
 	supportedFastSpeech := rate == 1 && (language == "en-NG" || language == "en-GB" || language == "pcm-NG")
 	if service.fastVoice && supportedFastSpeech {
 		service.mu.Lock()
@@ -231,7 +276,7 @@ func (service *PythonSpeech) Synthesise(ctx context.Context, text, style string,
 		blocked := !service.disableLimits && time.Now().Before(service.cooldowns[model])
 		service.mu.Unlock()
 		if blocked {
-			lastErr = &ai.ProviderError{Provider: "gemini-voice", Status: http.StatusTooManyRequests}
+			lastErr = &ai.ProviderError{Provider: service.speechProvider(model), Status: http.StatusTooManyRequests}
 			continue
 		}
 		audio, err := service.synthesise(ctx, text, style, rate, language, model)
@@ -247,11 +292,18 @@ func (service *PythonSpeech) Synthesise(ctx context.Context, text, style string,
 	return Audio{}, lastErr
 }
 
-func (service *PythonSpeech) synthesise(ctx context.Context, text, style string, rate float64, language, model string) (Audio, error) {
-	provider := "gemini-voice"
-	if model == fastVoiceModel {
-		provider = "groq-voice"
+func (service *PythonSpeech) speechProvider(model string) string {
+	if service.localVoice {
+		return "local-voice"
 	}
+	if model == fastVoiceModel {
+		return "groq-voice"
+	}
+	return "gemini-voice"
+}
+
+func (service *PythonSpeech) synthesise(ctx context.Context, text, style string, rate float64, language, model string) (Audio, error) {
+	provider := service.speechProvider(model)
 	reservedAt := time.Now()
 	if err := service.limiter.Reserve(ctx, provider, 1, ai.FreeUsageLimits(), reservedAt); err != nil {
 		return Audio{}, err

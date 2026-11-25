@@ -122,7 +122,7 @@ func TestVoiceStreamingUnavailableDoesNotFallBackToOrdinaryChat(t *testing.T) {
 	}
 }
 
-func TestVoiceDeliveryUsesSpokenStyleAndInterruptedContext(t *testing.T) {
+func TestVoiceDeliveryPreservesInterruptedPlaybackContext(t *testing.T) {
 	generator := &testChatGenerator{}
 	router := NewRouter(nil, Dependencies{Auth: testAuthAPI{}, Chat: generator})
 	request := httptest.NewRequest("POST", "/v1/chat", strings.NewReader(`{"delivery":"voice","messages":[{"role":"assistant","content":"First sentence. Second sentence."},{"role":"user","content":"Please continue"}],"voice_context":{"interrupted_reply":"First sentence. Second sentence.","spoken_prefix":"First sentence."}}`))
@@ -130,12 +130,12 @@ func TestVoiceDeliveryUsesSpokenStyleAndInterruptedContext(t *testing.T) {
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 	if response.Code != 200 || generator.request.Messages[0].Role != ai.RoleSystem ||
-		!strings.Contains(generator.request.Messages[0].Content, "selected conversation language") ||
+		strings.Contains(generator.request.Messages[0].Content, "selected conversation language") ||
 		!strings.Contains(generator.request.Messages[0].Content, `"spoken_prefix":"First sentence."`) {
 		t.Fatal("voice delivery or interrupted context missing")
 	}
 	if !generator.request.Voice {
-		t.Fatal("voice chat request was not marked for Gemini-to-Groq routing")
+		t.Fatal("voice chat request was not marked for voice delivery")
 	}
 	if generator.request.Complexity != ai.ComplexitySimple || generator.request.MaxOutputTokens != 1024 {
 		t.Fatal("Ordinary live replies did not use the fast conversation route")
@@ -162,7 +162,14 @@ func TestVoiceKeepsSelectedEnglishDespiteForeignTranscription(t *testing.T) {
 		request.Header.Set("Authorization", "Bearer test-token")
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)
-		if response.Code != 200 || !strings.Contains(generator.request.Messages[0].Content, "selected conversation language is English") || !strings.Contains(generator.request.Messages[0].Content, "Do not automatically switch languages") {
+		if response.Code != 200 {
+			t.Fatalf("voice request HTTP %d", response.Code)
+		}
+		if language == "" {
+			if len(generator.request.Messages) != 2 || generator.request.Messages[0].Role != ai.RoleAssistant {
+				t.Fatal("Go selected a language without an application setting")
+			}
+		} else if !strings.Contains(generator.request.Messages[0].Content, "selected conversation language is English") || !strings.Contains(generator.request.Messages[0].Content, "Do not automatically switch languages") {
 			t.Fatal("Foreign transcript or conversation displaced the selected English language")
 		}
 	}

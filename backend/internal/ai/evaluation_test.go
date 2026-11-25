@@ -22,12 +22,12 @@ func TestDefaultEvaluationCasesCoverPersonalityAndHumourSafety(t *testing.T) {
 	}
 	for _, current := range DefaultEvaluationCases() {
 		if _, ok := required[current.ID]; ok {
-			required[current.ID] = len(current.Criteria) >= 3 && current.Request.StyleGuidance != ""
+			required[current.ID] = len(current.Criteria) >= 3 && current.Request.ConversationContext != nil
 		}
 	}
 	for id, present := range required {
 		if !present {
-			t.Errorf("default evaluation case %q is missing criteria or response guidance", id)
+			t.Errorf("default evaluation case %q is missing criteria or preference context", id)
 		}
 	}
 }

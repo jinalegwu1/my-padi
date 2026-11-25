@@ -161,6 +161,7 @@ func TestSharedPersonalityInstructionsReachEveryProviderAdapter(t *testing.T) {
 		ProviderOpenAICompatible,
 		ProviderOpenRouter,
 		ProviderGroq,
+		ProviderAgnes,
 		ProviderZAI,
 		ProviderMistral,
 	}
@@ -213,26 +214,22 @@ func TestSharedPersonalityInstructionsReachEveryProviderAdapter(t *testing.T) {
 	}
 	router := testRouter(t, models, adapters, RoutingConfig{PrimaryModel: models[0].ID}, nil)
 	request := Request{
-		StyleGuidance: "Conversation signal: empathetic. Respond without jokes or teasing.",
 		Messages: []Message{
 			{Role: RoleSystem, Content: "Respond in the user's selected language."},
 			{Role: RoleUser, Content: "My mother died and I feel lost."},
 		},
 	}
-	expectedSystem := withPADIInstructions(request).Messages[0].Content
+	expectedSystem := withApplicationInstructions(request).Messages[0].Content
 	for _, provider := range providers {
 		if _, err := router.GenerateWithModel(context.Background(), "test-"+provider, request); err != nil {
 			t.Fatalf("%s GenerateWithModel() error = %v", provider, err)
 		}
+		assertSystemInstructionBoundary(t, systemByProvider[provider], defaultPythonGuidance(t), request)
 		if got := systemByProvider[provider]; got != expectedSystem {
 			t.Errorf("%s system instruction differs or was dropped:\n got: %q\nwant: %q", provider, got, expectedSystem)
 		}
 	}
-	if !strings.Contains(expectedSystem, "one consistent AI companion") ||
-		!strings.Contains(expectedSystem, "Never joke about a user's suffering, grief, trauma, health, identity") ||
-		!strings.Contains(expectedSystem, "without jokes or teasing") {
-		t.Fatal("shared system instruction does not include required personality and distress rules")
-	}
+	assertSystemInstructionBoundary(t, expectedSystem, defaultPythonGuidance(t), request)
 }
 
 func TestProviderDefaultEndpoints(t *testing.T) {

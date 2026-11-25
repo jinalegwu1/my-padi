@@ -17,6 +17,7 @@ import (
 const maxCatalogBytes = 8 << 20
 
 var catalogEndpoints = map[string]string{
+	ai.ProviderAgnes:      "https://wiki.agnes-ai.com/en/docs/pricing.md",
 	ai.ProviderGemini:     "https://generativelanguage.googleapis.com/v1beta/models",
 	ai.ProviderGroq:       "https://api.groq.com/openai/v1/models",
 	ai.ProviderMistral:    "https://api.mistral.ai/v1/models",
@@ -40,7 +41,7 @@ func FetchCatalog(ctx context.Context, client *http.Client, provider, key string
 	if !supported {
 		return nil, errors.New("unsupported catalogue provider")
 	}
-	if key == "" && provider != ai.ProviderOpenRouter && provider != ai.ProviderZAI {
+	if key == "" && provider != ai.ProviderOpenRouter && provider != ai.ProviderZAI && provider != ai.ProviderAgnes {
 		return nil, fmt.Errorf("%s account key is missing", provider)
 	}
 	models := make(map[string]CatalogModel)
@@ -49,7 +50,7 @@ func FetchCatalog(ctx context.Context, client *http.Client, provider, key string
 		if err != nil {
 			return nil, fmt.Errorf("%s catalogue request could not be created", provider)
 		}
-		if key != "" && provider != ai.ProviderZAI {
+		if key != "" && provider != ai.ProviderZAI && provider != ai.ProviderAgnes {
 			if provider == ai.ProviderGemini {
 				request.Header.Set("x-goog-api-key", key)
 			} else {
@@ -71,6 +72,9 @@ func FetchCatalog(ctx context.Context, client *http.Client, provider, key string
 		}
 		if provider == ai.ProviderZAI {
 			return zaiFreePricing(body)
+		}
+		if provider == ai.ProviderAgnes {
+			return agnesFreePricing(body)
 		}
 		var next string
 		if provider == ai.ProviderGemini {
@@ -201,4 +205,48 @@ func zeroPrices(prices map[string]string) *bool {
 		}
 	}
 	return &zero
+}
+
+// Agnes currently bills its default-key Flash trial at zero. This catalogue
+// checks all three published trial-price rows; live verification is still required.
+func agnesFreePricing(body []byte) (map[string]CatalogModel, error) {
+	selected := false
+	values := make(map[string]string)
+	clean := strings.NewReplacer("*", "", "`", "")
+	for _, line := range strings.Split(string(body), "\n") {
+		cells := strings.Split(line, "|")
+		if len(cells) != 6 {
+			continue
+		}
+		model := strings.TrimSpace(clean.Replace(cells[1]))
+		if model != "" {
+			selected = strings.Contains(model, ai.AgnesFlashModel)
+		}
+		if !selected {
+			continue
+		}
+		item := strings.ToLower(strings.TrimSpace(clean.Replace(cells[2])))
+		price := strings.TrimSpace(clean.Replace(cells[4]))
+		amount, unit, found := strings.Cut(price, "/")
+		if !found || strings.TrimSpace(unit) != "M" {
+			continue
+		}
+		amount = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(amount), "$"))
+		switch item {
+		case "cached input":
+			values["cached"] = amount
+		case "input tokens":
+			values["prompt"] = amount
+		case "output tokens":
+			values["completion"] = amount
+		}
+	}
+	if len(values) != 3 {
+		return nil, errors.New("Agnes Flash trial prices are missing from published pricing")
+	}
+	zero := zeroPrices(values)
+	if zero == nil {
+		return nil, errors.New("Agnes Flash trial prices are invalid")
+	}
+	return map[string]CatalogModel{ai.AgnesFlashModel: {ID: ai.AgnesFlashModel, SupportsText: true, ZeroPrice: zero, DocumentationOnly: true}}, nil
 }

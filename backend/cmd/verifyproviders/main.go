@@ -240,7 +240,7 @@ func verify(ctx context.Context, client *http.Client, catalogOnly bool) report {
 	}
 	request := ai.Request{
 		Task: ai.TaskConversation, Complexity: ai.ComplexityNormal, MaxOutputTokens: 1024,
-		Messages: []ai.Message{{Role: ai.RoleUser, Content: "Please reply with a short greeting and identify yourself as PADI."}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "Hello."}},
 	}
 	successful := make(map[string]bool)
 	successfulModels := make(map[string]bool)

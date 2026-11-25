@@ -165,6 +165,7 @@ try {
         const python=backendEnv.PADI_VOICE_PYTHON || join(root,'services','voice','.venv',process.platform==='win32'?'Scripts':'bin',process.platform==='win32'?'python.exe':'python');
         if(!existsSync(python)) throw new Error('Prepare services/voice/.venv and install services/voice/requirements.txt before starting Python voice.');
         const voiceEnv={PATH:process.env.PATH,PYTHONUNBUFFERED:'1',
+          PADI_PYTHON_VOICE_ENGINE:backendEnv.PADI_PYTHON_VOICE_ENGINE||'local',
           PADI_PYTHON_VOICE_ENABLED:backendEnv.PADI_PYTHON_VOICE_ENABLED||'false',PADI_PYTHON_VOICE_PORT:String(voicePort),PADI_VOICE_SERVICE_TOKEN:backendEnv.PADI_VOICE_SERVICE_TOKEN,
           PADI_STT_ENABLED:backendEnv.PADI_STT_ENABLED||'false',
           PADI_VOICE_MODEL:backendEnv.PADI_VOICE_MODEL||'gemini-3.1-flash-tts-preview',
@@ -172,7 +173,7 @@ try {
           PADI_VOICE_DEFAULT_ID:backendEnv.PADI_VOICE_DEFAULT_ID||'',
           PADI_AI_FREE_ACCOUNT_CONFIRMED:backendEnv.PADI_AI_FREE_ACCOUNT_CONFIRMED,
           PADI_DISABLE_ALL_LIMITS:backendEnv.PADI_DISABLE_ALL_LIMITS||'false',
-          GEMINI_API_KEY:backendEnv.GEMINI_API_KEY,GROQ_API_KEY:backendEnv.GROQ_API_KEY};
+          ...((backendEnv.PADI_PYTHON_VOICE_ENGINE||'local')==='gemini' ? {GEMINI_API_KEY:backendEnv.GEMINI_API_KEY,GROQ_API_KEY:backendEnv.GROQ_API_KEY} : {})};
         for(const name of ['PADI_STT_MODEL','PADI_STT_MODEL_PATH','PADI_STT_WORKERS','PADI_STT_THREADS','PADI_STT_TIMEOUT_SECONDS']) {
           if(backendEnv[name]!==undefined) voiceEnv[name]=backendEnv[name];
         }

@@ -1,5 +1,36 @@
 # PADI Python Voice Engine
 
+The active pipeline is microphone audio → faster-whisper → Agnes reply text →
+Python local speech → WAV playback. Agnes 3.0 Flash generates words, not audio.
+The local eSpeak NG shared library generates speech without a neural/cloud TTS
+model, Gemini/Groq speech credentials, or outbound speech requests. The installed
+faster-whisper model remains the incoming speech recognizer.
+
+Set `PADI_PYTHON_VOICE_ENGINE=local` (the default), `PADI_PYTHON_VOICE_ENABLED=true`
+and `PADI_STT_ENABLED=true`. An eSpeak NG shared library is required; it is already
+available in this workspace. No additional Python speech dependency is needed.
+Agnes's API key remains in Go's backend environment, never in the voice service.
+
+Python emits canonical 24 kHz mono 16-bit PCM WAV so the existing player,
+interruption handling and echo reference continue to work. Local speech keeps
+voice preference IDs and supports adjustable pace. Supported local locales are
+English/Nigerian English/Pidgin, French, Portuguese, Spanish, Arabic, Swahili,
+Amharic, Hindi and Mandarin. Hausa, Yoruba and Igbo speech voices are unavailable
+in the installed engine; the app reports unsupported selections rather than
+substituting another language. Incoming recognition and text replies are separate.
+
+This local engine sounds synthetic and cannot reproduce Gemini's custom voice
+profile. Audio quality requires human listening; generating a valid WAV is not
+personality or voice acceptance.
+
+Run `npm run dev` from the project root. It starts the Python voice service with
+its internal token and local engine settings, without cloud speech credentials.
+The frontend sends speech to the configured Python engine, rather than forcing
+Groq speech. Python personality files and the personality export remain protected.
+
+## Previous cloud speech integration (inactive with the local engine)
+
+
 This service owns audio intelligence: WebRTC VAD, signal preparation, audio
 conversion/segmentation, speech recognition, transcript validation, and
 expressive speech models. Go owns accounts, permissions, chat/model routing,

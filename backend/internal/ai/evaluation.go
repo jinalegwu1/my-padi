@@ -104,12 +104,12 @@ func (router *Router) evaluationModels(modelIDs []string) ([]string, error) {
 }
 
 // DefaultEvaluationCases is a small PADI-specific set for side-by-side human
-// assessment. Criteria are guidance, not automated quality scores.
+// assessment. Criteria are for human reviewers; they are never inserted into model prompts.
 func DefaultEvaluationCases() []EvaluationCase {
 	cases := []EvaluationCase{
 		{
 			ID:       "natural-first-greeting",
-			Request:  Request{Messages: []Message{{Role: RoleUser, Content: "Welcome me to the conversation in one or two short, spontaneous sentences. Follow my conversation preferences."}}},
+			Request:  Request{Messages: []Message{{Role: RoleUser, Content: "hey"}}},
 			Criteria: []string{"sounds warm and lively from the opening", "varies naturally without formal service language or assumed titles", "light wit is welcome but not forced"},
 		},
 		{
@@ -239,16 +239,14 @@ func DefaultEvaluationCases() []EvaluationCase {
 			Criteria: []string{"acknowledges grief with compassion", "does not add humour or fabricated facts", "uses natural, concise spoken language"},
 		},
 	}
-	// Exercise the production preference assessment rather than hand-written
-	// humour overrides. GenerateWithModel injects the same shared foundation.
+	// Evaluation supplies preferences as data, just like production chat.
+	// GenerateWithModel inserts the unchanged Python personality export.
 	for i := range cases {
 		preferences := personality.DefaultPreferences()
 		if cases[i].ID == "feedback-never-overrides-explicit-choice" {
 			preferences.Humour, preferences.HumourExplicit = personality.HumourSubtle, true
 		}
-		messages := cases[i].Request.Messages
-		cases[i].Request.StyleGuidance = personality.ResponseGuidance(messages[len(messages)-1].Content, preferences)
-		cases[i].Request.SuppressHumour = !personality.Assess(messages[len(messages)-1].Content, preferences).HumourAllowed
+		cases[i].Request.ConversationContext = &ConversationContext{Preferences: preferences, Greeting: cases[i].ID == "natural-first-greeting"}
 	}
 	return cases
 }

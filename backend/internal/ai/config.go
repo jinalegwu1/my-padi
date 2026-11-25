@@ -31,9 +31,12 @@ func LoadEnvironment() (EnvironmentConfig, error) {
 	}
 	for _, model := range models {
 		switch model.Provider {
-		case ProviderGemini, ProviderOpenRouter, ProviderGroq, ProviderZAI:
+		case ProviderGemini, ProviderOpenRouter, ProviderGroq, ProviderZAI, ProviderAgnes:
 		default:
-			return EnvironmentConfig{}, fmt.Errorf("AI model %q uses unsupported provider %q; configure Gemini, OpenRouter, Groq, or Z.ai", model.ID, model.Provider)
+			return EnvironmentConfig{}, fmt.Errorf("AI model %q uses unsupported provider %q; configure Agnes, Gemini, OpenRouter, Groq, or Z.ai", model.ID, model.Provider)
+		}
+		if model.Provider == ProviderAgnes && model.Model != AgnesFlashModel {
+			return EnvironmentConfig{}, fmt.Errorf("AI model %q must use %s for the selected free Agnes route", model.ID, AgnesFlashModel)
 		}
 		if model.Provider == ProviderZAI && model.Model != ZAIFlashModel {
 			return EnvironmentConfig{}, fmt.Errorf("AI model %q must use %s for PADI's current free Z.ai route", model.ID, ZAIFlashModel)

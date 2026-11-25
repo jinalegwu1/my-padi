@@ -305,7 +305,7 @@ export function streamVoiceChat(
 let liveSpeechSupported = false;
 let voiceLanguageSupported = false;
 
-export type VoiceConfiguration = { enabled: boolean; max_seconds: number; natural_speech?: boolean; live_speech?: boolean; language_selection?: boolean; local_transcription?: boolean; transcription_ready?: boolean; transcription_error?: string; transcription_model?: string; groq_conversation?: boolean; groq_live_speech?: boolean };
+export type VoiceConfiguration = { local_speech?: boolean; speech_languages?: string[]; voice_text_streaming?: boolean; enabled: boolean; max_seconds: number; natural_speech?: boolean; live_speech?: boolean; language_selection?: boolean; local_transcription?: boolean; transcription_ready?: boolean; transcription_error?: string; transcription_model?: string; groq_conversation?: boolean; groq_live_speech?: boolean };
 
 export async function getVoiceConfiguration(signal?: AbortSignal): Promise<VoiceConfiguration> {
   const result = await requestJSON<VoiceConfiguration>('/v1/voice/config', undefined, { method: 'GET', signal });

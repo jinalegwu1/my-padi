@@ -58,7 +58,7 @@ test('portrait calls and replies use the Groq stream with the selected voice', a
 test('unsupported Groq settings report an error and never select Gemini', async () => {
   for (const [config, settings] of [[{ groq_live_speech: false }, {}], [{}, { languageCode: 'fr-FR' }], [{}, { voiceRate: 0.85 }]]) {
     const f = await fixture(config, settings);
-    try { assert.equal(f.voice.ready, false); assert.match(f.voice.configurationError, /Groq speech/); assert.equal(f.calls.length, 0); }
+    try { assert.equal(f.voice.ready, false); assert.match(f.voice.configurationError, /spoken replies|voice/i); assert.equal(f.calls.length, 0); }
     finally { await f.close(); }
   }
 });
@@ -70,5 +70,17 @@ test('Groq speech failure propagates without another provider request', async ()
     speech.enqueue('Preserve the response.');
     await assert.rejects(speech.finish(), /Groq unavailable/);
     assert.deepEqual(f.calls.map(call => call[0]), ['groq', 'text']);
+  } finally { await f.close(); }
+});
+
+
+test('Agnes text streaming and local Python speech work without Groq speech capability', async () => {
+  const f = await fixture({ groq_conversation: false, voice_text_streaming: true, groq_live_speech: false,
+    local_speech: true, speech_languages: ['en-NG','fr-FR'] }, {languageCode:'fr-FR',voiceRate:0.85});
+  try {
+    assert.equal(f.voice.ready,true);
+    const speech=f.deps.createSpeech(new AbortController().signal,()=>{},()=>{});
+    speech.enqueue('The generated reply.'); await speech.finish();
+    assert.deepEqual(f.calls.at(-1),['text','The generated reply.']);
   } finally { await f.close(); }
 });

@@ -30,6 +30,9 @@ func newSpeechFileCache() *speechFileCache {
 	if directory == "" {
 		return nil
 	}
+	if engine := os.Getenv("PADI_PYTHON_VOICE_ENGINE"); engine == "" || engine == "local" {
+		return &speechFileCache{directory, "local-espeak-ng-v1", "", "local"}
+	}
 	return &speechFileCache{directory, os.Getenv("PADI_VOICE_MODEL"), os.Getenv("PADI_VOICE_DEFAULT_ID"), os.Getenv("PADI_LIVE_VOICE_PROVIDER")}
 }
 

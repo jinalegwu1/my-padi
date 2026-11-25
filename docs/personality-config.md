@@ -1,86 +1,88 @@
-# PADI core personality configuration
+# PADI personality instruction boundary
 
-`services/padi_personality/personality_config.py` defines the six core traits:
-warm, funny, witty, intelligent, playful, and emotionally aware. All are enabled
-by default. `PADI_PERSONALITY_CONFIG` is an immutable dataclass; `to_dict()`
-exports a separate dictionary.
+Python is the sole author of model personality instructions: identity, warmth, emotional responses,
+humour, tone, greetings and conversation style. Go must not add rules for these
+behaviours, infer a mood, choose a humour response, or rewrite conversation turns.
 
-Python owns warmth behaviour. `personalities/best_friend.py` defines attentive
-companionship and `personalities/emotional_intelligence.py` defines warmth's
-emotional support. `conversation/response_style.py::build_warmth_guidance`
-composes them with natural conversation and greeting guidance when `warm` is
-enabled. It returns an empty string when warmth is disabled.
+## Authoritative interface
 
-At startup, the Go API runs an isolated Python process calling
-`padi_personality.core.export_personality()`. The JSON contains `traits` (the
-unchanged six booleans) and `warmth_guidance` (a string). Go rejects missing,
-unknown, duplicate, malformed, or inconsistent fields: enabled warmth requires
-non-whitespace guidance and disabled warmth requires an empty string. The
-export is cached and the exact Python guidance is delivered once through the
-existing `DefaultCoreSettings().Guidance()` insertion for text generation and
-`StreamVoice`. The five-second timeout and error handling remain in place.
+`services/padi_personality/personality_config.py` defines the immutable six-trait
+configuration. `padi_personality.core.export_personality()` returns exactly:
 
-Go supplies conversation context and current-turn signals rather than duplicate
-warmth instructions. Existing humour controls, safety rules, the other five
-traits, provider selection, the frontend, and the private voice HTTP service
-retain their existing behaviour. The humour and emotion engines remain
-placeholders; warmth does not add an engine or third-party dependencies.
+- `traits`: six explicit booleans.
+- `warmth_guidance`: the authoritative composed personality instruction string.
 
-Python 3.10 or later is sufficient; this configuration has no third-party
-dependencies. Go finds `python3` or `python` on PATH and locates the package
-under the repository's `services` directory. For a different deployment layout,
-set `PADI_PERSONALITY_PYTHON` to the Python executable and
-`PADI_PERSONALITY_ROOT` to the directory containing `padi_personality`.
-Restart the backend after editing the configuration or Python guidance.
+The field name is historical: its current value includes the other composed
+Python personality guidance too. Go must preserve the string exactly, including
+whitespace. It must not derive replacement instructions from trait labels.
 
-Run from the repository root:
+`backend/internal/personality/config.go` imports Python using isolated mode and
+no bytecode writes (`-I -B`). The startup cache, five-second timeout, strict JSON
+validation and error handling remain in place. An invalid export prevents API
+startup; Go does not substitute its own personality defaults.
+
+## Provider-bound flow
+
+`CoreSettings.Guidance()` returns only the Python-exported string.
+`ai.withApplicationInstructions()` is the shared boundary for `Router.Generate`,
+`GenerateWithModel` and `StreamVoice`. Its system message contains, in order:
+
+1. The Python instruction string, unchanged, when non-empty.
+2. Technical application safety, privacy, capability and permission rules.
+3. Supplied account, approved-memory and selected-language context.
+4. Data-only conversation context: saved preferences, opted-in recent feedback
+   counts and greeting intent.
+5. Plain-text TTS constraints for voice requests.
+
+All providers serialize that same prepared system message into their native
+request format. Routing, retries and fallbacks do not rebuild personality. A
+private preparation marker prevents repeated instruction insertion.
+
+Go no longer has `StyleGuidance`, `SuppressHumour`, personality assessment,
+greeting/continuity rule builders, or automatic feedback-based humour decisions.
+Preferences and feedback remain available as application data; Go does not change
+an explicit preference or decide how the model should react. Validated history
+is preserved, subject to the existing memory-revision privacy boundary.
+
+Application context must contain technical facts or permissions, never a second
+personality prompt. Language instructions may enforce the app's selected
+language; TTS instructions may require plain speech text. Neither may add tone,
+warmth, humour, greeting, cultural-persona or emotional-response rules.
+
+The fixed welcome, preview and call audio samples in
+`backend/internal/httpapi/voice_samples.go` are outside the chat-model instruction
+path and remain Go-authored scripted content. Python's current export does not
+provide replacement clip text. Migrating those existing endpoints requires a
+separate scope/source decision; this refactor does not establish Python ownership
+of their scripted words.
+
+## Verification and protection
+
+Run Python tests without modifying the protected package:
 
 ```sh
 python3 -B -m unittest discover -s services/padi_personality -t services -v
-python3 -B -m services.padi_personality.personality_config
 ```
 
-The second command still prints only the six configured traits as JSON. Backend
-coverage is included in `cd backend && go test ./...`. The provider integration
-test copies the Python warmth modules into a temporary package, independently
-exports their exact guidance, and checks text generation, voice generation,
-and `StreamVoice` with enabled/disabled warmth, humour off, and grief. These
-tests use local provider fixtures and do not establish conversation quality.
+Run Go verification from `backend`:
 
-The opt-in `TestLivePersonalityConversations` accepts
-`PADI_PERSONALITY_LIVE_FILTER=warmth-regression` for the exact greeting and
-new-phone examples, multi-turn positive/neutral/negative contexts, serious
-support, and requested help. `warmth-regression-voice` evaluates the same voice
-cases in a fresh process with slower pacing. The existing `warmth` and
-`warmth-recheck` samples remain available. Set
-`PADI_RUN_LIVE_PERSONALITY_TESTS=true` with the configured development provider
-environment; `PADI_PERSONALITY_EVIDENCE_FILE` saves the real replies.
+```sh
+go test ./...
+```
 
-The earlier November 25 review found exaggerated sympathy and unsolicited help
-in casual replies. The warmth correction makes emotional support conditional:
-ordinary greetings stay friendly, positive updates invite specific interest,
-and serious context remains active through follow-ups.
+Provider tests capture final HTTP payloads, compare the exact Python string and
+an independent reviewed technical-rule snapshot, and check text, voice, streaming,
+provider-native serialization, repeated preparation, fallbacks and disabled
+traits. Configuration variants call the real Python export with separate immutable
+configuration instances; they do not edit Python files or copies of its modules.
+HTTP integration tests also capture the full chat-handler-to-provider path.
 
-Delivery previously ignored provider finish reasons and accepted stream EOF as
-completion. Social budgets of 96–256 tokens also cut into hidden reasoning.
-The corrected adapters require terminal completion metadata, reject unfinished
-clauses, and distinguish output limits from complete answers. Social and ordinary
-voice turns allow 1,024 tokens. A capped text response can be regenerated once
-with a larger budget, bounded by the existing 4,096-token maximum; voice retries
-only before any text is emitted. An interrupted voice stream emits an error
-and no done event. Consumed usage is recorded even for capped attempts.
+The Python export remains protected. Its current coupling of all guidance to
+`warm`, and its existing trait-composition semantics, are not corrected in Go.
+If Python returns empty guidance, Go delivers no substitute personality rules.
+Report missing Python behaviour or technical conflicts for review rather than
+adding Go instructions to compensate.
 
-The corrected live text sample completed eleven turns, including natural
-greetings, new-phone interest, casual follow-up without unsolicited advice, and
-serious support. Real output-limit detection recovered seven capped attempts.
-A fresh voice run confirmed the greeting and new-phone responses; provider
-rate limits blocked later cases. These observations are not warmth acceptance:
-the full voice conversation set and human audio listening remain required, and
-the memory follow-up still inferred details not explicitly supplied.
-
-Warmth still requires real conversation evaluation in text and voice: ordinary
-sharing followed by a specific detail, casual sharing with humour off, good news
-and a follow-up, spontaneous banter, grief with a request to listen, and an
-explicit request for practical help. Review attention, naturalness, proportionate
-emotion, context continuity, and preserved serious support. Automated passes do
-not mean Phase 1 has been accepted.
+Python changes require a backend restart because the export is cached. Real
+conversation and human audio evaluation remain necessary to accept behaviour;
+provider-payload tests establish instruction ownership and delivery only.

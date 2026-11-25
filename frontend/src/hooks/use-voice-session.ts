@@ -19,8 +19,9 @@ export function useVoiceSession() {
   const chat = useChat();
   const { preferences } = usePreferences();
   const [voiceConfiguration, setVoiceConfiguration] = useState<VoiceConfiguration | null>(null);
-  const supportsGroqSpeech = voiceConfiguration?.groq_live_speech === true &&
-    preferences.voiceRate === 1 && ['en-NG', 'en-GB', 'pcm-NG'].includes(preferences.languageCode);
+  const supportsGroqSpeech = voiceConfiguration?.local_speech === true
+    ? voiceConfiguration.speech_languages?.includes(preferences.languageCode) === true
+    : voiceConfiguration?.groq_live_speech === true && preferences.voiceRate === 1 && ['en-NG', 'en-GB', 'pcm-NG'].includes(preferences.languageCode);
   const current = useRef({ chat, preferences, supportsGroqSpeech });
   current.current = { chat, preferences, supportsGroqSpeech };
   const [snapshot, setSnapshot] = useState<VoiceSnapshot & { connected: boolean }>({ phase: 'idle', connected: false, padiText: '', error: null });
@@ -90,14 +91,14 @@ export function useVoiceSession() {
     getVoiceConfiguration(controller.signal).then(config => {
       if (controller.signal.aborted) return;
       setVoiceConfiguration(config);
-      const available = config.enabled && config.groq_conversation === true &&
-        config.local_transcription === true && config.transcription_ready === true && config.natural_speech === true && config.groq_live_speech === true;
+      const available = config.enabled && (config.voice_text_streaming === true || config.groq_conversation === true) &&
+        config.local_transcription === true && config.transcription_ready === true && config.natural_speech === true && (config.local_speech === true || config.groq_live_speech === true);
       setReady(available);
       if (!config.enabled) setConfigurationError('Local speech recognition is not enabled on this server.');
-      else if (!config.groq_conversation) setConfigurationError('Groq voice conversations are not configured on this server.');
+      else if (!config.voice_text_streaming && !config.groq_conversation) setConfigurationError('Voice conversations are not configured on this server.');
       else if (!config.local_transcription || !config.transcription_ready) setConfigurationError('Local speech recognition is not ready yet. Please try again later.');
       else if (!config.natural_speech) setConfigurationError('PADI’s speech is not configured on this server. Please use text chat.');
-      else if (!config.groq_live_speech) setConfigurationError('Groq speech is not configured on this server. Please use text chat.');
+      else if (!config.local_speech && !config.groq_live_speech) setConfigurationError('Spoken replies are not configured on this server. Please use text chat.');
       else setConfigurationError(null);
     }).catch(error => { if (!controller.signal.aborted) setConfigurationError(error instanceof Error ? error.message : 'Voice settings could not load.'); });
     const unsubscribe = subscribeSession(() => { void session.cancel('Your account changed. Start a new voice turn after signing in.', true); });
@@ -119,6 +120,6 @@ export function useVoiceSession() {
     };
   }, [session]);
 
-  const selectionError=ready&&!supportsGroqSpeech?'Groq speech needs English or Nigerian Pidgin at normal speed. Choose these voice settings or use text chat.':null;
+  const selectionError=ready&&!supportsGroqSpeech?'The selected language or pace is not supported by the current voice. Choose supported voice settings or use text chat.':null;
   return { ...snapshot, ready: ready && supportsGroqSpeech && chat.status === 'ready', configurationError:configurationError??selectionError, session, connect, chatError: chat.sendError, chatBusy: chat.isThinking };
 }

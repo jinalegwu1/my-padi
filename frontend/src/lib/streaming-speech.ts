@@ -5,7 +5,7 @@ import { createVoiceQueue } from '@/lib/voice-playback';
 
 export type SpeechStream = { enqueue(text: string): void; finish(): Promise<void> };
 
-/** Remove only outer near-silence from normalized Groq PCM. Keep a margin
+/** Remove only outer near-silence from normalized PCM. Keep a margin
  * around speech so quiet consonants and the provider's internal pauses survive. */
 export function trimSpeechPadding(encoded:string):string {
   if(!encoded.startsWith('UklG')||encoded.length<64)return encoded;
@@ -74,8 +74,8 @@ export function createGroqSpeechStream(style: string, rate: number, language: st
               const session = await account;
               if (controller.signal.aborted) { resolve(undefined); return; }
               if (!session) throw new Error('Sign in to hear PADI’s reply.');
-              // This path always selects Groq. Ordinary text-chat speech is separate.
-              const audio = await synthesiseSpeech(session.token, job.words, style, rate, controller.signal, language, false, true);
+              // The configured Python speech engine supplies audio; text comes from the chat model.
+              const audio = await synthesiseSpeech(session.token, job.words, style, rate, controller.signal, language, true, false);
               resolve(trimSpeechPadding(audio.audio_base64));
             } catch (error) { reject(error); fail(error); }
             finally { running--; pump(); }

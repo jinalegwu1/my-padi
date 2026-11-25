@@ -32,6 +32,7 @@ import uuid
 
 import webrtcvad
 from voice_errors import SpeechError
+from local_speech import local_engine, VOICE_VARIANTS, LANGUAGES as LOCAL_LANGUAGES
 from audio_processing import prepare_audio
 from local_recognition import RecognitionConfig, RecognitionPool
 from transcription_http import process_upload, valid_identity
@@ -294,7 +295,14 @@ def synthesise_groq(key: str, text: str, style: str) -> dict:
         raise SpeechError(504, "speech_timeout") from None
 
 
-def make_handler(token: str, key: str, generate=synthesise, groq_key="", recognition_pool=None):
+def synthesise_local(text, style, rate, language="en-NG"):
+    result = normalise_speech_wave(local_engine().speak(text, style, rate, language))
+    result["input_tokens"] = 0
+    result["audio_tokens"] = 0
+    return result
+
+
+def make_handler(token: str, key: str = "", generate=synthesise, groq_key="", recognition_pool=None, engine="gemini", local_generate=synthesise_local):
     slots = threading.BoundedSemaphore(4)
     incoming_slots = threading.BoundedSemaphore(4)
     disable_limits = os.environ.get("PADI_DISABLE_ALL_LIMITS", "").lower() == "true"
@@ -322,7 +330,7 @@ def make_handler(token: str, key: str, generate=synthesise, groq_key="", recogni
 
         def do_GET(self):
             if self.path == "/health":
-                self.respond(200, {"service": "padi-python-voice", "status": "alive", "recognition": recognition_pool.health() if recognition_pool else {"ready": False, "error": "model_unavailable"}})
+                self.respond(200, {"service": "padi-python-voice", "status": "alive", "speech": {"engine": engine, "supported_languages": list(LOCAL_LANGUAGES) if engine == "local" else list(LANGUAGE_DELIVERY)}, "recognition": recognition_pool.health() if recognition_pool else {"ready": False, "error": "model_unavailable"}})
             elif self.path == "/ready":
                 state = recognition_pool.health() if recognition_pool else {"ready": False, "error": "model_unavailable"}
                 self.respond(200 if state["ready"] else 503, state)
@@ -382,12 +390,12 @@ def make_handler(token: str, key: str, generate=synthesise, groq_key="", recogni
                     raise ValueError()
                 text, style, rate = body.get("text"), body.get("style", "ada"), body.get("rate", 1.0)
                 language = body.get("language", "en-NG")
-                model = body.get("model", MODEL)
-                if not isinstance(model, str) or model not in (MODEL, FALLBACK_MODEL, FAST_MODEL) or not model:
+                model = body.get("model", "local" if engine == "local" else MODEL)
+                if not isinstance(model, str) or model not in (("local",) if engine == "local" else (MODEL, FALLBACK_MODEL, FAST_MODEL)) or not model:
                     raise ValueError()
                 if not isinstance(text, str) or not text.strip() or len(text.encode()) > MAX_TEXT_BYTES:
                     raise ValueError()
-                if not isinstance(style, str) or style not in VOICE_STYLES or type(rate) not in (int, float) or not 0.5 <= rate <= 1.5:
+                if not isinstance(style, str) or style not in (VOICE_VARIANTS if engine == "local" else VOICE_STYLES) or type(rate) not in (int, float) or not 0.5 <= rate <= 1.5:
                     raise ValueError()
                 if not isinstance(language, str) or language not in LANGUAGE_DELIVERY:
                     raise ValueError()
@@ -402,8 +410,10 @@ def make_handler(token: str, key: str, generate=synthesise, groq_key="", recogni
                 self.respond(429, {"error": "speech_busy"})
                 return
             try:
-                provider = "groq" if model == FAST_MODEL else "gemini"
-                if model == FAST_MODEL:
+                provider = "local" if engine == "local" else "groq" if model == FAST_MODEL else "gemini"
+                if engine == "local":
+                    result = local_generate(text, style, rate, language)
+                elif model == FAST_MODEL:
                     result = synthesise_groq(groq_key, text, style)
                 else:
                     result = generate(key, text, style, rate, language) if model == MODEL else generate(key, text, style, rate, language, model=model)
@@ -427,11 +437,14 @@ def main():
         raise KeyboardInterrupt()
     signal.signal(signal.SIGTERM, stop_service)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s", stream=sys.stdout)
-    if MODEL not in LEGACY_MODELS and MODEL not in NATURAL_MODELS:
+    engine = os.environ.get("PADI_PYTHON_VOICE_ENGINE", "local")
+    if engine not in ("local", "gemini"):
+        raise SystemExit("Choose a supported Python voice engine: local or gemini.")
+    if engine == "gemini" and MODEL not in LEGACY_MODELS and MODEL not in NATURAL_MODELS:
         raise SystemExit("Choose a verified, supported PADI voice model.")
-    if FALLBACK_MODEL and FALLBACK_MODEL not in LEGACY_MODELS and FALLBACK_MODEL not in NATURAL_MODELS:
+    if engine == "gemini" and FALLBACK_MODEL and FALLBACK_MODEL not in LEGACY_MODELS and FALLBACK_MODEL not in NATURAL_MODELS:
         raise SystemExit("Choose a supported PADI fallback voice model.")
-    if DEFAULT_VOICE_ID and (MODEL not in NATURAL_MODELS or re.fullmatch(r"voice_[A-Za-z0-9_-]+", DEFAULT_VOICE_ID) is None):
+    if engine == "gemini" and DEFAULT_VOICE_ID and (MODEL not in NATURAL_MODELS or re.fullmatch(r"voice_[A-Za-z0-9_-]+", DEFAULT_VOICE_ID) is None):
         raise SystemExit("The original PADI voice profile requires the newer speech model and a valid voice ID.")
     token = os.environ.get("PADI_VOICE_SERVICE_TOKEN", "")
     key = os.environ.get("GEMINI_API_KEY", "")
@@ -439,14 +452,19 @@ def main():
     confirmed=os.environ.get("PADI_AI_FREE_ACCOUNT_CONFIRMED", "").split(",")
     if len(token) < 32:
         raise SystemExit("Python voice requires an internal service token of at least 32 characters.")
-    if os.getenv("PADI_PYTHON_VOICE_ENABLED") == "true" and (not key or not groq_key or "gemini" not in confirmed or "groq" not in confirmed):
+    if engine == "gemini" and os.getenv("PADI_PYTHON_VOICE_ENABLED") == "true" and (not key or not groq_key or "gemini" not in confirmed or "groq" not in confirmed):
         raise SystemExit("Outgoing speech requires the existing Gemini/Groq credentials and confirmed accounts.")
+    if engine == "local" and os.getenv("PADI_PYTHON_VOICE_ENABLED") == "true":
+        try:
+            local_engine()
+        except SpeechError:
+            raise SystemExit("Local speech requires the eSpeak NG shared library; no Gemini/Groq speech credentials are needed.") from None
     recognition_pool = RecognitionPool(RecognitionConfig.environment()) if os.getenv("PADI_STT_ENABLED", "false").lower() == "true" else None
     port = int(os.environ.get("PADI_PYTHON_VOICE_PORT", "8090"))
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(token, key,groq_key=groq_key, recognition_pool=recognition_pool))
+    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(token, key,groq_key=groq_key, recognition_pool=recognition_pool, engine=engine))
     server.daemon_threads = True
-    logger.info("voice service ready host=127.0.0.1 port=%d primary_model=%s fallback_model=%s gemini_key_configured=%s groq_key_configured=%s limits_disabled=%s",
-        port, MODEL, FALLBACK_MODEL or "none", bool(key), bool(groq_key), os.environ.get("PADI_DISABLE_ALL_LIMITS", "").lower() == "true")
+    logger.info("voice service ready host=127.0.0.1 port=%d engine=%s primary_model=%s fallback_model=%s gemini_key_configured=%s groq_key_configured=%s limits_disabled=%s",
+        port, engine, "none" if engine == "local" else MODEL, "none" if engine == "local" else FALLBACK_MODEL or "none", bool(key), bool(groq_key), os.environ.get("PADI_DISABLE_ALL_LIMITS", "").lower() == "true")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

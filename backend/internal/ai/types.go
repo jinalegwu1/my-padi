@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/jinalegwu1/my-padi/backend/internal/personality"
 )
 
 type MessageRole string
@@ -47,14 +49,23 @@ type Message struct {
 
 // Request is provider-neutral. Task and Complexity may be omitted and inferred.
 type Request struct {
-	Messages         []Message  `json:"messages"`
-	Task             Task       `json:"task,omitempty"`
-	Complexity       Complexity `json:"complexity,omitempty"`
-	Voice            bool       `json:"-"`
-	StructuredOutput bool       `json:"structured_output,omitempty"`
-	MaxOutputTokens  int        `json:"max_output_tokens,omitempty"`
-	StyleGuidance    string     `json:"-"`
-	SuppressHumour   bool       `json:"-"`
+	Messages            []Message            `json:"messages"`
+	Task                Task                 `json:"task,omitempty"`
+	Complexity          Complexity           `json:"complexity,omitempty"`
+	Voice               bool                 `json:"-"`
+	StructuredOutput    bool                 `json:"structured_output,omitempty"`
+	MaxOutputTokens     int                  `json:"max_output_tokens,omitempty"`
+	ConversationContext *ConversationContext `json:"-"`
+	instructionsApplied bool
+}
+
+// ConversationContext is application data, never Go-authored response guidance.
+// Python owns how the model uses preferences, feedback, history and greeting intent.
+// Keep this schema data-only; do not add mood classifications or instruction strings.
+type ConversationContext struct {
+	Preferences          personality.Preferences    `json:"preferences"`
+	RecentHumourFeedback *personality.FeedbackTrend `json:"recent_humour_feedback,omitempty"`
+	Greeting             bool                       `json:"greeting,omitempty"`
 }
 
 type Usage struct {

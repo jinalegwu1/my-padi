@@ -42,7 +42,7 @@ func TestVoiceTextModelsShareContextAndFallbackBeforeFirstDeltaOnly(t *testing.T
 					if len(payload.Config.Modalities) != 1 || payload.Config.Modalities[0] != "TEXT" {
 						t.Error("Gemini was not restricted to text")
 					}
-					if !strings.Contains(payload.System.Parts[0].Text, "one consistent AI companion") || len(payload.Contents) != 3 || payload.Contents[0].Parts[0].Text != "Our project is PADI." {
+					if !strings.Contains(payload.System.Parts[0].Text, "Understand the user's message before deciding how to respond.") || len(payload.Contents) != 3 || payload.Contents[0].Parts[0].Text != "Our project is PADI." {
 						t.Error("personality/context missing in Gemini text path")
 					}
 					if test.status != 200 {
@@ -60,7 +60,7 @@ func TestVoiceTextModelsShareContextAndFallbackBeforeFirstDeltaOnly(t *testing.T
 					Messages []Message `json:"messages"`
 				}
 				_ = json.NewDecoder(r.Body).Decode(&payload)
-				if len(payload.Messages) != 4 || payload.Messages[1].Content != "Our project is PADI." || !strings.Contains(payload.Messages[0].Content, "one consistent AI companion") {
+				if len(payload.Messages) != 4 || payload.Messages[1].Content != "Our project is PADI." || !strings.Contains(payload.Messages[0].Content, "Understand the user's message before deciding how to respond.") {
 					t.Error("fallback lost context/personality")
 				}
 				_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"PADI is our project.\"}}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"))

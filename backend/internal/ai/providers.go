@@ -25,6 +25,7 @@ func NewProviderAdapters(client *http.Client) map[string]Provider {
 		ProviderOpenAICompatible: openAICompatibleProvider{client: client},
 		ProviderOpenRouter:       openRouterProvider{client: client},
 		ProviderGroq:             groqProvider{client: client},
+		ProviderAgnes:            agnesProvider{client: client},
 		ProviderZAI:              zaiProvider{client: client},
 		ProviderMistral:          mistralProvider{client: client},
 	}

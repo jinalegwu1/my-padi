@@ -158,7 +158,7 @@ func (router *Router) Generate(ctx context.Context, request Request) (Response, 
 			request.Complexity = inferredComplexity
 		}
 	}
-	request = withPADIInstructions(request)
+	request = withApplicationInstructions(request)
 	if request.MaxOutputTokens == 0 {
 		request.MaxOutputTokens = defaultMaxOutputTokens
 	}
@@ -207,7 +207,7 @@ func (router *Router) GenerateWithModel(ctx context.Context, modelID string, req
 			request.Complexity = inferredComplexity
 		}
 	}
-	request = withPADIInstructions(request)
+	request = withApplicationInstructions(request)
 	if request.MaxOutputTokens == 0 {
 		request.MaxOutputTokens = defaultMaxOutputTokens
 	}
@@ -219,7 +219,7 @@ func (router *Router) GenerateWithModel(ctx context.Context, modelID string, req
 
 // SupportsGroqVoiceStreaming retains the capability name used by existing
 // clients. Conversation generation now streams either configured text model;
-// TTS remains a separate Groq-only service.
+// Spoken audio is produced by the separately configured Python voice engine.
 func (router *Router) SupportsGroqVoiceStreaming() bool {
 	candidates := router.voiceCandidates()
 	if len(candidates) == 0 {
@@ -227,7 +227,7 @@ func (router *Router) SupportsGroqVoiceStreaming() bool {
 	}
 	for _, id := range candidates {
 		model, ok := router.models[id]
-		if !ok || (model.Provider != ProviderGemini && model.Provider != ProviderGroq) {
+		if !ok || (model.Provider != ProviderGemini && model.Provider != ProviderGroq && model.Provider != ProviderAgnes) {
 			return false
 		}
 		if _, ok := router.providers[model.Provider].(StreamingProvider); !ok {
@@ -274,7 +274,7 @@ func (router *Router) StreamVoice(ctx context.Context, request Request, onDelta 
 			request.Complexity = complexity
 		}
 	}
-	request = withPADIInstructions(request)
+	request = withApplicationInstructions(request)
 	if request.MaxOutputTokens == 0 {
 		request.MaxOutputTokens = defaultMaxOutputTokens
 	}

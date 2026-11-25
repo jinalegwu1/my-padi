@@ -41,6 +41,17 @@ func registerVoiceRoutes(mux *http.ServeMux, deps Dependencies) {
 		if speech, ok := deps.Synthesis.(GroqLiveSpeechSynthesiser); ok {
 			groqSpeech = speech.SupportsGroqLiveSpeech()
 		}
+		localOutput := false
+		var speechLanguages []string
+		if speech, ok := deps.Synthesis.(interface {
+			SupportsLocalSpeech() bool
+			SpeechLanguages(context.Context) []string
+		}); ok && speech.SupportsLocalSpeech() {
+			localOutput = true
+			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+			speechLanguages = speech.SpeechLanguages(ctx)
+			cancel()
+		}
 		state := voice.Readiness{Ready: deps.Speech != nil}
 		if service, ok := deps.Speech.(interface {
 			Ready(context.Context) voice.Readiness
@@ -53,6 +64,7 @@ func registerVoiceRoutes(mux *http.ServeMux, deps Dependencies) {
 			"enabled": deps.Speech != nil && deps.Auth != nil, "max_seconds": 60,
 			"natural_speech": deps.Synthesis != nil, "live_speech": liveSpeech, "language_selection": true,
 			"groq_conversation": groqConversation, "groq_live_speech": groqSpeech,
+			"voice_text_streaming": groqConversation, "local_speech": localOutput, "speech_languages": speechLanguages,
 			"local_transcription": localSpeech, "transcription_ready": state.Ready,
 			"transcription_error": state.Error, "transcription_model": state.Model,
 			"accepted_audio_formats": []string{"audio/webm;codecs=opus", "audio/mp4", "audio/wav"},

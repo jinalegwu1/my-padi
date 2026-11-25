@@ -264,6 +264,7 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var recentHumourFeedback *personality.FeedbackTrend
 	if personalityPreferences.LearnFromFeedback && handler.feedback != nil {
 		trend, err := handler.feedback.RecentHumourFeedback(ctx, user.ID)
 		if err != nil {
@@ -273,7 +274,7 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusServiceUnavailable, "feedback_unavailable", "PADI could not load your saved conversation feedback. Please try again.")
 			return
 		}
-		personalityPreferences = personality.ApplyFeedbackTrend(personalityPreferences, trend)
+		recentHumourFeedback = &trend
 	}
 	var memoryRevision int64
 	memoryState := "unavailable"
@@ -305,12 +306,8 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Delivery == "voice" || body.VoiceContext != nil || body.Greeting && body.Language != "" {
 		instruction := ""
-		if body.Delivery == "voice" {
-			language := body.Language
-			if language == "" {
-				language = "en-NG"
-			}
-			instruction = voiceReplyLanguage(language)
+		if body.Delivery == "voice" && body.Language != "" {
+			instruction = voiceReplyLanguage(body.Language)
 		} else if body.Greeting && body.Language != "" {
 			instruction = textReplyLanguage(body.Language)
 		}
@@ -334,37 +331,15 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if context := accountProfileContext(user.FullName, memoryState); context != "" {
 		messages = append([]ai.Message{{Role: ai.RoleSystem, Content: context}}, messages...)
 	}
-	latestUserMessage := messages[len(messages)-1].Content
-	if body.Greeting {
-		// Assess a returning greeting against the valid conversation after the
-		// memory-revision boundary, rather than the synthetic greeting request.
-		latestUserMessage = "Hi"
-		for index := len(messages) - 2; index >= 0; index-- {
-			if messages[index].Role == ai.RoleUser {
-				latestUserMessage = messages[index].Content
-				break
-			}
-		}
-		messages[len(messages)-1].Content = "Hi"
-	}
 	chatRequest := ai.Request{
-		Messages:       messages,
-		Task:           ai.TaskConversation,
-		Voice:          body.Delivery == "voice",
-		StyleGuidance:  personality.ResponseGuidance(latestUserMessage, personalityPreferences),
-		SuppressHumour: !personality.Assess(latestUserMessage, personalityPreferences).HumourAllowed,
-	}
-	if body.Greeting {
-		chatRequest.StyleGuidance = personality.GreetingGuidance(latestUserMessage, personalityPreferences)
-	}
-	var recentReplies []string
-	for index := len(messages) - 2; index >= 0 && len(recentReplies) < 3; index-- {
-		if messages[index].Role == ai.RoleAssistant {
-			recentReplies = append(recentReplies, messages[index].Content)
-		}
-	}
-	if continuity := personality.ContinuityGuidance(recentReplies); continuity != "" {
-		chatRequest.StyleGuidance += " " + continuity
+		Messages: messages,
+		Task:     ai.TaskConversation,
+		Voice:    body.Delivery == "voice",
+		ConversationContext: &ai.ConversationContext{
+			Preferences:          personalityPreferences,
+			RecentHumourFeedback: recentHumourFeedback,
+			Greeting:             body.Greeting,
+		},
 	}
 	if body.Delivery == "voice" {
 		_, complexity := ai.InferTaskAndComplexity(messages)
@@ -373,12 +348,6 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// keeps the normal reasoning route and output budget.
 			chatRequest.Complexity = ai.ComplexitySimple
 			chatRequest.MaxOutputTokens = 1024
-		}
-	}
-	if body.Delivery != "voice" {
-		if budget := personality.RecommendedOutputTokens(messages[len(messages)-1].Content, personalityPreferences); budget > 0 &&
-			(chatRequest.MaxOutputTokens == 0 || budget < chatRequest.MaxOutputTokens) {
-			chatRequest.MaxOutputTokens = budget
 		}
 	}
 	if body.Stream {

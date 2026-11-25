@@ -25,7 +25,7 @@ test('TTS prepares ahead with bounded concurrency and audio retains text order',
   ['One.', 'Two.', 'Three.', 'Four.', 'Five.'].forEach(text => f.speech.enqueue(text));
   const finished = f.speech.finish(); await tick();
   assert.equal(f.requests.length, 2);
-  assert.ok(f.requests.every(request => request.args[7] === true), 'Every request is Groq-only.');
+  assert.ok(f.requests.every(request => request.args[6] === true && request.args[7] === false), 'Every request uses the configured Python engine without forcing a cloud TTS provider.');
   f.requests[1].resolve('second'); await tick();
   assert.equal(f.requests.length, 3); assert.deepEqual(f.audio, []);
   assert.equal(f.requests[2].args[1], 'Three. Four. Five.');
