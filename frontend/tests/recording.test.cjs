@@ -81,7 +81,7 @@ test('browser compression chooses Opus at 32 kbps and measures the exact Blob an
   const f = browserRecording();
   try {
     await f.recording.start(f.controller.signal);
-    f.feed(tone(16000, 1));
+    f.feed(tone(48000, 1));
     assert.equal(f.recorders[0].settings.mimeType, 'audio/webm;codecs=opus');
     assert.equal(f.recorders[0].settings.audioBitsPerSecond, 32000);
     assert.equal(f.recorders[0].timeslice, 250);

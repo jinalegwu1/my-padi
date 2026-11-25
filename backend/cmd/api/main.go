@@ -19,6 +19,7 @@ import (
 	"github.com/jinalegwu1/my-padi/backend/internal/config"
 	"github.com/jinalegwu1/my-padi/backend/internal/database"
 	"github.com/jinalegwu1/my-padi/backend/internal/httpapi"
+	"github.com/jinalegwu1/my-padi/backend/internal/personality"
 	pushnotifications "github.com/jinalegwu1/my-padi/backend/internal/push"
 	"github.com/jinalegwu1/my-padi/backend/internal/voice"
 )
@@ -55,6 +56,11 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load AI provider configuration: %w", err)
 	}
+	coreSettings, err := personality.LoadCoreSettings()
+	if err != nil {
+		return fmt.Errorf("load PADI personality configuration: %w", err)
+	}
+	logger.Info("PADI personality configuration loaded from Python", "traits", coreSettings.Guidance())
 
 	var db *sql.DB
 	var readiness httpapi.ReadinessChecker

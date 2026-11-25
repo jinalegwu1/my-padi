@@ -2,6 +2,54 @@ import { portraitSpeech, speechEnvelope } from '@/lib/portrait-speech';
 import { preparePlaybackReference } from '@/lib/voice-echo';
 
 let output: AudioContext | null = null;
+const MAX_DECODED_AUDIO_BYTES = 32 * 1024 * 1024;
+const decodedAudio = new WeakMap<AudioContext, {
+  buffers: Map<string, { buffer: AudioBuffer; bytes: number }>;
+  pending: Map<string, Promise<AudioBuffer>>;
+  bytes: number;
+}>();
+
+function decodeAudio(context: AudioContext, encoded: string): Promise<AudioBuffer> {
+  let cache = decodedAudio.get(context);
+  if (!cache) {
+    const created = { buffers: new Map<string, { buffer: AudioBuffer; bytes: number }>(),
+      pending: new Map<string, Promise<AudioBuffer>>(), bytes: 0 };
+    decodedAudio.set(context, created);
+    cache = created;
+  }
+  const current = cache;
+  const cached = current.buffers.get(encoded);
+  if (cached) {
+    current.buffers.delete(encoded);
+    current.buffers.set(encoded, cached);
+    return Promise.resolve(cached.buffer);
+  }
+  const pending = current.pending.get(encoded);
+  if (pending) return pending;
+
+  const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+  const decoding = context.decodeAudioData(bytes.buffer).then(buffer => {
+    current.pending.delete(encoded);
+    const size = buffer.length * buffer.numberOfChannels * Float32Array.BYTES_PER_ELEMENT;
+    if (size <= MAX_DECODED_AUDIO_BYTES) {
+      while (current.bytes + size > MAX_DECODED_AUDIO_BYTES) {
+        const oldest = current.buffers.keys().next().value;
+        if (oldest === undefined) break;
+        const evicted = current.buffers.get(oldest);
+        if (evicted) current.bytes -= evicted.bytes;
+        current.buffers.delete(oldest);
+      }
+      current.buffers.set(encoded, { buffer, bytes: size });
+      current.bytes += size;
+    }
+    return buffer;
+  }).catch(error => {
+    current.pending.delete(encoded);
+    throw error;
+  });
+  current.pending.set(encoded, decoding);
+  return decoding;
+}
 
 /** Unlock sound from the actual tap, before navigation or network requests. */
 export async function unlockVoicePlayback(): Promise<void> {
@@ -33,9 +81,8 @@ export async function playVoice(encoded: string, signal: AbortSignal, onStart: (
   if (signal.aborted) return;
   await unlockVoicePlayback();
   const context = output!;
-  const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
   let buffer: AudioBuffer;
-  try { buffer = await context.decodeAudioData(bytes.buffer); }
+  try { buffer = await decodeAudio(context, encoded); }
   catch { throw new Error('Voice playback failed. Your reply is available in the transcript.'); }
   if (signal.aborted) return;
   const source = context.createBufferSource();

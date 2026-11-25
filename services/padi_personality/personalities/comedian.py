@@ -1,0 +1,1 @@
+"""Comedian personality component."""

@@ -79,11 +79,13 @@ free-account/model checks are unchanged. The three-hour work/rest proposal
 remains unimplemented.
 
 The private environment file is `backend/.env`, excluded from Git and mode
-`0600`. All four provider keys are configured, with Z.ai enabled as
-`zai-reasoning` and `PADI_AI_REASONING_MODEL='zai-reasoning'`.
-Gemini remains primary, Groq is the fast route, and OpenRouter is backup.
+`0600`. The historical live checks above used Gemini primary, Groq fast, and
+OpenRouter backup. The active local text route is Groq primary, OpenRouter
+second, then Z.ai (`zai-reasoning`) after provider failures; task complexity
+does not bypass that order. Gemini is no longer in the active model registry.
+The Gemini credential may remain configured but is not selected by this route.
 The committed `.env.example` contains empty keys and a commented
-four-provider configuration with the selected free model IDs.
+Groq/OpenRouter/Z.ai configuration with the selected model IDs.
 
 Keep keys in the backend environment file, with one active assignment per key;
 a later empty assignment overrides an earlier populated value. Restart the

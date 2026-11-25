@@ -54,23 +54,29 @@ The Go backend provides a provider-neutral generation interface, configurable mo
 Configure approved free model IDs and API-key environment variable names without putting credentials in the JSON:
 
 ```sh
-export GEMINI_API_KEY='your-secret'
-export PADI_AI_APPROVED_FREE_MODELS='gemini:your-evaluated-model-id'
-export PADI_AI_MODELS='[{"id":"main","provider":"gemini","model":"your-evaluated-model-id","api_key_env":"GEMINI_API_KEY"}]'
+export GROQ_API_KEY='your-secret'
+export OPENROUTER_API_KEY='your-secret'
+export PADI_AI_APPROVED_FREE_MODELS='groq:your-evaluated-model-id,openrouter:provider/model-id-verified-free'
+export PADI_AI_MODELS='[{"id":"main","provider":"groq","model":"your-evaluated-model-id","api_key_env":"GROQ_API_KEY"},{"id":"backup","provider":"openrouter","model":"provider/model-id-verified-free","api_key_env":"OPENROUTER_API_KEY"}]'
 export PADI_AI_PRIMARY_MODEL='main'
+export PADI_AI_FAST_MODEL='main'
+export PADI_AI_BACKUP_MODEL='backup'
 ```
 
-Use `provider` values `gemini`, `openrouter`, `groq`, or `zai` for the four selected providers; startup rejects other provider names. These providers use their standard API endpoint when `endpoint` is omitted. Z.ai currently accepts only the free `glm-4.7-flash` model with `ZAI_API_KEY`, using `https://api.z.ai/api/paas/v4/chat/completions`. Other provider model IDs remain configurable and must match the current catalog and approved free-account configuration. Set `api_key_env` to the environment variable containing that provider's credential. Every configured model must be exactly listed in `PADI_AI_APPROVED_FREE_MODELS` using comma-separated `provider:model-id` entries. This operator-maintained list blocks unapproved model IDs but is not a live price feed; verify free pricing, quotas, and terms with each provider and recheck regularly. Configure routing roles with `PADI_AI_PRIMARY_MODEL`, `PADI_AI_FAST_MODEL`, `PADI_AI_REASONING_MODEL`, and `PADI_AI_BACKUP_MODEL`. Groq is used for classification, summarisation, extraction, text-processing tasks and simple requests when configured as `PADI_AI_FAST_MODEL`. Z.ai is preferred for `reasoning`, `planning`, `technical`, `decision_support`, `complex_analysis`, `learning`, and `quality_review` tasks and complex requests when configured as `PADI_AI_REASONING_MODEL`. The router applies shared PADI system instructions to all providers and tries other configured roles after failure; HTTP 429 skips retries against the limited model and moves to fallback. Callers should assign task labels through trusted Go logic, not accept model output as authorization. Requests can opt into JSON with `structured_output: true`; the router rejects non-JSON responses, but callers must still validate task-specific fields. The selected model must support JSON mode. Optional fields include `timeout_ms`, `retries` (0–2), and input/output cost per million tokens. Secrets are loaded only from the named environment variables and are not logged.
+Use `provider` values `gemini`, `openrouter`, `groq`, or `zai`; startup rejects other provider names. These providers use their standard API endpoint when `endpoint` is omitted. Z.ai currently accepts only the free `glm-4.7-flash` model with `ZAI_API_KEY`, using `https://api.z.ai/api/paas/v4/chat/completions`. Other provider model IDs remain configurable and must match the current catalog and approved free-account configuration. Set `api_key_env` to the environment variable containing that provider's credential. Every configured model must be exactly listed in `PADI_AI_APPROVED_FREE_MODELS` using comma-separated `provider:model-id` entries. This operator-maintained list blocks unapproved model IDs but is not a live price feed; verify free pricing, quotas, and terms with each provider and recheck regularly. Configure routing roles with `PADI_AI_PRIMARY_MODEL`, `PADI_AI_FAST_MODEL`, `PADI_AI_REASONING_MODEL`, and `PADI_AI_BACKUP_MODEL`. General text requests try the configured primary, backup, fast, then reasoning models after provider failures. With the active Groq primary/fast, OpenRouter backup, and Z.ai reasoning assignments, the effective sequence is Groq → OpenRouter → Z.ai for every task; task labels no longer pre-select Z.ai. Transient failures may retry the same model within its configured retry limit; other provider errors advance to the next model. Cancellation and local usage-ledger failures remain terminal. Live voice streaming remains restricted to configured Gemini/Groq streaming models; OpenRouter is not currently a supported voice-streaming fallback. The router applies shared PADI system instructions to all providers and skips retries against an HTTP 429-limited model. Callers should assign task labels through trusted Go logic, not accept model output as authorization. Requests can opt into JSON with `structured_output: true`; the router rejects non-JSON responses, but callers must still validate task-specific fields. The selected model must support JSON mode. Optional fields include `timeout_ms`, `retries` (0–2), and input/output cost per million tokens. Secrets are loaded only from the named environment variables and are not logged.
 
-For example, configure approved provider/model pairs and an OpenRouter backup only with an operator-verified free model:
+For example, configure the ordered Groq → OpenRouter → Z.ai chain only with operator-verified free models:
 
 ```sh
-export GEMINI_API_KEY='your-secret'
+export GROQ_API_KEY='your-secret'
 export OPENROUTER_API_KEY='your-secret'
-export PADI_AI_APPROVED_FREE_MODELS='gemini:your-evaluated-model-id,openrouter:provider/model-id-verified-free'
-export PADI_AI_MODELS='[{"id":"main","provider":"gemini","model":"your-evaluated-model-id","api_key_env":"GEMINI_API_KEY"},{"id":"backup","provider":"openrouter","model":"provider/model-id-verified-free","api_key_env":"OPENROUTER_API_KEY"}]'
+export ZAI_API_KEY='your-secret'
+export PADI_AI_APPROVED_FREE_MODELS='groq:your-evaluated-model-id,openrouter:provider/model-id-verified-free,zai:glm-4.7-flash'
+export PADI_AI_MODELS='[{"id":"main","provider":"groq","model":"your-evaluated-model-id","api_key_env":"GROQ_API_KEY"},{"id":"backup","provider":"openrouter","model":"provider/model-id-verified-free","api_key_env":"OPENROUTER_API_KEY"},{"id":"reasoning","provider":"zai","model":"glm-4.7-flash","api_key_env":"ZAI_API_KEY"}]'
 export PADI_AI_PRIMARY_MODEL='main'
+export PADI_AI_FAST_MODEL='main'
 export PADI_AI_BACKUP_MODEL='backup'
+export PADI_AI_REASONING_MODEL='reasoning'
 ```
 
 Replace example model IDs with exact IDs you have verified as free. The application cannot automatically verify live provider pricing or limits.

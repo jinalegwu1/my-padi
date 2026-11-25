@@ -303,15 +303,16 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			messages = append([]ai.Message{{Role: ai.RoleSystem, Content: context}}, messages...)
 		}
 	}
-	if body.Delivery == "voice" || body.VoiceContext != nil {
+	if body.Delivery == "voice" || body.VoiceContext != nil || body.Greeting && body.Language != "" {
 		instruction := ""
 		if body.Delivery == "voice" {
-			instruction = `This is a spoken conversation with PADI. Keep the same warm identity and selected humour preferences as text chat, using everyday words, contractions, clear short sentences, and natural punctuation. For ordinary conversation, answer directly in one or two short sentences, usually under 45 words, and give the user room to answer. Begin with the useful answer instead of a preamble. Match the user's mood; do not force jokes, banter, questions, filler, or repeated introductions. This speech system does not support controlled nonverbal laughter: express amusement in natural words rather than laughing emojis, stage directions, or synthetic laughter cues. Avoid headings, Markdown lists, tables, and essay-like answers unless the user asks for structured or detailed teaching. Preserve the shared PADI personality, honesty, memory permissions, and action approval rules.`
 			language := body.Language
 			if language == "" {
 				language = "en-NG"
 			}
-			instruction += "\n" + voiceReplyLanguage(language)
+			instruction = voiceReplyLanguage(language)
+		} else if body.Greeting && body.Language != "" {
+			instruction = textReplyLanguage(body.Language)
 		}
 		if body.VoiceContext != nil {
 			matched := false
@@ -337,12 +338,14 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if body.Greeting {
 		// Assess a returning greeting against the valid conversation after the
 		// memory-revision boundary, rather than the synthetic greeting request.
+		latestUserMessage = "Hi"
 		for index := len(messages) - 2; index >= 0; index-- {
 			if messages[index].Role == ai.RoleUser {
 				latestUserMessage = messages[index].Content
 				break
 			}
 		}
+		messages[len(messages)-1].Content = "Hi"
 	}
 	chatRequest := ai.Request{
 		Messages:       messages,
@@ -354,6 +357,15 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if body.Greeting {
 		chatRequest.StyleGuidance = personality.GreetingGuidance(latestUserMessage, personalityPreferences)
 	}
+	var recentReplies []string
+	for index := len(messages) - 2; index >= 0 && len(recentReplies) < 3; index-- {
+		if messages[index].Role == ai.RoleAssistant {
+			recentReplies = append(recentReplies, messages[index].Content)
+		}
+	}
+	if continuity := personality.ContinuityGuidance(recentReplies); continuity != "" {
+		chatRequest.StyleGuidance += " " + continuity
+	}
 	if body.Delivery == "voice" {
 		_, complexity := ai.InferTaskAndComplexity(messages)
 		if complexity != ai.ComplexityComplex {
@@ -361,6 +373,12 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// keeps the normal reasoning route and output budget.
 			chatRequest.Complexity = ai.ComplexitySimple
 			chatRequest.MaxOutputTokens = 512
+		}
+	}
+	if body.Delivery != "voice" {
+		if budget := personality.RecommendedOutputTokens(messages[len(messages)-1].Content, personalityPreferences); budget > 0 &&
+			(chatRequest.MaxOutputTokens == 0 || budget < chatRequest.MaxOutputTokens) {
+			chatRequest.MaxOutputTokens = budget
 		}
 	}
 	if body.Stream {
@@ -443,7 +461,7 @@ func writeServerEvent(w io.Writer, name string, value any) error {
 	return err
 }
 
-func voiceReplyLanguage(language string) string {
+func replyLanguageInstruction(language, replyKind string) string {
 	name := map[string]string{
 		"en-NG":  "English with natural Nigerian English phrasing",
 		"en-GB":  "English",
@@ -453,7 +471,15 @@ func voiceReplyLanguage(language string) string {
 		"yo-NG": "Yoruba", "ig-NG": "Igbo", "am-ET": "Amharic",
 		"hi-IN": "Hindi", "zh-CN": "Mandarin Chinese",
 	}[language]
-	return "The selected conversation language is " + name + ". Write the spoken reply in this language. Do not automatically switch languages because of a name, location, old conversation, or a transcription that appears to be in another language. Explain requested translations in the selected language; include foreign words only when the user explicitly asks for them. A language change is made through the app's language selection."
+	return "The selected conversation language is " + name + ". Write the " + replyKind + " in this language. Do not automatically switch languages because of a name, location, old conversation, or a transcription that appears to be in another language. Explain requested translations in the selected language; include foreign words only when the user explicitly asks for them. A language change is made through the app's language selection."
+}
+
+func voiceReplyLanguage(language string) string {
+	return replyLanguageInstruction(language, "spoken reply")
+}
+
+func textReplyLanguage(language string) string {
+	return replyLanguageInstruction(language, "text reply")
 }
 
 func validateChatMessages(input []struct {

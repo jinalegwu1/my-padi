@@ -97,7 +97,7 @@ func TestZAIRejectsReasoningOnlyResponse(t *testing.T) {
 	}
 }
 
-func TestReasoningOnlyZAIResponseFallsBackToPrimary(t *testing.T) {
+func TestReasoningOnlyZAIResponseFailsAfterPreviousProviders(t *testing.T) {
 	t.Setenv("PADI_TEST_ZAI_KEY", "synthetic-key")
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -105,22 +105,32 @@ func TestReasoningOnlyZAIResponseFallsBackToPrimary(t *testing.T) {
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"","reasoning_content":"private reasoning"}}]}`))
 	}))
 	defer server.Close()
-	primary := &fakeProvider{response: Response{Content: "Primary fallback answer"}}
+	groq := &fakeProvider{err: &ProviderError{Provider: ProviderGroq, Status: 503, Retryable: true}}
+	openrouter := &fakeProvider{err: &ProviderError{Provider: ProviderOpenRouter, Status: 503, Retryable: true}}
 	var events []Event
 	router := testRouter(t, []ModelConfig{
-		{ID: "reasoning", Provider: ProviderZAI, Model: ZAIFlashModel, Endpoint: server.URL, APIKeyEnv: "PADI_TEST_ZAI_KEY", Retries: 2},
-		{ID: "primary", Provider: "primary", Model: "primary-model"},
-	}, map[string]Provider{ProviderZAI: NewProviderAdapters(server.Client())[ProviderZAI], "primary": primary},
-		RoutingConfig{PrimaryModel: "primary", ReasoningModel: "reasoning"},
+		{ID: "groq-fast", Provider: ProviderGroq, Model: "openai/gpt-oss-20b"},
+		{ID: "openrouter-backup", Provider: ProviderOpenRouter, Model: "nvidia/nemotron-3.5-lightning:free"},
+		{ID: "zai-reasoning", Provider: ProviderZAI, Model: ZAIFlashModel, Endpoint: server.URL, APIKeyEnv: "PADI_TEST_ZAI_KEY"},
+	}, map[string]Provider{
+		ProviderGroq:       groq,
+		ProviderOpenRouter: openrouter,
+		ProviderZAI:        NewProviderAdapters(server.Client())[ProviderZAI],
+	}, RoutingConfig{
+		PrimaryModel: "groq-fast", BackupModel: "openrouter-backup",
+		FastModel: "groq-fast", ReasoningModel: "zai-reasoning",
+	},
 		ObserverFunc(func(event Event) { events = append(events, event) }))
 	response, err := router.Generate(context.Background(), testRequest(TaskReasoning, ComplexityComplex))
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !errors.Is(err, ErrEmptyProviderResponse) || response.Content != "" {
+		t.Fatalf("Generate() = %+v, %v; want explicit empty-response error after all configured providers fail", response, err)
 	}
-	if calls != 1 || primary.callCount() != 1 || response.Content != "Primary fallback answer" || response.Provider != "primary" {
-		t.Fatal("reasoning-only reply did not fall back immediately to the primary")
+	if calls != 1 || groq.callCount() != 1 || openrouter.callCount() != 1 {
+		t.Fatalf("calls = Groq:%d OpenRouter:%d Z.ai:%d, want one attempt per provider",
+			groq.callCount(), openrouter.callCount(), calls)
 	}
-	if len(events) != 2 || events[0].ErrorClass != "empty_provider_response" || !events[1].Success {
-		t.Fatal("missing sanitized empty-response and successful-fallback events")
+	if len(events) != 3 || events[0].Provider != ProviderGroq ||
+		events[1].Provider != ProviderOpenRouter || events[2].ErrorClass != "empty_provider_response" {
+		t.Fatal("expected ordered, sanitized provider failure events")
 	}
 }

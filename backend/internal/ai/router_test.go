@@ -41,8 +41,8 @@ func TestRouterRequiresValidStructuredOutput(t *testing.T) {
 }
 
 func TestRouterRetriesInvalidStructuredOutputWithFallback(t *testing.T) {
-	fast := &fakeProvider{response: Response{Content: "not JSON"}}
-	primary := &fakeProvider{response: Response{Content: `{"summary":"done"}`}}
+	primary := &fakeProvider{response: Response{Content: "not JSON"}}
+	fast := &fakeProvider{response: Response{Content: `{"summary":"done"}`}}
 	router := testRouter(t, []ModelConfig{
 		{ID: "fast", Provider: "fast", Model: "fast-model"},
 		{ID: "primary", Provider: "primary", Model: "primary-model"},
@@ -58,11 +58,11 @@ func TestRouterRetriesInvalidStructuredOutputWithFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
-	if response.Provider != "primary" || !json.Valid([]byte(response.Content)) {
-		t.Errorf("response = %+v, want valid JSON from configured primary fallback", response)
+	if response.Provider != "fast" || !json.Valid([]byte(response.Content)) {
+		t.Errorf("response = %+v, want valid JSON from the next configured provider", response)
 	}
-	if fast.callCount() != 1 || primary.callCount() != 1 {
-		t.Errorf("calls = fast:%d primary:%d, want one fast attempt and one fallback", fast.callCount(), primary.callCount())
+	if primary.callCount() != 1 || fast.callCount() != 1 {
+		t.Errorf("calls = primary:%d fast:%d, want one primary attempt and one fallback", primary.callCount(), fast.callCount())
 	}
 }
 
@@ -111,7 +111,7 @@ func TestRouterInjectsOneSharedPADIInstructionForAllProviders(t *testing.T) {
 	}
 }
 
-func TestRouterRoutesByTaskAndComplexity(t *testing.T) {
+func TestRouterTriesPrimaryBeforeFallbackForEveryTask(t *testing.T) {
 	primary := &fakeProvider{response: Response{Content: "primary"}}
 	fast := &fakeProvider{response: Response{Content: "fast"}}
 	reasoning := &fakeProvider{response: Response{Content: "reasoning"}}
@@ -128,67 +128,67 @@ func TestRouterRoutesByTaskAndComplexity(t *testing.T) {
 		wantContent string
 	}{
 		{
-			name:        "extraction uses fast model",
+			name:        "extraction tries primary first",
 			request:     testRequest(TaskExtraction, ComplexityNormal),
-			wantContent: "fast",
+			wantContent: "primary",
 		},
 		{
-			name:        "classification uses fast model",
+			name:        "classification tries primary first",
 			request:     testRequest(TaskClassification, ComplexityNormal),
-			wantContent: "fast",
+			wantContent: "primary",
 		},
 		{
-			name:        "summarization uses fast model",
+			name:        "summarization tries primary first",
 			request:     testRequest(TaskSummarization, ComplexityComplex),
-			wantContent: "fast",
+			wantContent: "primary",
 		},
 		{
-			name:        "text processing uses fast model",
+			name:        "text processing tries primary first",
 			request:     testRequest(TaskTextProcessing, ComplexityNormal),
-			wantContent: "fast",
+			wantContent: "primary",
 		},
 		{
-			name:        "simple conversation uses fast model",
+			name:        "simple conversation tries primary first",
 			request:     testRequest(TaskConversation, ComplexitySimple),
-			wantContent: "fast",
+			wantContent: "primary",
 		},
 		{
-			name:        "complex task uses reasoning model",
+			name:        "complex task tries primary first",
 			request:     testRequest(TaskConversation, ComplexityComplex),
-			wantContent: "reasoning",
+			wantContent: "primary",
 		},
 		{
-			name:        "planning uses reasoning model",
+			name:        "planning tries primary first",
 			request:     testRequest(TaskPlanning, ComplexityNormal),
-			wantContent: "reasoning",
+			wantContent: "primary",
 		},
 		{
-			name:        "technical assistance uses reasoning model",
+			name:        "technical assistance tries primary first",
 			request:     testRequest(TaskTechnical, ComplexitySimple),
-			wantContent: "reasoning",
+			wantContent: "primary",
 		},
 		{
-			name:        "decision support uses reasoning model",
+			name:        "decision support tries primary first",
 			request:     testRequest(TaskDecision, ComplexityNormal),
-			wantContent: "reasoning",
+			wantContent: "primary",
 		},
 		{
-			name:        "complex analysis uses reasoning model",
+			name:        "complex analysis tries primary first",
 			request:     testRequest(TaskAnalysis, ComplexityNormal),
-			wantContent: "reasoning",
+			wantContent: "primary",
 		},
 		{
-			name:        "learning uses reasoning model",
+			name:        "learning tries primary first",
 			request:     testRequest(TaskLearning, ComplexityNormal),
-			wantContent: "reasoning",
+			wantContent: "primary",
 		},
 		{
-			name:        "quality review uses reasoning model",
+			name:        "quality review tries primary first",
 			request:     testRequest(TaskQualityReview, ComplexityNormal),
-			wantContent: "reasoning",
+			wantContent: "primary",
 		},
 		{
-			name:        "normal conversation uses primary model",
+			name:        "normal conversation tries primary first",
 			request:     testRequest(TaskConversation, ComplexityNormal),
 			wantContent: "primary",
 		},
@@ -207,6 +207,79 @@ func TestRouterRoutesByTaskAndComplexity(t *testing.T) {
 				t.Errorf("Content = %q, want %q", response.Content, test.wantContent)
 			}
 		})
+	}
+}
+
+func TestRouterFallsBackGroqThenOpenRouterThenZAIForEveryTask(t *testing.T) {
+	tests := []struct {
+		name       string
+		task       Task
+		complexity Complexity
+	}{
+		{name: "conversation", task: TaskConversation, complexity: ComplexitySimple},
+		{name: "reasoning", task: TaskPlanning, complexity: ComplexityComplex},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			groq := &fakeProvider{err: &ProviderError{Provider: ProviderGroq, Status: 503, Retryable: true}}
+			openrouter := &fakeProvider{err: &ProviderError{Provider: ProviderOpenRouter, Status: 503, Retryable: true}}
+			zai := &fakeProvider{response: Response{Content: "Z.ai fallback"}}
+			var events []Event
+			router := testRouter(t, []ModelConfig{
+				{ID: "groq-fast", Provider: ProviderGroq, Model: "openai/gpt-oss-20b"},
+				{ID: "openrouter-backup", Provider: ProviderOpenRouter, Model: "nvidia/nemotron-3.5-lightning:free"},
+				{ID: "zai-reasoning", Provider: ProviderZAI, Model: ZAIFlashModel},
+			}, map[string]Provider{
+				ProviderGroq: groq, ProviderOpenRouter: openrouter, ProviderZAI: zai,
+			}, RoutingConfig{
+				PrimaryModel: "groq-fast", FastModel: "groq-fast",
+				BackupModel: "openrouter-backup", ReasoningModel: "zai-reasoning",
+			}, ObserverFunc(func(event Event) { events = append(events, event) }))
+
+			response, err := router.Generate(context.Background(), Request{
+				Messages:   []Message{{Role: RoleUser, Content: "Please help with a synthetic routing check."}},
+				Task:       test.task,
+				Complexity: test.complexity,
+			})
+			if err != nil {
+				t.Fatalf("Generate() error = %v", err)
+			}
+			if response.Provider != ProviderZAI || response.Content != "Z.ai fallback" {
+				t.Fatalf("response = %+v, want successful Z.ai third fallback", response)
+			}
+			if groq.callCount() != 1 || openrouter.callCount() != 1 || zai.callCount() != 1 {
+				t.Fatalf("calls = Groq:%d OpenRouter:%d Z.ai:%d, want one per provider",
+					groq.callCount(), openrouter.callCount(), zai.callCount())
+			}
+			if len(events) != 3 || events[0].Provider != ProviderGroq ||
+				events[1].Provider != ProviderOpenRouter || events[2].Provider != ProviderZAI {
+				t.Fatalf("attempt order = %+v, want Groq -> OpenRouter -> Z.ai", events)
+			}
+		})
+	}
+}
+
+func TestRouterUsesGroqPrimaryThenOpenRouterForConversationFallback(t *testing.T) {
+	groq := &fakeProvider{err: &ProviderError{Provider: ProviderGroq, Status: 429, Retryable: true}}
+	openrouter := &fakeProvider{response: Response{Content: "OpenRouter conversation fallback"}}
+	router := testRouter(t, []ModelConfig{
+		{ID: "groq-fast", Provider: ProviderGroq, Model: "groq-model"},
+		{ID: "openrouter-backup", Provider: ProviderOpenRouter, Model: "backup-model"},
+	}, map[string]Provider{ProviderGroq: groq, ProviderOpenRouter: openrouter},
+		RoutingConfig{PrimaryModel: "groq-fast", FastModel: "groq-fast", BackupModel: "openrouter-backup"}, nil)
+
+	response, err := router.Generate(context.Background(), Request{
+		Messages:   []Message{{Role: RoleUser, Content: "Fine and you?"}},
+		Task:       TaskConversation,
+		Complexity: ComplexitySimple,
+	})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if response.Provider != ProviderOpenRouter || response.Content != "OpenRouter conversation fallback" ||
+		groq.callCount() != 1 || openrouter.callCount() != 1 {
+		t.Fatalf("response=%+v calls Groq:%d OpenRouter:%d; want Groq primary then OpenRouter fallback",
+			response, groq.callCount(), openrouter.callCount())
 	}
 }
 
@@ -337,7 +410,7 @@ func TestRouterFallsBackOnRateLimitWithoutRepeatingLimitedProvider(t *testing.T)
 		{ID: "groq-fast", Provider: ProviderGroq, Model: "fast-model", Retries: 2},
 		{ID: "gemini-main", Provider: ProviderGemini, Model: "main-model"},
 	}, map[string]Provider{ProviderGroq: groq, ProviderGemini: gemini},
-		RoutingConfig{PrimaryModel: "gemini-main", FastModel: "groq-fast", BackupModel: "gemini-main"}, nil)
+		RoutingConfig{PrimaryModel: "groq-fast", FastModel: "groq-fast", BackupModel: "gemini-main"}, nil)
 
 	response, err := router.Generate(context.Background(), testRequest(TaskClassification, ComplexitySimple))
 	if err != nil {
@@ -406,8 +479,28 @@ func TestRouterFallsBackAcrossConfiguredRoles(t *testing.T) {
 	}
 }
 
-func TestRouterDoesNotFallbackOnNonRetryableFailure(t *testing.T) {
+func TestRouterFallsBackAfterNonRetryableProviderFailure(t *testing.T) {
 	primary := &fakeProvider{err: &ProviderError{Provider: "primary", Status: 401}}
+	backup := &fakeProvider{response: Response{Content: "backup answer"}}
+	router := testRouter(t, []ModelConfig{
+		{ID: "primary", Provider: "primary", Model: "p-model"},
+		{ID: "backup", Provider: "backup", Model: "b-model"},
+	}, map[string]Provider{"primary": primary, "backup": backup},
+		RoutingConfig{PrimaryModel: "primary", BackupModel: "backup"}, nil)
+
+	response, err := router.Generate(context.Background(), testRequest(TaskConversation, ComplexityNormal))
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if response.Provider != "backup" || response.Content != "backup answer" ||
+		primary.callCount() != 1 || backup.callCount() != 1 {
+		t.Errorf("response=%+v calls primary:%d backup:%d; want backup after one primary failure",
+			response, primary.callCount(), backup.callCount())
+	}
+}
+
+func TestRouterDoesNotFallbackAfterCancellation(t *testing.T) {
+	primary := &fakeProvider{err: &ProviderError{Provider: "primary", Err: context.Canceled}}
 	backup := &fakeProvider{response: Response{Content: "must not run"}}
 	router := testRouter(t, []ModelConfig{
 		{ID: "primary", Provider: "primary", Model: "p-model"},
@@ -415,11 +508,35 @@ func TestRouterDoesNotFallbackOnNonRetryableFailure(t *testing.T) {
 	}, map[string]Provider{"primary": primary, "backup": backup},
 		RoutingConfig{PrimaryModel: "primary", BackupModel: "backup"}, nil)
 
-	if _, err := router.Generate(context.Background(), testRequest(TaskConversation, ComplexityNormal)); err == nil {
-		t.Fatal("Generate() error = nil, want provider rejection")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := router.Generate(ctx, testRequest(TaskConversation, ComplexityNormal))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Generate() error = %v, want context cancellation", err)
 	}
 	if backup.callCount() != 0 {
-		t.Errorf("backup calls = %d, want no fallback on non-retryable error", backup.callCount())
+		t.Errorf("backup calls = %d, want no fallback after cancellation", backup.callCount())
+	}
+}
+
+func TestRouterAdvancesAfterProviderSpecificTimeout(t *testing.T) {
+	primary := &fakeProvider{err: &ProviderError{
+		Provider: "primary", Retryable: true, Err: context.DeadlineExceeded,
+	}}
+	backup := &fakeProvider{response: Response{Content: "backup answer"}}
+	router := testRouter(t, []ModelConfig{
+		{ID: "primary", Provider: "primary", Model: "p-model"},
+		{ID: "backup", Provider: "backup", Model: "b-model"},
+	}, map[string]Provider{"primary": primary, "backup": backup},
+		RoutingConfig{PrimaryModel: "primary", BackupModel: "backup"}, nil)
+
+	response, err := router.Generate(context.Background(), testRequest(TaskConversation, ComplexityNormal))
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if response.Provider != "backup" || primary.callCount() != 1 || backup.callCount() != 1 {
+		t.Errorf("response=%+v calls primary:%d backup:%d; want provider-specific timeout to advance",
+			response, primary.callCount(), backup.callCount())
 	}
 }
 

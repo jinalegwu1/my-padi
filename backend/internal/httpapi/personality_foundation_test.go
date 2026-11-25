@@ -19,15 +19,15 @@ func TestTextAndVoiceRequestsSharePreferenceAndEmotionalGuidance(t *testing.T) {
 			name, user, want string
 			humour           personality.HumourPreference
 		}{
-			{"greeting", "Welcome me in one or two short, spontaneous sentences.", "Use occasional, light wit", personality.HumourOccasional},
-			{"returning grief greeting", "Greet me briefly. Recent user turn for greeting continuity: My father died yesterday. Please just listen.", "use an empathetic tone. Humour is not appropriate", personality.HumourFrequent},
-			{"everyday", "I opened the fridge three times and dinner still hasn't appeared.", "Humour is welcome", personality.HumourOccasional},
-			{"user joke", "My Wi-Fi and I live in the same room but have a long-distance relationship.", "Humour is welcome", personality.HumourOccasional},
-			{"teasing", "PADI, did you swallow a dictionary?", "Humour is welcome", personality.HumourOccasional},
-			{"subtle", "What should I cook today?", "Keep humour subtle", personality.HumourSubtle},
-			{"off", "What should I cook today?", "Humour is not appropriate", personality.HumourOff},
-			{"grief", "My father died. Tell me a joke.", "use an empathetic tone. Humour is not appropriate", personality.HumourFrequent},
-			{"serious", "Give me a serious response about my interview.", "use a serious tone. Humour is not appropriate", personality.HumourFrequent},
+			{"greeting", "Hi", "A small bit of wit is welcome", personality.HumourOccasional},
+			{"returning grief greeting", "Greet me briefly. Recent user turn for greeting continuity: My father died yesterday. Please just listen.", "empathetic tone. Respond to what the user actually said", personality.HumourFrequent},
+			{"everyday", "I opened the fridge three times and dinner still hasn't appeared.", "A small bit of wit is welcome", personality.HumourOccasional},
+			{"user joke", "My Wi-Fi and I live in the same room but have a long-distance relationship.", "A small bit of wit is welcome", personality.HumourOccasional},
+			{"teasing", "PADI, did you swallow a dictionary?", "A small bit of wit is welcome", personality.HumourOccasional},
+			{"subtle", "What should I cook today?", "keep it understated", personality.HumourSubtle},
+			{"off", "What should I cook today?", "without jokes or teasing", personality.HumourOff},
+			{"grief", "My father died. Tell me a joke.", "empathetic tone. Respond to what the user actually said", personality.HumourFrequent},
+			{"serious", "Give me a serious response about my interview.", "serious tone. Respond to what the user actually said", personality.HumourFrequent},
 		} {
 			t.Run(delivery+"/"+test.name, func(t *testing.T) {
 				generator := &testChatGenerator{}
@@ -52,12 +52,13 @@ func TestTextAndVoiceRequestsSharePreferenceAndEmotionalGuidance(t *testing.T) {
 				if delivery == "voice" {
 					found := false
 					for _, message := range generator.request.Messages {
-						if message.Role == ai.RoleSystem && strings.Contains(message.Content, "same warm identity and selected humour preferences") && strings.Contains(message.Content, "does not support controlled nonverbal laughter") {
+						if message.Role == ai.RoleSystem &&
+							strings.Contains(message.Content, "selected conversation language is English with natural Nigerian English phrasing") {
 							found = true
 						}
 					}
 					if !found {
-						t.Fatal("spoken identity or unsupported laughter safeguard missing")
+						t.Fatal("spoken response did not retain the selected-language instruction")
 					}
 				}
 			})
@@ -87,7 +88,7 @@ func TestReturningGreetingAssessesOnlyContextWithinMemoryRevision(t *testing.T) 
 		if response.Code != http.StatusOK {
 			t.Fatalf("greeting returned HTTP %d", response.Code)
 		}
-		if got := strings.Contains(generator.request.StyleGuidance, "Humour is not appropriate"); got != (revision == 5) {
+		if got := strings.Contains(generator.request.StyleGuidance, "without jokes or teasing"); got != (revision == 5) {
 			t.Fatalf("revision %d: greeting assessed stale or missing context: %s", revision, generator.request.StyleGuidance)
 		}
 	}

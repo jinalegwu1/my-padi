@@ -120,6 +120,18 @@ func generateOpenAICompatible(
 	endpoint string,
 	extraHeaders ...func(*http.Request),
 ) (Response, error) {
+	return generateOpenAICompatibleWithOptions(ctx, client, model, request, endpoint, false, extraHeaders...)
+}
+
+func generateOpenAICompatibleWithOptions(
+	ctx context.Context,
+	client *http.Client,
+	model ModelConfig,
+	request Request,
+	endpoint string,
+	disableReasoning bool,
+	extraHeaders ...func(*http.Request),
+) (Response, error) {
 	apiKey, err := apiKey(model)
 	if err != nil {
 		return Response{}, err
@@ -135,10 +147,18 @@ func generateOpenAICompatible(
 		ResponseFormat *struct {
 			Type string `json:"type"`
 		} `json:"response_format,omitempty"`
+		Reasoning *struct {
+			Enabled bool `json:"enabled"`
+		} `json:"reasoning,omitempty"`
 	}{
 		Model:     model.Model,
 		Messages:  request.Messages,
 		MaxTokens: configuredMaxOutputTokens(request),
+	}
+	if disableReasoning {
+		payload.Reasoning = &struct {
+			Enabled bool `json:"enabled"`
+		}{Enabled: false}
 	}
 	if request.StructuredOutput {
 		payload.ResponseFormat = &struct {

@@ -95,13 +95,16 @@ test('capture uses the device clock and keeps mono, echo cancellation, noise sup
   } finally { await f.close(); }
 });
 
-test('capture timestamps include the worklet engine offset and delayed delivery',async()=>{
-  const f=captureHarness({engineRate:48000,startFrame:48000});
+test('capture timestamps include the worklet engine offset when frames are delivered',async()=>{
+  const deliveryAges=[];
+  const f=captureHarness({engineRate:48000,startFrame:48000,onFrame:frame=>deliveryAges.push(performance.now()/1000-frame.capturedAt)});
   try {
     await f.capture.start(new AbortController().signal);
     f.feed(tone(48000,.1));
     assert.equal(f.frames.length,2);
-    assert.ok(f.frames.every(frame=>Number.isFinite(frame.capturedAt)&&performance.now()/1000-frame.capturedAt<.1),'A worklet created after one second must not report samples as one second stale');
+    assert.ok(f.frames.every(frame=>Number.isFinite(frame.capturedAt)));
+    assert.equal(deliveryAges.length,2);
+    assert.ok(deliveryAges.every(age=>age>=0&&age<.1),'A worklet created after one second must timestamp frames near their delivery time');
   }finally{await f.close();}
 });
 

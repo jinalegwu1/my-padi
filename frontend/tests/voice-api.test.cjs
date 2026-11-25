@@ -12,11 +12,13 @@ test('greeting metadata uses the existing text chat endpoint without altering or
     return { ok: true, status: 200, text: async () => JSON.stringify({ reply: 'Hey!', memory_revision: 0 }) };
   };
   try {
-    const messages = [{ role: 'user', content: 'Greet me briefly.' }];
+    const messages = [{ role: 'user', content: 'Hi' }];
     await api.sendChat('token', messages, 0, undefined, 'text', undefined, 'en-NG', true);
     await api.sendChat('token', messages, 0);
     assert.equal(bodies[0].greeting, true);
+    assert.equal(bodies[0].language, 'en-NG');
     assert.equal(Object.hasOwn(bodies[1], 'greeting'), false);
+    assert.equal(Object.hasOwn(bodies[1], 'language'), false);
     assert.equal(bodies[0].delivery, 'text');
   } finally { global.fetch = previous; }
 });
@@ -115,8 +117,9 @@ test('voice chat sends authenticated Groq-stream request and exposes deltas befo
     assert.deepEqual(received,['Hello ','there.']);
     assert.deepEqual(result,{reply:'Hello there.',memory_revision:7});
     assert.equal(Object.hasOwn(request.body,'greeting'),false);
-    await api.streamVoiceChat('session-token',[{role:'user',content:'Greet me briefly.'}],7,new AbortController().signal,()=>{},undefined,'en-NG',true);
+    await api.streamVoiceChat('session-token',[{role:'user',content:'Hi'}],7,new AbortController().signal,()=>{},undefined,'en-NG',true);
     assert.equal(request.body.greeting,true);
+    assert.equal(request.body.language,'en-NG');
   } finally {global.XMLHttpRequest=previous;}
 });
 

@@ -170,8 +170,11 @@ func (router *Router) Generate(ctx context.Context, request Request) (Response, 
 		if err == nil {
 			return result, nil
 		}
+		if ctx.Err() != nil {
+			return Response{}, ctx.Err()
+		}
 		lastErr = err
-		if !retryable(err) && !errors.Is(err, ErrCircuitOpen) && !errors.Is(err, ErrUsageLimitReached) {
+		if !shouldAdvanceProviderChain(err) {
 			return Response{}, err
 		}
 	}
@@ -180,6 +183,14 @@ func (router *Router) Generate(ctx context.Context, request Request) (Response, 
 		lastErr = ErrCircuitOpen
 	}
 	return Response{}, lastErr
+}
+
+func shouldAdvanceProviderChain(err error) bool {
+	if errors.Is(err, ErrCircuitOpen) || errors.Is(err, ErrUsageLimitReached) {
+		return true
+	}
+	var providerErr *ProviderError
+	return errors.As(err, &providerErr)
 }
 
 // GenerateWithModel bypasses task routing for explicit tests and evaluations.
@@ -416,14 +427,6 @@ func shouldVoiceFallbackImmediately(err error) bool {
 			providerErr.Status == 503 || providerErr.Status == 504)
 }
 
-func estimateTokenUnits(request Request) int {
-	total := 0
-	for _, message := range request.Messages {
-		total += len(message.Content)
-	}
-	return total
-}
-
 func isReasoningTask(task Task) bool {
 	switch task {
 	case TaskReasoning, TaskPlanning, TaskTechnical, TaskDecision, TaskAnalysis, TaskLearning, TaskQualityReview:
@@ -433,13 +436,12 @@ func isReasoningTask(task Task) bool {
 	}
 }
 
-func isFastTask(task Task) bool {
-	switch task {
-	case TaskExtraction, TaskClassification, TaskSummarization, TaskTextProcessing:
-		return true
-	default:
-		return false
+func estimateTokenUnits(request Request) int {
+	total := 0
+	for _, message := range request.Messages {
+		total += len(message.Content)
 	}
+	return total
 }
 
 func (router *Router) candidates(request Request) []string {
@@ -457,21 +459,7 @@ func (router *Router) candidates(request Request) []string {
 		return unique
 	}
 
-	preferred := router.routing.PrimaryModel
-	switch {
-	case isReasoningTask(request.Task) && router.routing.ReasoningModel != "":
-		preferred = router.routing.ReasoningModel
-	case isFastTask(request.Task) && router.routing.FastModel != "":
-		preferred = router.routing.FastModel
-	case request.Complexity == ComplexityComplex && router.routing.ReasoningModel != "":
-		preferred = router.routing.ReasoningModel
-	case request.Task == TaskConversation && request.Complexity == ComplexitySimple &&
-		router.routing.FastModel != "":
-		preferred = router.routing.FastModel
-	}
-
 	candidates := []string{
-		preferred,
 		router.routing.PrimaryModel,
 		router.routing.BackupModel,
 		router.routing.FastModel,

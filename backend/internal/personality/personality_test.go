@@ -5,6 +5,21 @@ import (
 	"testing"
 )
 
+func TestDefaultCoreSettingsAreAvailableAsGuidance(t *testing.T) {
+	settings := DefaultCoreSettings()
+	if !settings.Warm || !settings.Funny || !settings.Witty ||
+		!settings.Intelligent || !settings.Playful || !settings.EmotionallyAware {
+		t.Fatalf("default core settings = %+v, want all PADI core traits enabled", settings)
+	}
+	want := "Core PADI personality traits: warm, funny, witty, intelligent, playful, emotionally aware."
+	if got := settings.Guidance(); got != want {
+		t.Fatalf("Guidance() = %q, want %q", got, want)
+	}
+	if got := (CoreSettings{}).Guidance(); got != "" {
+		t.Fatalf("empty settings Guidance() = %q, want empty", got)
+	}
+}
+
 func TestAssessConversationSignalsWithoutPersistingMood(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -44,10 +59,10 @@ func TestHumourLevelsGuideFrequencyWithoutDisablingEverydayWarmth(t *testing.T) 
 			want    string
 			allowed bool
 		}{
-			{HumourOff, "Humour is not appropriate", false},
-			{HumourSubtle, "Keep humour subtle", true},
-			{HumourOccasional, "Use occasional, light wit", true},
-			{HumourFrequent, "Use wit more often", true},
+			{HumourOff, "without jokes or teasing", false},
+			{HumourSubtle, "keep it understated", true},
+			{HumourOccasional, "A small bit of wit is welcome", true},
+			{HumourFrequent, "Use light wit more often", true},
 		} {
 			t.Run(string(tone)+"/"+string(test.level), func(t *testing.T) {
 				p := Preferences{Humour: test.level, Tone: tone, HumourExplicit: true}
@@ -56,6 +71,68 @@ func TestHumourLevelsGuideFrequencyWithoutDisablingEverydayWarmth(t *testing.T) 
 					t.Fatalf("level %s not respected: %s", test.level, ResponseGuidance("I'm making dinner.", p))
 				}
 			})
+		}
+	}
+}
+
+func TestExplicitHumourRequestsGetPlayfulGuidanceUnlessHumourIsOff(t *testing.T) {
+	for _, text := range []string{"Make me laugh.", "Tell me a funny little story.", "I could use a laugh."} {
+		got := ResponseGuidance(text, Preferences{Humour: HumourOccasional})
+		if !strings.Contains(got, "The user is inviting play") {
+			t.Errorf("%q did not receive playful guidance: %s", text, got)
+		}
+	}
+
+	subtle := ResponseGuidance("Tell me a funny little story.", Preferences{Humour: HumourSubtle})
+	if !strings.Contains(subtle, "keep it understated") {
+		t.Errorf("subtle preference was overridden by explicit request: %s", subtle)
+	}
+	off := ResponseGuidance("Tell me a funny little story.", Preferences{Humour: HumourOff})
+	if !strings.Contains(off, "without jokes or teasing") || strings.Contains(off, "inviting play") {
+		t.Errorf("humour-off preference was overridden by explicit request: %s", off)
+	}
+}
+
+func TestJokesAndAffectionateTeasingReceiveIntentSpecificGuidance(t *testing.T) {
+	for _, text := range []string{
+		"Why did the computer go to the doctor?",
+		"What do you call a bear with no teeth?",
+		"Knock knock.",
+	} {
+		if got := ResponseGuidance(text, DefaultPreferences()); !strings.Contains(got, "play along briefly") {
+			t.Errorf("%q did not receive joke guidance: %s", text, got)
+		}
+	}
+
+	for _, test := range []struct {
+		text     string
+		humour   HumourPreference
+		expected string
+	}{
+		{"PADI, you're not even intelligent.", HumourOccasional, "concise, affectionate, self-directed comeback"},
+		{"You talk too much.", HumourSubtle, "gentle and understated"},
+		{"You use so many words I could knit a scarf before your answer ends.", HumourFrequent, "more playful"},
+	} {
+		if got := ResponseGuidance(test.text, Preferences{Humour: test.humour}); !strings.Contains(got, test.expected) {
+			t.Errorf("%q did not receive teasing guidance: %s", test.text, got)
+		}
+	}
+
+	off := ResponseGuidance("You talk too much.", Preferences{Humour: HumourOff})
+	if !strings.Contains(off, "without jokes or teasing") || strings.Contains(off, "comeback") {
+		t.Errorf("humour-off preference allowed a teasing comeback: %s", off)
+	}
+}
+
+func TestCelebrationsGetSpecificWarmGuidanceAcrossHumourPreferences(t *testing.T) {
+	for _, level := range []HumourPreference{HumourOff, HumourSubtle, HumourOccasional, HumourFrequent} {
+		got := ResponseGuidance("I got the job!", Preferences{Humour: level})
+		if !strings.Contains(got, "Share the user's excitement") ||
+			!strings.Contains(got, "avoid a generic congratulations card") {
+			t.Errorf("humour %s lost celebration-specific response guidance: %s", level, got)
+		}
+		if level == HumourOff && !strings.Contains(got, "without jokes or teasing") {
+			t.Errorf("humour off did not preserve a sincere celebration: %s", got)
 		}
 	}
 }
@@ -77,7 +154,7 @@ func TestPainAndSeriousRequestsOverrideEveryHumourLevel(t *testing.T) {
 
 func TestCurrentTurnInvitationDoesNotOverrideExplicitHumourOff(t *testing.T) {
 	p := Preferences{Humour: HumourOff, HumourExplicit: true, Tone: ToneAdaptive}
-	if Assess("Tell me a joke.", p).HumourAllowed || !strings.Contains(ResponseGuidance("Tell me a joke.", p), "Humour is not appropriate") {
+	if Assess("Tell me a joke.", p).HumourAllowed || !strings.Contains(ResponseGuidance("Tell me a joke.", p), "without jokes or teasing") {
 		t.Fatal("direct invitation overrode the user's disabled humour setting")
 	}
 	if Assess("What should I cook?", p).HumourAllowed {
@@ -87,17 +164,20 @@ func TestCurrentTurnInvitationDoesNotOverrideExplicitHumourOff(t *testing.T) {
 
 func TestGreetingReflectsDefaultWitAndRespectsSeriousContextAndPreferences(t *testing.T) {
 	p := DefaultPreferences()
-	if got := GreetingGuidance("Greet me briefly.", p); !strings.Contains(got, "fresh, light observation") || !strings.Contains(got, "a joke is optional") {
-		t.Fatalf("default opening lacks personality: %s", got)
+	if got := GreetingGuidance("Hi", p); !strings.Contains(got, "Greet the user warmly in ordinary language") ||
+		strings.Contains(got, "fresh, light observation") || strings.Contains(got, "mischief") {
+		t.Fatalf("default opening should be warm without manufacturing a joke: %s", got)
 	}
 	for _, text := range []string{"My father died. Just listen.", "Please be serious."} {
 		p.Humour = HumourFrequent
-		if got := GreetingGuidance(text, p); strings.Contains(got, "PADI wit in the first line") || !strings.Contains(got, "Humour is not appropriate") {
+		if got := GreetingGuidance(text, p); strings.Contains(got, "PADI wit in the first line") ||
+			!strings.Contains(got, "without jokes or teasing") {
 			t.Fatalf("greeting ignored serious context: %s", got)
 		}
 	}
 	p.Humour = HumourOff
-	if got := GreetingGuidance("Greet me briefly.", p); !strings.Contains(got, "warm, attentive, and personable") || strings.Contains(got, "PADI wit in the first line") {
+	if got := GreetingGuidance("Hi", p); !strings.Contains(got, "warm and conversational") ||
+		!strings.Contains(got, "without jokes or teasing") || strings.Contains(got, "PADI wit in the first line") {
 		t.Fatalf("humour off erased warmth or permitted jokes: %s", got)
 	}
 }
@@ -106,12 +186,82 @@ func TestCasualSharingIsNotTreatedAsTroubleshootingEvenWithHumourOff(t *testing.
 	for _, humour := range []HumourPreference{HumourOff, HumourOccasional} {
 		p := DefaultPreferences()
 		p.Humour = humour
-		if got := ResponseGuidance("I opened the fridge three times and dinner hasn't appeared.", p); !strings.Contains(got, "Respond for connection") {
-			t.Fatalf("casual statement invited invented technical advice: %s", got)
+		for _, userText := range []string{
+			"I opened the fridge three times and dinner hasn't appeared.",
+			"I have 37 browser tabs open and can't find the one I need.",
+			"The bus is late again. I've been waiting here for ages.",
+		} {
+			if got := ResponseGuidance(userText, p); !strings.Contains(got, "sharing a moment, not asking for fixes") ||
+				!strings.Contains(got, "don't pivot to troubleshooting") {
+				t.Fatalf("casual statement invited invented technical advice: %s", got)
+			}
 		}
-		if got := ResponseGuidance("Please help me fix my fridge.", p); strings.Contains(got, "Respond for connection") {
+		if got := ResponseGuidance("Please help me fix my fridge.", p); strings.Contains(got, "sharing a moment, not asking for fixes") {
 			t.Fatalf("practical request was treated as banter: %s", got)
 		}
+	}
+	guidance := ResponseGuidance("I left my coffee on the counter again. No joke, please; I just wanted to tell someone.", Preferences{Humour: HumourOff})
+	if !strings.Contains(guidance, "sharing a moment, not asking for fixes") ||
+		!strings.Contains(guidance, "Leave space for them instead of offering fixes") {
+		t.Fatalf("politeness marker misclassified a casual share as a request: %s", guidance)
+	}
+}
+
+func TestReciprocalSmallTalkGetsARealConversationResponse(t *testing.T) {
+	for _, test := range []struct {
+		text     string
+		humour   HumourPreference
+		expected string
+	}{
+		{"Fine and you?", HumourOccasional, "A touch of wit may fit"},
+		{"I'm good, how about you?", HumourSubtle, "Keep any wit understated"},
+		{"How are you?", HumourFrequent, "A quick, fresh playful observation"},
+		{"What about yourself?", HumourOff, "entirely non-jokey"},
+	} {
+		guidance := ResponseGuidance(test.text, Preferences{Humour: test.humour})
+		if !strings.Contains(guidance, "warm companion, not a service agent") ||
+			!strings.Contains(guidance, "Respond to the social connection") ||
+			!strings.Contains(guidance, test.expected) {
+			t.Errorf("%q did not receive preference-aware social guidance: %s", test.text, guidance)
+		}
+	}
+}
+
+func TestConversationBudgetsKeepSocialTurnsBriefWithoutLimitingSeriousOrRequestedHelp(t *testing.T) {
+	preferences := DefaultPreferences()
+	for _, test := range []struct {
+		text string
+		want int
+	}{
+		{"Fine and you?", 96},
+		{"I can't find the tab.", 256},
+		{"I finally finished my work.", 256},
+		{"My father died yesterday.", 0},
+		{"Today was stressful.", 0},
+		{"Can you help me find the missing tab?", 0},
+	} {
+		if got := RecommendedOutputTokens(test.text, preferences); got != test.want {
+			t.Errorf("%q output budget = %d, want %d", test.text, got, test.want)
+		}
+	}
+}
+
+func TestContinuityGuidanceUsesActualRecentOpenings(t *testing.T) {
+	if got := ContinuityGuidance(nil); got != "" {
+		t.Fatalf("empty history got guidance: %q", got)
+	}
+	got := ContinuityGuidance([]string{"Sounds like a long day.", "Ah, the tabs have multiplied."})
+	if !strings.Contains(got, `"sounds like"`) || !strings.Contains(got, `"ah the"`) ||
+		!strings.Contains(got, "do not recycle their joke or central image") {
+		t.Fatalf("continuity guidance did not reflect recent replies: %s", got)
+	}
+}
+
+func TestSeriousReciprocalQuestionDoesNotOverrideEmpathy(t *testing.T) {
+	preferences := DefaultPreferences()
+	guidance := ResponseGuidance("My father died yesterday. How are you?", preferences)
+	if !strings.Contains(guidance, "empathetic tone") || strings.Contains(guidance, "friendly small talk") {
+		t.Fatalf("serious context was replaced by small-talk guidance: %s", guidance)
 	}
 }
 

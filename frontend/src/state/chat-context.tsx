@@ -5,7 +5,7 @@ import { usePersistentState } from '@/hooks/use-persistent-state';
 import { APIError, sendChat, streamVoiceChat, submitResponseFeedback } from '@/lib/api';
 import { hasBackend } from '@/lib/config';
 import { chatContext } from '@/lib/chat-context';
-import { greetingOpening, greetingRequest } from '@/lib/greeting';
+import { greetingRequest } from '@/lib/greeting';
 import { clearSession, readSession, subscribeSession } from '@/lib/session';
 import type { Message, ResponseRating } from '@/types';
 
@@ -21,12 +21,10 @@ function useChatState() {
   const [sendError, setSendError] = useState<string | null>(null);
   const active = useRef<AbortController | null>(null);
   const epoch = useRef(0);
-  const lastOpening = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     const unsubscribe = subscribeSession(() => {
       epoch.current++;
-      lastOpening.current = undefined;
       active.current?.abort();
       setSendError(null);
     });
@@ -124,10 +122,7 @@ function useChatState() {
     performSend(text, expectedUserID, true, signal, languageCode, onDelta, onStart), [performSend]);
   const greet = useCallback((expectedUserID: string, languageCode = 'en-NG', signal?: AbortSignal,
     onDelta?: (delta: string) => void) => {
-    return performSend(greetingRequest(languageCode, lastOpening.current), expectedUserID, !!signal, signal, languageCode, onDelta, undefined, true).then(result => {
-      if (result.status === 'sent' && result.reply) lastOpening.current = greetingOpening(result.reply);
-      return result;
-    });
+    return performSend(greetingRequest(), expectedUserID, !!signal, signal, languageCode, onDelta, undefined, true);
   }, [performSend]);
   const rateResponse = useCallback(async (messageID: string, rating: ResponseRating) => {
     const message = latest.current.find(item => item.id === messageID);

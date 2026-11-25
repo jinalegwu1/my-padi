@@ -16,21 +16,21 @@ An AI provider does not independently own or control those features.
 
 | Provider | Routing role | Responsibility |
 | --- | --- | --- |
-| Google Gemini | Primary | Main intelligence for general conversation and supported multimodal interactions. |
-| Groq | Fast | Preferred path for eligible lightweight tasks when a configured model is suitable. |
-| Z.ai | Reasoning | Preferred path for eligible complex reasoning and multi-step tasks when a configured model is suitable. |
-| OpenRouter | Backup | Fallback path using a specifically configured model when a preferred provider is temporarily unavailable. |
+| Groq | Primary and fast | First provider attempted for text requests. |
+| OpenRouter | Secondary | Second provider attempted when Groq fails. |
+| Z.ai | Tertiary and reasoning-capable | Final configured text fallback after Groq and OpenRouter fail. |
+| Google Gemini | Optional, not in current route | Available only if explicitly configured and supported by the relevant integration. |
 
 These are routing responsibilities, not fixed model selections. Model IDs,
 free-tier access, capability, rate limits, and terms must be checked before
 enabling a model. Free access and quotas may change. Do not assume that every
 provider or model is always free.
 
-## Google Gemini — main intelligence and multimodal assistant
+## Google Gemini — optional model capability
 
-**Position:** Primary AI provider  
-**Main responsibility:** Understand users and handle general intelligent
-interactions.
+**Position:** Not configured in the current route
+**Potential responsibility:** General intelligence or supported multimodal
+interactions only when explicitly enabled and verified.
 
 ### Everyday conversations
 
@@ -112,7 +112,7 @@ adapter.
 ### Backup and availability
 
 - OpenRouter can be configured as the backup model in Go's routing settings.
-- The router can try another configured candidate after retryable failures,
+- The router can try another configured candidate after provider failures,
   including a model-not-found response (HTTP 404).
 - If no candidate succeeds, the error is returned to the calling Go service;
   the model must not silently change to an unconfigured choice.
@@ -143,13 +143,11 @@ Go's separate PADI-side usage caps are documented below.
 
 ### Fast responses
 
-- Handle lightweight conversations, simple questions, short instructions,
-  quick explanations, and straightforward requests.
-- Prefer Groq for messages explicitly marked simple and for extraction,
-  classification, summarisation, and text-processing tasks when a fast model
-  is configured.
-- Leave complex reasoning on the configured reasoning route rather than
-  forcing it through a lightweight model.
+- Handle general PADI text conversations as the configured primary route.
+- Also handle explicitly task-labeled lightweight work such as extraction,
+  classification, summarisation, and text processing.
+- Use the same provider order for complex requests; if reached, Z.ai receives
+  the task metadata needed to enable its reasoning mode.
 
 ### Classification and intent
 
@@ -180,11 +178,11 @@ Go's separate PADI-side usage caps are documented below.
 - Respect provider rate limits and bounded retries. A free tier is limited and
   must not be treated as unlimited processing.
 
-## Z.ai (GLM-4.7-Flash) — reasoning, planning, and technical assistance
+## Z.ai (GLM-4.7-Flash) — third fallback and reasoning capability
 
-**Position:** Specialist reasoning provider  
-**Main responsibility:** Handle selected tasks that benefit from deeper
-analysis and structured thinking.
+**Position:** Third configured text fallback
+**Main responsibility:** Handle text requests after failures from
+Groq and OpenRouter, including requests that benefit from deeper reasoning.
 
 ### Advanced reasoning and decisions
 
@@ -232,11 +230,13 @@ analysis and structured thinking.
   appropriate validation, and no response should be described as verified
   solely because another model reviewed it.
 
-Z.ai can be selected as the reasoning route through
-`PADI_AI_REASONING_MODEL`. Go routes explicit `reasoning`, `planning`,
+Z.ai is configured through `PADI_AI_REASONING_MODEL` as the final fallback
+after `PADI_AI_PRIMARY_MODEL` and `PADI_AI_BACKUP_MODEL` fail. Task labels no
+longer select Z.ai ahead of those providers; when a request reaches Z.ai, the
+adapter can still enable its reasoning behavior for `reasoning`, `planning`,
 `technical`, `decision_support`, `complex_analysis`, `learning`, and
-`quality_review` tasks to that configured model. Complex requests also prefer
-the reasoning route. The selected model is **GLM-4.7-Flash**, API ID
+`quality_review` tasks and complex requests. The selected model is
+**GLM-4.7-Flash**, API ID
 `glm-4.7-flash`, using `ZAI_API_KEY` and the standard endpoint
 `https://api.z.ai/api/paas/v4/chat/completions`. Z.ai
 [lists this model as free](https://docs.z.ai/guides/overview/pricing).
@@ -255,18 +255,19 @@ select arbitrary models.
 
 | Request type | Preferred route |
 | --- | --- |
-| Normal conversation and personal-assistant questions | Gemini primary |
-| Image understanding | Gemini only when the model and input integration support it |
-| Quick/simple questions, classification, and conversation summaries | Groq fast route |
-| Complex reasoning, technical analysis, and complex planning | Z.ai reasoning route |
+| Normal conversation and personal-assistant questions | Groq → OpenRouter → Z.ai on provider failures |
+| Short conversation or small talk | Groq → OpenRouter → Z.ai on provider failures |
+| Image understanding | Only a configured model whose input integration supports it |
+| Classification, extraction, text-processing, and conversation summaries | Groq → OpenRouter → Z.ai on provider failures |
+| Complex reasoning, technical analysis, and complex planning | Groq → OpenRouter → Z.ai on provider failures |
 | Alternative model | Exact model configured through OpenRouter |
 | Provider failure | Go tries other configured and approved role models |
 
-For example, Go may choose Gemini for an ordinary daily-planning conversation,
-or Z.ai for an explicitly classified complex business decision. Groq can
-classify a request when a trusted service specifically asks it to do so, but
-classification is not currently run automatically on every chat message.
-Provider fallback does not change PADI's identity or freely discover models.
+Task and complexity labels do not change this provider order. Groq is attempted
+first; OpenRouter and then Z.ai are tried after provider failures. Transient
+failures may retry the same model within its configured limit. Classification is not currently run automatically on every chat
+message. Provider fallback does not change PADI's identity or freely discover
+models.
 
 Every provider receives the same shared PADI system instructions from Go,
 alongside the request's application context. The instructions cover identity,
@@ -382,10 +383,10 @@ configured AI provider. Provider data-retention policies still require review.
 
 | Feature | Responsibility |
 | --- | --- |
-| Daily conversation, check-ins, emotional awareness, personal assistance | Gemini, when connected and configured |
-| Learning and explanations | Gemini or Z.ai, selected by task |
-| Complex planning and technical explanations | Z.ai |
-| Fast classification and conversation summaries | Groq, when explicitly requested by Go |
+| Daily conversation, check-ins, emotional awareness, personal assistance | Groq → OpenRouter → Z.ai |
+| Learning and explanations | Groq → OpenRouter → Z.ai |
+| Complex planning and technical explanations | Groq → OpenRouter → Z.ai |
+| Fast classification and conversation summaries | Groq → OpenRouter → Z.ai |
 | Image understanding | Gemini only after multimodal request support is implemented |
 | Alternative models and AI fallback | Go router with approved configured models |
 | Memory search | Future Python retrieval service with PostgreSQL |
@@ -449,16 +450,16 @@ AI model should interpret it, not invent it.
 - Real disposable-PostgreSQL integration tests passed for migrations,
   auth/session and usage ledger paths, transaction rollback, all four budget
   caps, and concurrent requests. See [the quota verification results](postgresql-quota-verification.md).
-- Groq is selected by the fast routing role for explicitly classified
-  lightweight tasks and simple requests when configured. Structured JSON mode
-  is available for supported models; the router rejects invalid JSON before
-  returning a response.
-- Z.ai is selected through the reasoning role for explicit reasoning,
+- Groq is the configured primary for PADI text requests. OpenRouter is the
+  second candidate and Z.ai is the third candidate after provider failures;
+  structured JSON mode is available for supported models and invalid JSON is
+  rejected before returning a response.
+- Z.ai retains its reasoning behavior when reached for explicit reasoning,
   planning, technical, decision-support, complex-analysis, learning, and
   quality-review tasks, as well as requests marked complex.
 - The Go router injects shared PADI system instructions for each provider
-  request and tries configured routing roles as fallbacks. HTTP 429 errors
-  trigger fallback instead of retrying the rate-limited provider.
+  request and tries configured routing roles in order. HTTP 429 errors trigger
+  fallback instead of retrying the rate-limited provider.
 - These task labels are routing metadata, not automatic model classification.
   The application must assign them deliberately. There is no project/task
   manager, code execution or patching workflow, multi-document upload

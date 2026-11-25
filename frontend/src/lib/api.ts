@@ -176,7 +176,7 @@ export function sendChat(
 ): Promise<{ reply: string; memory_revision: number }> {
   return requestJSON('/v1/chat', { messages, memory_revision: memoryRevision, delivery, voice_context: voiceContext,
     ...(greeting ? { greeting: true } : {}),
-    ...(delivery === 'voice' && voiceLanguageSupported && languageCode ? {language:languageCode} : {}),
+    ...(languageCode && (greeting || delivery === 'voice' && voiceLanguageSupported) ? { language: languageCode } : {}),
   }, { token, timeoutMs: 155_000, signal });
 }
 
@@ -296,7 +296,7 @@ export function streamVoiceChat(
       xhr.send(JSON.stringify({
         messages, memory_revision: memoryRevision, delivery: 'voice', stream: true, voice_context: voiceContext,
         ...(greeting ? { greeting: true } : {}),
-        ...(voiceLanguageSupported ? { language: languageCode } : {}),
+        ...(languageCode && (greeting || voiceLanguageSupported) ? { language: languageCode } : {}),
       }));
     } catch (error) { finish(error instanceof Error ? error : new Error('The live voice request could not be sent.')); }
   });

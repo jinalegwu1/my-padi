@@ -91,7 +91,9 @@ func TestVoiceDeliveryUsesSpokenStyleAndInterruptedContext(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer test-token")
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
-	if response.Code != 200 || generator.request.Messages[0].Role != ai.RoleSystem || !strings.Contains(generator.request.Messages[0].Content, "spoken conversation") || !strings.Contains(generator.request.Messages[0].Content, `"spoken_prefix":"First sentence."`) {
+	if response.Code != 200 || generator.request.Messages[0].Role != ai.RoleSystem ||
+		!strings.Contains(generator.request.Messages[0].Content, "selected conversation language") ||
+		!strings.Contains(generator.request.Messages[0].Content, `"spoken_prefix":"First sentence."`) {
 		t.Fatal("voice delivery or interrupted context missing")
 	}
 	if !generator.request.Voice {

@@ -8,7 +8,7 @@ function speech(overrides = {}) {
   const api = {
     synthesiseSpeech: async (...args) => {
       synthesisCalls.push(args);
-      return { audio_base64: 'generated-audio' };
+      return { audio_base64: args[1] };
     },
     ...overrides.api,
   };
@@ -18,16 +18,15 @@ function speech(overrides = {}) {
     playStandaloneSpeech: async (...args) => { playbackCalls.push(args); args[2](); },
     ...overrides.playback,
   };
+  const voiceAudio = loadTS('src/lib/voice-audio.ts', {
+    'react-native': { Platform: { OS: 'web' } },
+    'expo-file-system': {},
+  });
   const module = loadTS('src/lib/chat-response-speech.ts', {
     '@/lib/api': api,
-    '@/lib/session': { readSession: async () => ({ token: 'account-token' }), ...overrides.session },
+    '@/lib/session': { readSession: async () => ({ token: 'account-token', user: { id: 'account-id' } }), ...overrides.session },
     '@/lib/standalone-speech': playback,
-    '@/lib/voice-audio': {
-      speechSegments: text => loadTS('src/lib/voice-audio.ts', {
-        'react-native': { Platform: { OS: 'web' } },
-        'expo-file-system': {},
-      }).speechSegments(text),
-    },
+    '@/lib/voice-audio': voiceAudio,
   });
   return { module, synthesisCalls, playbackCalls };
 }
@@ -50,12 +49,85 @@ test('text chat synthesis uses the exact AI reply and selected voice settings', 
   assert.deepEqual(synthesisCalls[0].slice(0, 3), ['account-token', text, 'amara']);
   assert.equal(synthesisCalls[0][3], 0.85);
   assert.equal(synthesisCalls[0][5], 'fr-FR');
-  assert.equal(playbackCalls[0][0], 'generated-audio');
+  assert.equal(playbackCalls[0][0], text);
   assert.equal(started, 1);
 });
 
+test('the original response and three replays synthesize once and replay cached audio', async t => {
+  const requests = [];
+  const startLatenciesMs = [];
+  const { module, playbackCalls } = speech({
+    api: {
+      synthesiseSpeech: async (...args) => {
+        requests.push(args);
+        await new Promise(resolve => setTimeout(resolve, 35));
+        return { audio_base64: 'generated-audio' };
+      },
+    },
+  });
+  const playOnce = async () => {
+    const startedAt = performance.now();
+    const task = module.createChatResponseSpeech({
+      text: 'A response to replay.',
+      voiceId: 'amara',
+      voiceRate: 1,
+      languageCode: 'en-NG',
+      signal: new AbortController().signal,
+      onStart: () => startLatenciesMs.push(performance.now() - startedAt),
+    });
+    await task.play();
+  };
+
+  await playOnce();
+  await playOnce();
+  await playOnce();
+  await playOnce();
+
+  assert.equal(requests.length, 1, 'Only the original playback should call the TTS API.');
+  assert.equal(playbackCalls.length, 4, 'Original playback and all three replays should play audio.');
+  assert.equal(startLatenciesMs.length, 4);
+  assert.ok(startLatenciesMs[0] >= 30, 'The first playback includes the controlled TTS delay.');
+  assert.ok(startLatenciesMs.slice(1).every(latency => latency < startLatenciesMs[0]),
+    `Replays should start faster than the original: ${startLatenciesMs.map(value => value.toFixed(1)).join(', ')} ms`);
+  t.diagnostic(`playback-start ms (original, replay 1-3): ${startLatenciesMs.map(value => value.toFixed(1)).join(', ')}; TTS requests: ${requests.length}`);
+});
+
+test('overlapping play calls on one response share a single playback request', async () => {
+  const requests = [];
+  const { module, playbackCalls } = speech({
+    api: {
+      synthesiseSpeech: async (...args) => {
+        requests.push(args);
+        return { audio_base64: 'generated-audio' };
+      },
+    },
+    playback: {
+      playStandaloneSpeech: async (...args) => {
+        playbackCalls.push(args);
+        args[2]();
+        await new Promise(resolve => setTimeout(resolve, 15));
+      },
+    },
+  });
+  const task = module.createChatResponseSpeech({
+    text: 'A response.',
+    voiceId: 'amara',
+    voiceRate: 1,
+    languageCode: 'en-NG',
+    signal: new AbortController().signal,
+    onStart() {},
+  });
+
+  const first = task.play();
+  const duplicate = task.play();
+  assert.equal(duplicate, first);
+  await Promise.all([first, duplicate]);
+  assert.equal(requests.length, 1);
+  assert.equal(playbackCalls.length, 1);
+});
+
 test('long single-sentence replies are sent in bounded segments without dropping words', async () => {
-  const { module, synthesisCalls } = speech();
+  const { module, synthesisCalls, playbackCalls } = speech();
   const text = Array(150).fill('PADI keeps every word in this unusually long response').join(' ');
   const controller = new AbortController();
   await module.createChatResponseSpeech({
@@ -70,7 +142,7 @@ test('long single-sentence replies are sent in bounded segments without dropping
   const segments = synthesisCalls.map(call => call[1]);
   assert.ok(segments.length > 1);
   assert.ok(segments.every(segment => segment.length <= 650));
-  assert.equal(segments.join(' '), text);
+  assert.equal(playbackCalls.map(call => call[0]).join(' '), text);
 });
 
 test('pause during synthesis holds the next audio segment until resume', async () => {

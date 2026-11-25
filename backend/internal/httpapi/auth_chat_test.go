@@ -184,8 +184,8 @@ func TestChatLearnsFromFeedbackAcrossConversationsWithoutCrossingAccounts(t *tes
 		wantFrequent := conversation == 3
 		if chatResponse.Code != http.StatusOK || feedback.calls != conversation ||
 			feedback.userID != "owner" ||
-			!strings.Contains(generator.request.StyleGuidance, "Humour is welcome") ||
-			strings.Contains(generator.request.StyleGuidance, "Use wit more often") != wantFrequent {
+			strings.Contains(generator.request.StyleGuidance, "A small bit of wit is welcome") != !wantFrequent ||
+			strings.Contains(generator.request.StyleGuidance, "Use light wit more often") != wantFrequent {
 			t.Fatalf("conversation %d: status=%d queries=%d user=%q guidance=%q",
 				conversation, chatResponse.Code, feedback.calls, feedback.userID, generator.request.StyleGuidance)
 		}
@@ -194,8 +194,8 @@ func TestChatLearnsFromFeedbackAcrossConversationsWithoutCrossingAccounts(t *tes
 	distressResponse := send(ownerRouter, http.MethodPost, "/v1/chat",
 		`{"messages":[{"role":"user","content":"My mother died and I feel lost."}]}`)
 	if distressResponse.Code != http.StatusOK ||
-		!strings.Contains(generator.request.StyleGuidance, "Humour is not appropriate") ||
-		strings.Contains(generator.request.StyleGuidance, "Humour is welcome") {
+		!strings.Contains(generator.request.StyleGuidance, "without jokes or teasing") ||
+		strings.Contains(generator.request.StyleGuidance, "A small bit of wit is welcome") {
 		t.Fatalf("learned humour overrode distress guidance: status=%d guidance=%q",
 			distressResponse.Code, generator.request.StyleGuidance)
 	}
@@ -212,7 +212,7 @@ func TestChatLearnsFromFeedbackAcrossConversationsWithoutCrossingAccounts(t *tes
 	otherResponse := send(otherRouter, http.MethodPost, "/v1/chat",
 		`{"messages":[{"role":"user","content":"Can you explain how rain forms?"}]}`)
 	if otherResponse.Code != http.StatusOK || feedback.userID != "other" ||
-		strings.Contains(otherGenerator.request.StyleGuidance, "Use wit more often") {
+		strings.Contains(otherGenerator.request.StyleGuidance, "Use light wit more often") {
 		t.Fatalf("another account inherited feedback: status=%d user=%q guidance=%q",
 			otherResponse.Code, feedback.userID, otherGenerator.request.StyleGuidance)
 	}
@@ -283,8 +283,8 @@ func TestChatAddsContextualPersonalityGuidanceWithoutLabelingUsers(t *testing.T)
 		message string
 		want    string
 	}{
-		{message: "I'm bored, please make me laugh.", want: "use a playful tone. Humour is welcome"},
-		{message: "My mother died and I feel lost.", want: "use an empathetic tone. Humour is not appropriate"},
+		{message: "I'm bored, please make me laugh.", want: "Use a playful tone. The user is inviting play"},
+		{message: "My mother died and I feel lost.", want: "Use an empathetic tone. Respond to what the user actually said"},
 	} {
 		generator := &testChatGenerator{}
 		router := NewRouter(nil, Dependencies{
@@ -298,8 +298,35 @@ func TestChatAddsContextualPersonalityGuidanceWithoutLabelingUsers(t *testing.T)
 		router.ServeHTTP(response, request)
 		if response.Code != http.StatusOK ||
 			!strings.Contains(generator.request.StyleGuidance, test.want) {
-			t.Fatalf("response = %d %s, guidance = %+v", response.Code, response.Body.String(), generator.request.Messages)
+			t.Fatalf("response = %d %s, guidance = %q", response.Code, response.Body.String(), generator.request.StyleGuidance)
 		}
+	}
+}
+
+func TestChatGreetingSendsNaturalInputAndSelectedLanguageAsContext(t *testing.T) {
+	generator := &testChatGenerator{}
+	router := NewRouter(nil, Dependencies{
+		Auth: testAuthAPI{user: auth.User{ID: "user-1"}},
+		Chat: generator,
+	})
+	body, _ := json.Marshal(map[string]any{
+		"greeting": true,
+		"language": "fr-FR",
+		"messages": []map[string]string{{"role": "user", "content": "Greet me naturally in French."}},
+	})
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat", strings.NewReader(string(body)))
+	request.Header.Set("Authorization", "Bearer valid-session-token")
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+	lastMessage := generator.request.Messages[len(generator.request.Messages)-1]
+	if lastMessage.Role != ai.RoleUser || lastMessage.Content != "Hi" {
+		t.Fatalf("greeting input = %+v, want a real Hi turn", lastMessage)
+	}
+	if len(generator.request.Messages) == 0 || !strings.Contains(generator.request.Messages[0].Content, "French") {
+		t.Fatalf("selected language was not retained as model context: %+v", generator.request.Messages)
 	}
 }
 

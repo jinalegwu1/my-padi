@@ -79,8 +79,7 @@ test('first text greeting uses real chat guidance without displaying a synthetic
     await act(async () => { assert.equal((await f.text.greet('a', 'fr-FR')).status, 'sent'); });
     assert.equal(f.calls[0][4], 'text');
     assert.equal(f.calls[0][7], true);
-    assert.match(f.calls[0][1][0].content, /spontaneous/);
-    assert.match(f.calls[0][1][0].content, /fr-FR/);
+    assert.equal(f.calls[0][1][0].content, 'Hi');
     assert.equal(f.text.messages.length, 1);
     assert.equal(f.text.messages[0].role, 'padi');
     assert.equal(f.text.messages[0].backendUserID, 'a');
@@ -111,18 +110,19 @@ test('voice greeting resumes existing context through the voice stream, and rese
   } finally { await f.close(); }
 });
 
-test('new chat varies the greeting opening and account changes clear that hint', async () => {
+test('new chats do not inject previous greeting openings or account-specific hints', async () => {
   const f = await fixture();
   try {
     f.backend(async () => ({ reply: 'Hey! What are we exploring today?', memory_revision: 0 }));
     await act(async () => { await f.text.greet('a'); });
+    const firstGreetingPrompt = f.calls.at(-1)[1][0].content;
     await act(async () => { f.text.reset(); });
     f.backend(async () => ({ reply: 'Hello! Fresh start.', memory_revision: 0 }));
     await act(async () => { await f.text.greet('a'); });
-    assert.match(f.calls.at(-1)[1][0].content, /different word from hey/);
+    assert.equal(f.calls.at(-1)[1][0].content, firstGreetingPrompt);
     await f.switchAccount();
     await act(async () => { await f.text.greet('b'); });
-    assert.doesNotMatch(f.calls.at(-1)[1][0].content, /different word from/);
+    assert.equal(f.calls.at(-1)[1][0].content, firstGreetingPrompt);
   } finally { await f.close(); }
 });
 

@@ -213,7 +213,7 @@ func TestSharedPersonalityInstructionsReachEveryProviderAdapter(t *testing.T) {
 	}
 	router := testRouter(t, models, adapters, RoutingConfig{PrimaryModel: models[0].ID}, nil)
 	request := Request{
-		StyleGuidance: "Current-turn response guidance: use an empathetic tone. Humour is not appropriate for this turn.",
+		StyleGuidance: "Use an empathetic tone. Respond to what the user actually said; be warm and specific without jokes or teasing.",
 		Messages: []Message{
 			{Role: RoleSystem, Content: "Respond in the user's selected language."},
 			{Role: RoleUser, Content: "My mother died and I feel lost."},
@@ -230,7 +230,7 @@ func TestSharedPersonalityInstructionsReachEveryProviderAdapter(t *testing.T) {
 	}
 	if !strings.Contains(expectedSystem, "one consistent AI companion") ||
 		!strings.Contains(expectedSystem, "Never joke about a user's suffering, grief, trauma, health, identity") ||
-		!strings.Contains(expectedSystem, "Humour is not appropriate for this turn") {
+		!strings.Contains(expectedSystem, "without jokes or teasing") {
 		t.Fatal("shared system instruction does not include required personality and distress rules")
 	}
 }
@@ -287,6 +287,60 @@ func TestProviderDefaultEndpoints(t *testing.T) {
 			}
 			if response.Content != "Hello" {
 				t.Errorf("response content = %q, want Hello", response.Content)
+			}
+		})
+	}
+}
+
+func TestOpenRouterDisablesReasoningOnlyForShortNemotronReplies(t *testing.T) {
+	tests := []struct {
+		name        string
+		model       string
+		maxTokens   int
+		wantDisable bool
+	}{
+		{name: "short configured Nemotron reply", model: openRouterShortReplyReasoningModel, maxTokens: 96, wantDisable: true},
+		{name: "budget boundary", model: openRouterShortReplyReasoningModel, maxTokens: 256, wantDisable: true},
+		{name: "larger configured Nemotron reply", model: openRouterShortReplyReasoningModel, maxTokens: 257},
+		{name: "other OpenRouter model", model: "vendor/other-model", maxTokens: 96},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("PADI_TEST_OPENROUTER_KEY", "provider-secret")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var payload map[string]json.RawMessage
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Errorf("decode request: %v", err)
+				}
+				raw, exists := payload["reasoning"]
+				if exists != test.wantDisable {
+					t.Errorf("reasoning present = %t, want %t", exists, test.wantDisable)
+				}
+				if exists {
+					var reasoning struct {
+						Enabled bool `json:"enabled"`
+					}
+					if err := json.Unmarshal(raw, &reasoning); err != nil {
+						t.Errorf("decode reasoning setting: %v", err)
+					}
+					if reasoning.Enabled {
+						t.Error("short Nemotron reply should disable reasoning")
+					}
+				}
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Hello"}}]}`))
+			}))
+			defer server.Close()
+
+			adapter := openRouterProvider{client: server.Client()}
+			_, err := adapter.Generate(context.Background(), ModelConfig{
+				Provider: ProviderOpenRouter, Model: test.model, Endpoint: server.URL,
+				APIKeyEnv: "PADI_TEST_OPENROUTER_KEY",
+			}, Request{
+				Messages: []Message{{Role: RoleUser, Content: "Hi"}},
+				MaxOutputTokens: test.maxTokens,
+			})
+			if err != nil {
+				t.Fatalf("Generate() error = %v", err)
 			}
 		})
 	}

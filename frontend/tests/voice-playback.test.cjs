@@ -9,9 +9,10 @@ test('one tap unlocks subsequent audio replies and interruption stops the curren
   const contexts=[], sources=[];
   global.AudioContext=class {
     state='suspended';destination={};
+    decodes=0;
     constructor(){contexts.push(this);}
     async resume(){this.state='running';}
-    async decodeAudioData(){return {};}
+    async decodeAudioData(){this.decodes++;return {length:1,numberOfChannels:1};}
     createBufferSource(){
       const source={connect(){},disconnect(){this.disconnected=true;},start(){this.started=true;},stop(){this.stopped=true;this.onended?.();}};
       sources.push(source);return source;
@@ -30,6 +31,7 @@ test('one tap unlocks subsequent audio replies and interruption stops the curren
     const next=playVoice('AAAA',new AbortController().signal,()=>started++);
     await new Promise(setImmediate);sources[1].onended();await next;
     assert.equal(started,2);assert.equal(contexts.length,1);
+    assert.equal(contexts[0].decodes,1,'Replaying the same audio should reuse its decoded buffer.');
   } finally {global.AudioContext=original;}
 });
 
