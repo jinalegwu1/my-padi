@@ -1,32 +1,31 @@
 # PADI Python Voice Engine
 
-The active pipeline is microphone audio → faster-whisper → Agnes reply text →
-Python local speech → WAV playback. Agnes 3.0 Flash generates words, not audio.
-The local eSpeak NG shared library generates speech without a neural/cloud TTS
-model, Gemini/Groq speech credentials, or outbound speech requests. The installed
-faster-whisper model remains the incoming speech recognizer.
+Live conversations send microphone PCM to a persistent Vosk recognizer through
+the authenticated Go WebSocket. English and Pidgin captions revise in place. The
+configured chat model writes the reply. Two Nigerian-accented VITS checkpoints
+synthesize Nigerian English and Pidgin locally. PADI uses the male checkpoint
+and Ada uses the female one. The player receives 24 kHz mono audio in order.
+Other installed output locales continue to use eSpeak NG. Uploaded recordings
+and input locales outside the live recognizer use Faster-Whisper.
 
-Set `PADI_PYTHON_VOICE_ENGINE=local` (the default), `PADI_PYTHON_VOICE_ENABLED=true`
-and `PADI_STT_ENABLED=true`. An eSpeak NG shared library is required; it is already
-available in this workspace. No additional Python speech dependency is needed.
-Agnes's API key remains in Go's backend environment, never in the voice service.
+Run `npm run setup:voice` from the root to install the Python runtime, speech
+dependencies and pinned conversation models. The speech service loads the models
+from disk. The en-US Vosk checkpoint is a general English recognizer. Assess
+Pidgin, names and regional accents using actual speech. The two Nigerian-accented
+voice checkpoints support an English alphabet and accept Pidgin text. Voice and
+pronunciation acceptance requires listening in both languages.
 
-Python emits canonical 24 kHz mono 16-bit PCM WAV so the existing player,
-interruption handling and echo reference continue to work. Local speech keeps
-voice preference IDs and supports adjustable pace. Supported local locales are
-English/Nigerian English/Pidgin, French, Portuguese, Spanish, Arabic, Swahili,
-Amharic, Hindi and Mandarin. Hausa, Yoruba and Igbo speech voices are unavailable
-in the installed engine; the app reports unsupported selections rather than
-substituting another language. Incoming recognition and text replies are separate.
+For file transcription, run `services/voice/.venv/bin/python services/voice/install_model.py --model base`.
+Set `PADI_STT_ENABLED=true`, `PADI_PYTHON_VOICE_ENABLED=true`,
+`PADI_PYTHON_VOICE_ENGINE=local` and a shared private `PADI_VOICE_SERVICE_TOKEN`.
+Use `PADI_LIVE_STT_MODEL_PATH` to select a compatible local Vosk directory.
+`PADI_NIGERIAN_VOICE_DIR` points to the parent of `naija-male` and `naija-female`.
+CPU speed affects the time to first audio and whether synthesis keeps up with playback.
+After installing models, restart Python and check `/v1/voice/config` on Go.
 
-This local engine sounds synthetic and cannot reproduce Gemini's custom voice
-profile. Audio quality requires human listening; generating a valid WAV is not
-personality or voice acceptance.
-
-Run `npm run dev` from the project root. It starts the Python voice service with
-its internal token and local engine settings, without cloud speech credentials.
-The frontend sends speech to the configured Python engine, rather than forcing
-Groq speech. Python personality files and the personality export remain protected.
+Model sources are [Vosk small English](https://alphacephei.com/vosk/models),
+[Uphando Nigerian male](https://huggingface.co/Uphando-ng/naija_eng_male_accent_tts)
+and [Uphando Nigerian female](https://huggingface.co/Uphando-ng/naija_eng_female_accent_tts).
 
 ## Previous cloud speech integration (inactive with the local engine)
 
@@ -41,7 +40,7 @@ This is one of Python's three approved intelligence engines. The memory/context
 and quality/evaluation engines are separate future responsibilities.
 See [the agreed roadmap](../../docs/python-roadmap.md).
 
-## Run and test
+### Historical cloud-engine setup and verification
 
 From the project root:
 
@@ -150,7 +149,7 @@ not logged or persisted. Inputs and responses are bounded and provider errors
 are sanitised. The standard-library server is intended behind Go's private
 boundary, not as a public unauthenticated endpoint.
 
-## Incoming voice to text
+## Uploaded recordings and Faster-Whisper
 
 Open **Voice → Voice to text** in PADI. This mode records and displays recognised
 words without submitting them to chat or requesting TTS. Existing voice
@@ -260,26 +259,10 @@ Do not report those skipped checks as executed. See
 [the verification report](../../docs/incoming-voice-verification.md) for observed
 accuracy, compression, test results and deployment requirements.
 
-## Current limits
+## Device verification
 
-PADI's default voice uses a fuller, confident adult male character. The current
-development configuration selects an original Nigerian voice profile created
-from a description, without reference audio or real-person imitation. All styles
-receive conversational delivery instructions; Nigerian English and Pidgin
-receive explicit pronunciation and cadence directions. Greetings and voice
-conversations pass the selected language rather than dropping it. Public
-previews use fixed Nigerian English phrases, with Pidgin for Tunde. Voice quality
-and accent accuracy still require human listening; generated audio alone does
-not establish that a voice sounds natural.
-
-For Gemini 3.8, spoken text and delivery metadata are separate so directions
-are not read aloud. Its WAV output is validated and normalised to the same
-24 kHz mono PCM format used by Go and the app. The earlier engine's PCM output
-remains supported. No PADI usage-limit behaviour was changed during this update.
-
-Foreground conversations only. Phone echo handling requires development
-builds containing the local native module, and device verification is pending.
-Signal filtering reduces low-frequency rumble/DC; it is not a guarantee of
-isolating one speaker or removing every background noise. Speech/model quality
-and provider quotas remain practical constraints. See the
-[verification checklist](../../docs/voice-verification.md).
+Foreground voice on Android and iOS needs a development build containing the
+native capture module. Verify acoustic echo rejection, first audible speech,
+continuous playback and interruption on physical phones. The current
+[conversation protocol and timing guide](../../docs/live-voice-conversation.md)
+covers the local neural speech path.

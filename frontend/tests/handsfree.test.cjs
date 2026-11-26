@@ -31,6 +31,47 @@ test('hands-free voice automatically responds after speech ends and keeps listen
   await f.session.cancel();assert.ok(f.calls.includes('closed'));
 });
 
+test('live captions revise in place, preserve hesitation and send the final words once', async () => {
+  let partial;
+  let blocks = 0;
+  const commits = [];
+  const f = fixture({
+    openRecognition: async () => ({ begin(rate, update) {
+      assert.equal(rate, 16000); partial = update;
+      return { write() { blocks++; }, finish: async () => 'I want to visit Abuja.' };
+    } }),
+    transcribe: async () => { throw new Error('Live speech should not be uploaded again'); },
+    send: async text => { commits.push(text); return { status: 'sent', reply: 'Of course.' }; },
+  });
+  await f.session.start({greet:false});
+  f.voice(); partial('I want to');
+  for (let i=0;i<14;i++) f.frame(frame());
+  assert.equal(f.snapshot.userText,'I want to');
+  assert.deepEqual(commits,[]);
+  f.voice(); partial('I want to visit a'); partial('I want to visit Abuja');
+  assert.equal(f.snapshot.userText,'I want to visit Abuja');
+  for (let i=0;i<11;i++) f.frame(frame());
+  await tick();
+  assert.deepEqual(commits,['I want to visit Abuja.']);
+  assert.equal(f.snapshot.userText,'I want to visit Abuja.');
+  assert.ok(blocks >= 40,'Audio includes speech onset and the pre-roll');
+  partial('stale caption');
+  assert.equal(f.snapshot.userText,'I want to visit Abuja.');
+  await f.session.cancel();
+});
+
+test('a tap during playback leaves the reply playing; speaking captures a new turn', async () => {
+  const f=fixture({speak:async(_text,signal,start)=>{
+    start(); await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));
+  }});
+  await f.session.start({greet:false});
+  f.voice(); f.quiet(); await tick(); assert.equal(f.snapshot.phase,'speaking');
+  await f.session.reactToTouch(); assert.equal(f.snapshot.phase,'speaking');
+  f.echo(); assert.equal(f.snapshot.phase,'speaking');
+  f.voice(); assert.equal(f.snapshot.phase,'listening');
+  await f.session.cancel();
+});
+
 test('silence sends unpunctuated speech immediately and the next turn reuses the microphone',async()=>{
   const transcripts=['Can you help me','Thanks'];let index=0;
   const f=fixture({transcribe:async()=>transcripts[index++]});

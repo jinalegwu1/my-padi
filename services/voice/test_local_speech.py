@@ -18,7 +18,7 @@ class LocalSpeechTests(unittest.TestCase):
     @unittest.skipUnless(ctypes.util.find_library("espeak-ng"), "eSpeak NG shared library unavailable")
     def test_real_local_engine_generates_complete_canonical_audio_without_network(self):
         with patch.object(app.urllib.request, "urlopen", side_effect=AssertionError("local audio contacted network")):
-            result = app.synthesise_local("Hello. This is a complete spoken reply.", "baby", 1, "en-NG")
+            result = app.synthesise_local("Hello. This is a complete spoken reply.", "baby", 1, "en-GB")
         with wave.open(io.BytesIO(base64.b64decode(result["audio_base64"]))) as wav:
             self.assertEqual((wav.getframerate(), wav.getnchannels(), wav.getsampwidth()), (24000, 1, 2))
             self.assertGreater(wav.getnframes(), 24000)

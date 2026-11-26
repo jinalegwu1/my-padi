@@ -7,8 +7,9 @@ import { getVoiceConfiguration, transcribeAudio, type VoiceConfiguration } from 
 import { readSession, subscribeSession } from '@/lib/session';
 import { VoiceCapture } from '@/lib/voice-capture';
 import { audioUpload } from '@/lib/voice-audio';
-import { createGroqSpeechStream } from '@/lib/streaming-speech';
-import type { VoiceSnapshot } from '@/lib/voice-session';
+import { createSpeechStream } from '@/lib/streaming-speech';
+import { openLiveRecognition } from '@/lib/live-recognition';
+import type { VoiceSnapshot } from '@/lib/handsfree-session';
 import { HandsfreeSession } from '@/lib/handsfree-session';
 import { unlockVoicePlayback } from '@/lib/voice-playback';
 import { suppressPlaybackEcho } from '@/lib/voice-echo';
@@ -22,8 +23,10 @@ export function useVoiceSession() {
   const supportsGroqSpeech = voiceConfiguration?.local_speech === true
     ? voiceConfiguration.speech_languages?.includes(preferences.languageCode) === true
     : voiceConfiguration?.groq_live_speech === true && preferences.voiceRate === 1 && ['en-NG', 'en-GB', 'pcm-NG'].includes(preferences.languageCode);
-  const current = useRef({ chat, preferences, supportsGroqSpeech });
-  current.current = { chat, preferences, supportsGroqSpeech };
+  const useLiveInput = voiceConfiguration?.live_recognition_languages?.includes(preferences.languageCode) === true;
+  const useAudioChunks = voiceConfiguration?.streaming_speech_languages?.includes(preferences.languageCode) === true;
+  const current = useRef({ chat, preferences, useLiveInput, useAudioChunks });
+  current.current = { chat, preferences, useLiveInput, useAudioChunks };
   const [snapshot, setSnapshot] = useState<VoiceSnapshot & { connected: boolean }>({ phase: 'idle', connected: false, padiText: '', error: null });
   const latestSnapshot = useRef(snapshot);
   latestSnapshot.current = snapshot;
@@ -35,6 +38,8 @@ export function useVoiceSession() {
     readSession,
     capture: (frame, interrupted) => new VoiceCapture(frame, interrupted),
     filterFrame:suppressPlaybackEcho,
+    openRecognition: async (token,signal,disconnected) => current.current.useLiveInput
+      ? openLiveRecognition(token,current.current.preferences.languageCode,signal,disconnected) : null,
     transcribe: async (token, bytes, signal) => {
       const upload = audioUpload(bytes);
       try { return await transcribeAudio(token, upload.form, signal, current.current.preferences.languageCode); }
@@ -44,7 +49,7 @@ export function useVoiceSession() {
       text, accountID, signal, current.current.preferences.languageCode, onDelta, onStart),
     createSpeech: (signal, onStart, completed) => {
       const p = current.current.preferences;
-      return createGroqSpeechStream(p.voiceId,p.voiceRate,p.languageCode,signal,onStart,completed);
+      return createSpeechStream(p.voiceId,p.voiceRate,p.languageCode,signal,onStart,completed,current.current.useAudioChunks);
     },
     greet: async (signal, onText, onStart) => {
       const p = current.current.preferences;
@@ -54,7 +59,7 @@ export function useVoiceSession() {
       const speechController = new AbortController();
       const abort = () => speechController.abort();
       signal.addEventListener('abort', abort, { once: true });
-      const speech=createGroqSpeechStream(p.voiceId,p.voiceRate,p.languageCode,speechController.signal,onStart,()=>{});
+      const speech=createSpeechStream(p.voiceId,p.voiceRate,p.languageCode,speechController.signal,onStart,()=>{},current.current.useAudioChunks);
       let text = '', remainder = '';
       try {
         const result = await current.current.chat.greet(account.user.id, p.languageCode, signal, delta => {
@@ -92,11 +97,11 @@ export function useVoiceSession() {
       if (controller.signal.aborted) return;
       setVoiceConfiguration(config);
       const available = config.enabled && (config.voice_text_streaming === true || config.groq_conversation === true) &&
-        config.local_transcription === true && config.transcription_ready === true && config.natural_speech === true && (config.local_speech === true || config.groq_live_speech === true);
+        config.local_transcription === true && (config.transcription_ready === true || !!config.live_recognition_languages?.length) && config.natural_speech === true && (config.local_speech === true || config.groq_live_speech === true);
       setReady(available);
       if (!config.enabled) setConfigurationError('Local speech recognition is not enabled on this server.');
       else if (!config.voice_text_streaming && !config.groq_conversation) setConfigurationError('Voice conversations are not configured on this server.');
-      else if (!config.local_transcription || !config.transcription_ready) setConfigurationError('Local speech recognition is not ready yet. Please try again later.');
+      else if (!config.local_transcription || (!config.transcription_ready && !config.live_recognition_languages?.length)) setConfigurationError('Local speech recognition is not ready yet. Please try again later.');
       else if (!config.natural_speech) setConfigurationError('PADI’s speech is not configured on this server. Please use text chat.');
       else if (!config.local_speech && !config.groq_live_speech) setConfigurationError('Spoken replies are not configured on this server. Please use text chat.');
       else setConfigurationError(null);
@@ -120,6 +125,7 @@ export function useVoiceSession() {
     };
   }, [session]);
 
-  const selectionError=ready&&!supportsGroqSpeech?'The selected language or pace is not supported by the current voice. Choose supported voice settings or use text chat.':null;
-  return { ...snapshot, ready: ready && supportsGroqSpeech && chat.status === 'ready', configurationError:configurationError??selectionError, session, connect, chatError: chat.sendError, chatBusy: chat.isThinking };
+  const supported = supportsGroqSpeech && (useLiveInput || voiceConfiguration?.transcription_ready === true);
+  const selectionError=ready&&!supported?'The selected language or pace is not supported by the current voice. Choose supported voice settings or use text chat.':null;
+  return { ...snapshot, ready: ready && supported && chat.status === 'ready', configurationError:configurationError??selectionError, session, connect, chatError: chat.sendError, chatBusy: chat.isThinking };
 }

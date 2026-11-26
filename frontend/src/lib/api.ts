@@ -305,7 +305,58 @@ export function streamVoiceChat(
 let liveSpeechSupported = false;
 let voiceLanguageSupported = false;
 
-export type VoiceConfiguration = { local_speech?: boolean; speech_languages?: string[]; voice_text_streaming?: boolean; enabled: boolean; max_seconds: number; natural_speech?: boolean; live_speech?: boolean; language_selection?: boolean; local_transcription?: boolean; transcription_ready?: boolean; transcription_error?: string; transcription_model?: string; groq_conversation?: boolean; groq_live_speech?: boolean };
+export type VoiceConfiguration = { live_recognition_languages?: string[]; streaming_speech_languages?: string[]; local_speech?: boolean; speech_languages?: string[]; voice_text_streaming?: boolean; enabled: boolean; max_seconds: number; natural_speech?: boolean; live_speech?: boolean; language_selection?: boolean; local_transcription?: boolean; transcription_ready?: boolean; transcription_error?: string; transcription_model?: string; groq_conversation?: boolean; groq_live_speech?: boolean };
+
+/** XHR progress is available in Expo native and web, including while the
+ * response is still arriving. Only complete newline-delimited packets play. */
+export function streamSpeechAudio(token: string, text: string, style: string, rate: number, language: string,
+  signal: AbortSignal, onChunk: (wave: string) => void): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) { reject(new Error('Speech cancelled.')); return; }
+    const xhr = new XMLHttpRequest();
+    let offset = 0;
+    let done = false;
+    let chunks = 0;
+    const abort = () => xhr.abort();
+    const finish = (error?: Error) => {
+      signal.removeEventListener('abort', abort);
+      xhr.onload = xhr.onprogress = xhr.onabort = xhr.onerror = xhr.ontimeout = null;
+      if (error) reject(error); else resolve();
+    };
+    const read = () => {
+      if (xhr.status !== 200 || signal.aborted) return;
+      const raw = xhr.responseText;
+      let end = raw.indexOf('\n', offset);
+      while (end >= 0) {
+        const event = JSON.parse(raw.slice(offset, end));
+        offset = end + 1;
+        if (done) throw new Error('Unexpected audio after speech ended.');
+        if (event.done === true && chunks) done = true;
+        else if (typeof event.audio_base64 === 'string' && event.mime_type === 'audio/wav') {
+          chunks++; onChunk(event.audio_base64);
+        } else throw new Error('Invalid speech audio.');
+        end = raw.indexOf('\n', offset);
+      }
+    };
+    xhr.onprogress = () => { try { read(); } catch { finish(new Error('PADI’s speech was interrupted.')); xhr.abort(); } };
+    xhr.onload = () => {
+      try {
+        if (xhr.status !== 200) throw new APIError('PADI’s voice could not play this reply.', xhr.status, 'speech_unavailable');
+        read();
+        if (!done) throw new Error('PADI’s speech ended early.');
+        finish();
+      } catch (error) { finish(error instanceof Error ? error : new Error('Invalid speech response.')); }
+    };
+    xhr.onabort = () => finish(new Error('Speech cancelled.'));
+    xhr.onerror = xhr.ontimeout = () => finish(new Error('Could not receive PADI’s voice.'));
+    xhr.open('POST', API_URL + '/v1/voice/speak');
+    xhr.timeout = 65000;
+    xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    signal.addEventListener('abort', abort, { once: true });
+    xhr.send(JSON.stringify({ text, style, rate, language, live: true, stream: true }));
+  });
+}
 
 export async function getVoiceConfiguration(signal?: AbortSignal): Promise<VoiceConfiguration> {
   const result = await requestJSON<VoiceConfiguration>('/v1/voice/config', undefined, { method: 'GET', signal });

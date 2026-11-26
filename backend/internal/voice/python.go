@@ -147,33 +147,34 @@ const fastVoiceModel = "canopylabs/orpheus-v1-english"
 
 func (service *PythonSpeech) SupportsLocalSpeech() bool { return service.localVoice }
 
-// SpeechLanguages reads local-engine capabilities from Python, rather than
-// claiming that every application locale has an installed local voice.
-func (service *PythonSpeech) SpeechLanguages(ctx context.Context) []string {
+type SpeechLanguages struct {
+	Supported []string `json:"supported_languages"`
+	Streaming []string `json:"streaming_languages"`
+}
+
+func (service *PythonSpeech) SpeechLanguages(ctx context.Context) SpeechLanguages {
 	if !service.localVoice {
-		return nil
+		return SpeechLanguages{}
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(service.endpoint, "/synthesise")+"/health", nil)
 	if err != nil {
-		return []string{}
+		return SpeechLanguages{}
 	}
 	response, err := service.client.Do(request)
 	if err != nil {
-		return []string{}
+		return SpeechLanguages{}
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return []string{}
+		return SpeechLanguages{}
 	}
 	var state struct {
-		Speech struct {
-			Languages []string `json:"supported_languages"`
-		} `json:"speech"`
+		Speech SpeechLanguages `json:"speech"`
 	}
 	if json.NewDecoder(io.LimitReader(response.Body, 8192)).Decode(&state) != nil {
-		return []string{}
+		return SpeechLanguages{}
 	}
-	return state.Speech.Languages
+	return state.Speech
 }
 
 func (service *PythonSpeech) SupportsGroqLiveSpeech() bool {
@@ -308,21 +309,7 @@ func (service *PythonSpeech) synthesise(ctx context.Context, text, style string,
 	if err := service.limiter.Reserve(ctx, provider, 1, ai.FreeUsageLimits(), reservedAt); err != nil {
 		return Audio{}, err
 	}
-	payload := map[string]any{"text": text, "style": style, "rate": rate, "language": language}
-	if model != "" {
-		payload["model"] = model
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return Audio{}, err
-	}
-	request, err := http.NewRequestWithContext(ctx, "POST", service.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return Audio{}, err
-	}
-	request.Header.Set("Authorization", "Bearer "+service.token)
-	request.Header.Set("Content-Type", "application/json")
-	response, err := service.client.Do(request)
+	response, err := service.requestSpeech(ctx, service.endpoint, text, style, rate, language, model)
 	if err != nil {
 		if ctx.Err() != nil {
 			return Audio{}, ctx.Err()
@@ -369,4 +356,63 @@ func (service *PythonSpeech) synthesise(ctx context.Context, text, style string,
 		return Audio{}, ai.ErrUsageLimiterUnavailable
 	}
 	return audio, nil
+}
+
+func (service *PythonSpeech) requestSpeech(ctx context.Context, endpoint, text, style string, rate float64, language, model string) (*http.Response, error) {
+	payload := map[string]any{"text": text, "style": style, "rate": rate, "language": language}
+	if model != "" {
+		payload["model"] = model
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Authorization", "Bearer "+service.token)
+	request.Header.Set("Content-Type", "application/json")
+	return service.client.Do(request)
+}
+
+// StreamSpeech forwards independently playable, ordered chunks of one neural
+// utterance. A missing terminal marker is a failed synthesis, never a full reply.
+func (service *PythonSpeech) StreamSpeech(ctx context.Context, text, style string, rate float64, language string, emit func(Audio) error) error {
+	if !service.localVoice || (language != "en-NG" && language != "pcm-NG") {
+		return errors.New("streaming speech is unavailable for this language")
+	}
+	provider, started := service.speechProvider(""), time.Now()
+	if err := service.limiter.Reserve(ctx, provider, 1, ai.FreeUsageLimits(), started); err != nil {
+		return err
+	}
+	res, err := service.requestSpeech(ctx, service.endpoint+"/stream", text, style, rate, language, "")
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return &ai.ProviderError{Provider: provider, Status: res.StatusCode}
+	}
+	decoder := json.NewDecoder(io.LimitReader(res.Body, 12*1024*1024))
+	count := 0
+	for {
+		var packet struct {
+			Audio
+			Done bool `json:"done"`
+		}
+		if err := decoder.Decode(&packet); err != nil {
+			return errors.New("incomplete speech stream")
+		}
+		if packet.Done && count > 0 {
+			return service.limiter.RecordUsage(ctx, provider, ai.Usage{}, started)
+		}
+		if !ValidSpeechAudio(packet.Audio) {
+			return errors.New("invalid streamed audio")
+		}
+		if err := emit(packet.Audio); err != nil {
+			return err
+		}
+		count++
+	}
 }

@@ -119,7 +119,6 @@ const en = {
   'voice.end': 'End chat',
   'voice.showWords': 'Show words',
   'voice.hideWords': 'Hide words',
-  'voice.simulated': 'Voice uses microphone recording, backend transcription, and your device’s speech voice when configured.',
   'voice.youSaid': 'You said',
 
   // Reminders

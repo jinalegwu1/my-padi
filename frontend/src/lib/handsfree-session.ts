@@ -1,8 +1,20 @@
 import { VoiceActivity, wavAudio, type PCMFrame } from '@/lib/voice-activity';
 import { takeCompletedSentences, takeReadySpeech } from '@/lib/voice-audio';
 import type { AppSession } from '@/lib/session';
-import type { VoiceSnapshot } from '@/lib/voice-session';
 import type { SpeechStream } from '@/lib/streaming-speech';
+import type { LiveInput, LiveRecognition } from '@/lib/live-recognition';
+
+export type VoicePhase = 'idle' | 'preparing' | 'listening' | 'transcribing' | 'thinking' | 'speaking';
+export type VoiceSnapshot = { phase: VoicePhase; userText?: string; padiText: string; error: string | null };
+
+function measureTurn(stage:string, start:number | undefined) {
+  if(start === undefined || typeof performance.measure !== 'function') return;
+  const name='padi.voice.' + stage;
+  try {
+    if(performance.getEntriesByName(name).length >= 256) performance.clearMeasures(name);
+    performance.measure(name,{start,end:performance.now()});
+  } catch { /* Older native runtimes may lack User Timing Level 3. */ }
+}
 
 type Capture = { start(signal:AbortSignal):Promise<void>; stop():Promise<void> };
 type Reply = { status:string; reply?:string; messageID?:string };
@@ -11,6 +23,7 @@ type Dependencies = {
   capture(frame:(frame:PCMFrame)=>void,interrupted:()=>void):Capture;
   filterFrame?(frame:PCMFrame):PCMFrame;
   transcribe(token:string,wav:Uint8Array,signal:AbortSignal):Promise<string>;
+  openRecognition?(token:string,signal:AbortSignal,disconnected:(message:string)=>void):Promise<LiveRecognition | null>;
   send(text:string,accountID:string,signal:AbortSignal,onDelta:(delta:string)=>void,onStart:(id:string)=>void):Promise<Reply>;
   speak?(text:string,signal:AbortSignal,onStart:()=>void,completed:(text:string)=>void):Promise<void>;
   createSpeech?(signal:AbortSignal,onStart:()=>void,completed:(text:string)=>void):SpeechStream;
@@ -27,11 +40,13 @@ export class HandsfreeSession {
   private controller:AbortController|null=null;
   private capture:Capture|null=null;
   private activity:VoiceActivity;
-  private queue:Uint8Array[]=[];
+  private queue:(Uint8Array | Promise<string>)[]=[];
+  private recognition:LiveRecognition|null=null;
+  private input:LiveInput|null=null;
+  private partial='';
   private draining=false;
   private work:Work|null=null;
-  private touchVersion=0;
-  private touchPending=false;
+  private lastVoiceAt?:number;
   private pending='';
   private stopping:Promise<void>|null=null;
   private snapshot:VoiceSnapshot & {connected:boolean}={phase:'idle',connected:false,padiText:'',error:null};
@@ -40,11 +55,22 @@ export class HandsfreeSession {
   private wakeTimer:ReturnType<typeof setTimeout>|null=null;
 
   constructor(private deps:Dependencies) {
-    this.activity=new VoiceActivity(()=>this.began(),utterance=>{
+    this.activity=new VoiceActivity((rate,startedAt)=>this.began(rate,startedAt),utterance=>{
       if(this.queue.length>=3) { void this.cancel('Voice could not keep up. Please restart the conversation.'); return; }
-      this.queue.push(wavAudio(utterance));
+      this.lastVoiceAt=utterance.lastVoiceAt;
+      this.queue.push(this.input ? this.input.finish() : wavAudio(utterance));
+      this.input=null;
       void this.drain();
-    },{onsetMs:120,silenceMs:1400});
+    },{
+      onsetMs:120,
+      audio:pcm=>this.input?.write(pcm),
+      silenceMs:()=>{
+        if(!this.recognition) return 1400;
+        // A short quiet period after "I want to…" or "make we…" is often a hesitation.
+        if(!this.partial || /\b(and|but|because|so|to|the|my|if|when|we|wey|say|um|uh|erm)$/i.test(this.partial.trim())) return 1200;
+        return 550;
+      },
+    });
   }
   private change(update:Partial<typeof this.snapshot>) {
     this.snapshot={...this.snapshot,...update}; this.deps.changed(this.snapshot);
@@ -67,6 +93,13 @@ export class HandsfreeSession {
       if(!this.alive(controller)) return;
       if(!session) throw new Error('Sign in to talk with PADI.');
       this.session=session; this.activity.reset();
+      if(this.deps.openRecognition) {
+        const connection=await this.deps.openRecognition(session.token,controller.signal,message=>{
+          if(this.alive(controller)) void this.cancel(message);
+        });
+        if(!this.alive(controller)) return;
+        this.recognition=connection;
+      }
       // On chat entry PADI can say hello while the OS asks about the microphone.
       const opening = greetBeforeCapture && greet && this.deps.greet ? this.greet(controller) : null;
       this.capture=this.deps.capture(frame=>{
@@ -114,20 +147,11 @@ export class HandsfreeSession {
 
   /** A touch gets a spoken acknowledgement without starting another mic. */
   async reactToTouch() {
-    if(!this.alive()||!this.session)return;
-    const controller=this.controller!;
-    const version=++this.touchVersion;
-    this.touchPending=true;
-    const previous=this.work;
-    previous?.controller.abort();
-    await previous?.done;
-    if(!this.alive(controller)||version!==this.touchVersion)return;
-    this.touchPending=false;
-    if(!this.activity.speaking)await this.greet(controller);
+    if(!this.alive()||!this.session||this.work||this.activity.speaking||this.draining)return;
+    await this.greet(this.controller!);
   }
 
-  private began() {
-    this.touchVersion++;this.touchPending=false;
+  private began(rate:number,startedAt:number) {
     const work=this.work;
     if(work){
       // Detach ownership before cancelling: late completion must never reset
@@ -135,7 +159,15 @@ export class HandsfreeSession {
       this.work=null;this.pending='';work.controller.abort();
       if(work.id)this.deps.delivered(work.id,work.spoken,true,work.accountID);
     }
-    this.change({phase:'listening',error:null});
+    this.partial='';
+    const input=this.recognition?.begin(rate,words=>{
+      if(this.input!==input || !this.alive()) return;
+      if(!this.partial && words) measureTurn('first-caption',startedAt);
+      this.partial=words;
+      if(!this.wakeMode || this.wakeActivated) this.change({userText:[this.pending,words].filter(Boolean).join(' ')});
+    });
+    this.input=input??null;
+    this.change({phase:'listening',error:null,userText:this.pending || undefined,padiText:''});
   }
 
   private async drain() {
@@ -144,10 +176,11 @@ export class HandsfreeSession {
     this.draining=true;
     try {
       while(this.queue.length && this.alive(controller)) {
-        const wav=this.queue.shift()!;
+        const recording=this.queue.shift()!;
         if(!this.activity.speaking) this.change({phase:'transcribing'});
         try {
-          const text=await this.deps.transcribe(session.token,wav,controller.signal);
+          const text=await (recording instanceof Uint8Array
+            ? this.deps.transcribe(session.token,recording,controller.signal) : recording);
           if(!this.alive(controller)) return;
           let recognised=text.trim();
           if(this.wakeMode) {
@@ -176,7 +209,7 @@ export class HandsfreeSession {
             this.pending='';this.change({userText:recognised,phase:'listening',error:'Please say what you would like to start.'});continue;
           }
           if(recognised)this.pending=[this.pending,recognised].filter(Boolean).join('\n');
-          this.change({userText:this.pending,error:null});
+          this.change({userText:[this.pending,this.input && this.partial].filter(Boolean).join(' '),error:null});
         } catch(error) {
           if(this.alive(controller) && error && typeof error==='object' && 'status' in error && error.status===401) {
             await this.cancel('Your session expired. Sign in again to continue.',true); return;
@@ -196,16 +229,20 @@ export class HandsfreeSession {
   }
 
   private async respond() {
-    if(!this.alive() || !this.session || this.work || this.touchPending || this.draining || this.queue.length || this.activity.speaking || !this.pending.trim()) return;
+    if(!this.alive() || !this.session || this.work || this.draining || this.queue.length || this.activity.speaking || !this.pending.trim()) return;
     const sessionController=this.controller!;
     const text=this.pending;
+    const lastVoiceAt=this.lastVoiceAt;
+    measureTurn('submit',lastVoiceAt);
     const work=this.makeWork(this.session.user.id); this.work=work;
     const stop=()=>work.controller.abort(); sessionController.signal.addEventListener('abort',stop,{once:true});
     let speechRemainder='';
     let receivedStream=false;
     let speechQueued=false;
     const speaking=()=>{
-      if(this.alive(sessionController)&&!work.controller.signal.aborted){work.played=true;this.change({phase:'speaking'});}
+      if(this.alive(sessionController)&&!work.controller.signal.aborted&&!work.played){
+        work.played=true;measureTurn('first-playback',lastVoiceAt);this.change({phase:'speaking'});
+      }
     };
     const completed=(spoken:string)=>{
       if(work.controller.signal.aborted)return;
@@ -229,6 +266,7 @@ export class HandsfreeSession {
     try {
       const reply=await this.deps.send(text,this.session.user.id,work.controller.signal,delta=>{
         if(work.controller.signal.aborted)return;
+        if(!receivedStream) measureTurn('first-reply-text',lastVoiceAt);
         receivedStream=true;
         work.reply=(work.reply??'')+delta;
         this.change({padiText:work.reply});
@@ -290,13 +328,14 @@ export class HandsfreeSession {
   }
 
   cancel(error:string|null=null,clearTranscript=false):Promise<void> {
-    this.touchVersion++;this.touchPending=false;
+    this.lastVoiceAt=undefined;
     if(this.wakeTimer) { clearTimeout(this.wakeTimer); this.wakeTimer=null; }
     this.wakeMode=false;
     this.wakeActivated=false;
     this.controller?.abort(); this.work?.controller.abort();
     if(this.work?.id && this.work.reply) this.deps.delivered(this.work.id,this.work.spoken,true,this.work.accountID);
     this.activity.reset(); this.queue=[]; this.pending='';
+    this.recognition=null; this.input=null; this.partial='';
     this.draining=false; this.work=null;
     this.change({phase:'idle',connected:false,error,...(clearTranscript?{userText:undefined,padiText:''}:{})});
     if(this.stopping) return this.stopping;

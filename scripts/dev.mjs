@@ -174,7 +174,7 @@ try {
           PADI_AI_FREE_ACCOUNT_CONFIRMED:backendEnv.PADI_AI_FREE_ACCOUNT_CONFIRMED,
           PADI_DISABLE_ALL_LIMITS:backendEnv.PADI_DISABLE_ALL_LIMITS||'false',
           ...((backendEnv.PADI_PYTHON_VOICE_ENGINE||'local')==='gemini' ? {GEMINI_API_KEY:backendEnv.GEMINI_API_KEY,GROQ_API_KEY:backendEnv.GROQ_API_KEY} : {})};
-        for(const name of ['PADI_STT_MODEL','PADI_STT_MODEL_PATH','PADI_STT_WORKERS','PADI_STT_THREADS','PADI_STT_TIMEOUT_SECONDS']) {
+        for(const name of ['PADI_STT_MODEL','PADI_STT_MODEL_PATH','PADI_STT_WORKERS','PADI_STT_THREADS','PADI_STT_TIMEOUT_SECONDS','PADI_LIVE_STT_MODEL_PATH','PADI_NIGERIAN_VOICE_DIR','PADI_NIGERIAN_VOICE_DEVICE']) {
           if(backendEnv[name]!==undefined) voiceEnv[name]=backendEnv[name];
         }
         for(const name of ['SystemRoot','WINDIR','SSL_CERT_FILE','SSL_CERT_DIR','HTTPS_PROXY','HTTP_PROXY','NO_PROXY']) {

@@ -68,11 +68,16 @@ export function takeCompletedSentences(text: string): { sentences: string[]; rem
 /** Release a usable first phrase instead of waiting on a long sentence's final
  * punctuation. Later passages can be larger to maintain synthesis throughput. */
 export function takeReadySpeech(text:string,first=true):{sentences:string[];remainder:string} {
-  const limit=first?160:650;
+  const limit=first?48:650;
   const complete=takeCompletedSentences(text);
+  if(first) {
+    const clause=/^(.{12,85}?[,;:—])\s/u.exec(text);
+    if(clause && (!complete.sentences.length || clause[1].length < complete.sentences[0].length))
+      return {sentences:[clause[1].trim()],remainder:text.slice(clause[0].length)};
+  }
   if(text.length>limit&&(!complete.sentences.length||complete.sentences[0].length>limit)) {
     const cut=text.lastIndexOf(' ',limit);
-    if(cut>=40)return {sentences:[text.slice(0,cut).trim()],remainder:text.slice(cut).trimStart()};
+    if(cut>=(first?24:40))return {sentences:[text.slice(0,cut).trim()],remainder:text.slice(cut).trimStart()};
   }
   return complete;
 }

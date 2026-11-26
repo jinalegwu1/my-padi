@@ -66,7 +66,7 @@ export function VoiceCaption({
               <Text style={[styles.speaker, { color: colors.muted, fontSize: type.micro }]}>
                 {youSaidLabel.toUpperCase()}
               </Text>
-              <Text
+              <Text testID="voice-user-caption"
                 style={[
                   styles.userText,
                   { color: colors.textSecondary, fontSize: type.bodySmall },
@@ -75,12 +75,12 @@ export function VoiceCaption({
               </Text>
             </View>
           ) : null}
-          <View style={styles.block}>
+          {padiText ? <View testID="voice-reply-caption" style={styles.block}>
             <Text style={[styles.speaker, { color: colors.primary, fontSize: type.micro }]}>
               PADI
             </Text>
             <MarkdownMessage text={padiText} />
-          </View>
+          </View> : null}
         </View>
       ) : null}
     </View>

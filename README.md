@@ -41,16 +41,11 @@ and issue real PostgreSQL sessions without SMS. See the
 PADI-side usage caps can also be temporarily disabled in development while
 keeping the PostgreSQL ledger; provider limits still apply. See the
 [usage-cap bypass instructions](./backend/README.md#temporary-development-usage-cap-bypass).
-Voice now supports a hands-free conversation flow through a separate Python
-Voice Engine: automatic speaking-turn detection, speech recognition, expressive
-spoken replies, and automatic listening after each reply. Tapping PADI's picture
-wakes the conversation; silence ends a turn, and genuine speech interrupts PADI
-while echo cancellation rejects its speaker audio. Go retains
-account authentication, shared chat context, memory permissions, and usage
-tracking. The browser flow passed an end-to-end test. Android/iPhone require
-an Expo development build with the new native echo-cancelled capture module;
-native compilation and physical device checks remain pending. See
-[voice verification and setup](./docs/voice-verification.md).
+In a hands-free call, PADI shows live captions, sends the finished turn automatically,
+and starts speaking while its reply text is still arriving. The microphone stays open
+during playback so the user can interrupt. Go authenticates the session and applies
+the existing chat, memory, and usage rules.
+
 Reminders remain local and are not
 scheduled as background notifications. Chat transcripts are
 still stored on the phone, not PostgreSQL. Personal memory now stores explicitly
@@ -78,14 +73,20 @@ speech-payload builder with only the external provider stubbed.
 These are controlled unit/HTTP fixtures, not live PostgreSQL or live AI-provider
 tests. A fresh client mount reloading server preferences does not prove that a
 device delivers notifications after an actual app restart or timezone change;
-physical-device verification remains needed. Backend `go test ./...` passes
-after the push changes. This environment does not provide Node.js or npm, so the
-frontend typecheck and new push tests could not be rerun; editor diagnostics
-reported no TypeScript errors in the changed application files. The full
-frontend suite previously had unrelated portrait/voice test failures because
-its test loader could not resolve `@/lib/portrait-speech` and a bundled portrait
-asset was missing.
-Automatic memory extraction and the other Python intelligence engines remain planned.
+physical-device verification remains needed. Automatic memory extraction and the other Python intelligence engines remain planned.
+
+## Nigerian voices and live captions
+
+Select **PADI** for the male voice or **Ada** for the female voice in Settings → Voice.
+Use **Preview voice** to audition them. Nigerian English and Nigerian Pidgin use
+two local neural voice models. Existing persona choices map to the corresponding
+male or female model. A call displays your changing transcript and PADI’s
+answer. Speaking again clears the pending audio and starts the next turn.
+
+The engineering target is first visible reply text and first audible speech within
+three seconds of the last spoken word on 95 of 100 warm calls. Provider response
+time, network conditions, and inference hardware all contribute. The device
+benchmark and listening review are described in the [live voice guide](./docs/live-voice-conversation.md).
 
 ## Run frontend and backend
 
@@ -100,7 +101,12 @@ npm run dev
 ```
 
 `npm run migrate` loads `backend/.env` and applies the existing migrations to
-its configured database. PostgreSQL must be running. `npm run dev` loads the
+its configured database. PostgreSQL must be running. Voice setup downloads the
+pinned live recognizer and both voice checkpoints into `services/voice/models/`.
+In `backend/.env`, enable `PADI_STT_ENABLED` and `PADI_PYTHON_VOICE_ENABLED`,
+select `PADI_PYTHON_VOICE_ENGINE=local`, and set a private `PADI_VOICE_SERVICE_TOKEN`
+of at least 32 characters. Uploaded recordings and extra input languages also use
+the Whisper checkpoint described in the [speech service setup](./services/voice/README.md). `npm run dev` loads the
 environment files and starts both servers. If the My PADI backend is already
 running and database-ready when required, the launcher reuses it. Restart that
 backend to apply backend `.env` changes. Ctrl+C stops the processes started by

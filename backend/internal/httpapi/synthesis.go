@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -60,6 +61,7 @@ func synthesisHandler(deps Dependencies) http.HandlerFunc {
 			Language string  `json:"language"`
 			Live     bool    `json:"live"`
 			GroqOnly bool    `json:"groq_only"`
+			Stream   bool    `json:"stream"`
 		}
 		if decodeRequest(w, r, 64*1024, &body) != nil || !utf8.ValidString(body.Text) || strings.TrimSpace(body.Text) == "" || len(body.Text) > 8192 || body.Rate < 0.5 || body.Rate > 1.5 {
 			writeAPIError(w, 400, "invalid_request", "The spoken reply is invalid.")
@@ -83,6 +85,38 @@ func synthesisHandler(deps Dependencies) http.HandlerFunc {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 		defer cancel()
+		if body.Stream {
+			streamer, ok := deps.Synthesis.(interface {
+				StreamSpeech(context.Context, string, string, float64, string, func(voice.Audio) error) error
+			})
+			if !ok || body.GroqOnly || !body.Live || (body.Language != "en-NG" && body.Language != "pcm-NG") {
+				writeAPIError(w, 400, "invalid_request", "Choose a supported live voice.")
+				return
+			}
+			started := false
+			encoder := json.NewEncoder(w)
+			err := streamer.StreamSpeech(ctx, body.Text, body.Style, body.Rate, body.Language, func(chunk voice.Audio) error {
+				if !started {
+					w.Header().Set("Content-Type", "application/x-ndjson")
+					w.Header().Set("Cache-Control", "no-store")
+					w.Header().Set("X-Accel-Buffering", "no")
+					started = true
+				}
+				if err := encoder.Encode(chunk); err != nil {
+					return err
+				}
+				return http.NewResponseController(w).Flush()
+			})
+			if err != nil {
+				if !started {
+					status, code, _ := classifyChatError(err)
+					writeAPIError(w, status, code, "PADI’s Nigerian voice could not play this reply.")
+				}
+				return
+			}
+			_ = encoder.Encode(map[string]bool{"done": true})
+			return
+		}
 		var audio voice.Audio
 		var err error
 		if body.GroqOnly {

@@ -181,48 +181,22 @@ The chat endpoint validates roles and payload size, rejects unauthenticated requ
 
 ## Python Voice Engine
 
-Go exposes authenticated `POST /v1/voice/transcribe` and
-`POST /v1/voice/speak`, plus `GET /v1/voice/config`. The mobile/web client starts
-one foreground microphone session, detects speaking turns, and sends them
-automatically. It listens during responses and interrupts playback on speech.
-Voice messages use the existing `/v1/chat` pipeline with spoken-delivery
-instructions and interrupted-reply context. Account and memory revision
-boundaries still apply.
+`GET /v1/voice/config` reports available live recognition and audio-streaming
+locales. A connected phone opens `/v1/voice/listen` as a WebSocket. The first
+message authenticates the caller before Go connects to Python’s private listener.
+Audio belongs to one numbered turn at a time. Python returns partial transcripts
+and one final transcript per finished turn. Completed-file uploads use the
+existing authenticated `POST /v1/voice/transcribe` route.
 
-The independent Python service in `services/voice` performs WebRTC VAD,
-16 kHz mono PCM conversion, trimming, low-frequency rumble/DC reduction,
-Groq Whisper recognition, transcript validation, and expressive Gemini speech
-synthesis. Android/iPhone capture and echo cancellation use the new native
-PadiVoice module; these require an Expo development build.
+`POST /v1/chat` with voice delivery streams reply text. For Nigerian voices,
+`POST /v1/voice/speak` with `live` and `stream` enabled returns newline-delimited
+WAV packets followed by a completion record. Go validates each packet and applies
+the existing speech usage ledger. The regular JSON speech endpoint and public
+fixed-text previews remain available.
 
-Set `PADI_STT_ENABLED=true` and `PADI_PYTHON_VOICE_ENABLED=true` in the local
-backend environment. Configure `PADI_PYTHON_VOICE_URL` (loopback HTTP or HTTPS)
-and an internal `PADI_VOICE_SERVICE_TOKEN` of at least 32 bytes. The launcher
-starts Python on port 8090 and passes only its required Gemini/Groq credentials
-and internal token. The frontend receives no private provider keys.
-
-Prepare Python once from the project root:
-
-```sh
-python3 -m venv services/voice/.venv
-services/voice/.venv/bin/python -m pip install -r services/voice/requirements.txt
-npm run dev
-```
-
-Gemini and Groq must be included in `PADI_AI_FREE_ACCOUNT_CONFIRMED`. Speech
-models are independent of the approved text-model registry. The initial
-speech models are `whisper-large-v3-turbo` and `gemini-3.1-flash-tts-preview`;
-free-tier availability was checked against official pricing and live calls.
-Do not add speech models to `PADI_AI_APPROVED_FREE_MODELS`.
-
-Recordings are bounded to 8 MB and up to 60 seconds per segment. Audio is
-processed in memory by Go/Python and never logged or saved by these servers.
-Temporary device upload files are deleted. Speech request accounting uses
-separate `groq-speech` and `gemini-voice` ledger buckets; Gemini input text
-usage enters the text-token columns, while audio output is not counted as
-text tokens. Existing development quota bypass applies; provider account
-limits still apply. See [voice verification](../docs/voice-verification.md)
-and the [Python roadmap](../docs/python-roadmap.md).
+The local engine needs the private service token, installed models and a configured
+streaming chat provider. See [speech setup](../services/voice/README.md) and
+[voice timing and verification](../docs/live-voice-conversation.md).
 
 ## Health endpoint
 

@@ -1,8 +1,11 @@
 """Explicit, one-time installation of a local CTranslate2 Whisper checkpoint."""
 import argparse
 from pathlib import Path
+import shutil
+import tempfile
 
 from huggingface_hub import HfApi, snapshot_download
+from install_conversation_models import download_weights
 
 
 def main():
@@ -17,7 +20,17 @@ def main():
     import fnmatch
     size = sum(file.size or 0 for file in info.siblings if any(fnmatch.fnmatch(file.rfilename, pattern) for pattern in patterns))
     print(f"Installing {repository} ({size / 1024 / 1024:.1f} MiB) into {directory.resolve()}", flush=True)
-    snapshot_download(repository, revision=info.sha, local_dir=directory, allow_patterns=patterns)
+    snapshot_download(repository, revision=info.sha, local_dir=directory, allow_patterns=patterns[1:])
+    weight = next(file for file in info.siblings if file.rfilename == "model.bin")
+    target = directory / weight.rfilename
+    if not target.is_file() or target.stat().st_size != weight.size:
+        cache = directory / (".download-" + info.sha)
+        with tempfile.TemporaryDirectory(dir=directory) as temporary:
+            stage = Path(temporary) / weight.rfilename
+            download_weights(f"https://huggingface.co/{repository}/resolve/{info.sha}/model.bin",
+                             stage, cache, weight.size, weight.lfs.sha256)
+            stage.replace(target)
+        shutil.rmtree(cache)
     for name in ("model.bin", "config.json", "tokenizer.json"):
         if not (directory / name).is_file():
             raise SystemExit("Incomplete local model installation: " + name)

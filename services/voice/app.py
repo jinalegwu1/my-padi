@@ -35,6 +35,8 @@ from voice_errors import SpeechError
 from local_speech import local_engine, VOICE_VARIANTS, LANGUAGES as LOCAL_LANGUAGES
 from audio_processing import prepare_audio
 from local_recognition import RecognitionConfig, RecognitionPool
+from live_recognition import load_live_model, serve_live
+from nigerian_speech import NIGERIAN_LOCALES, nigerian_engine, voices_installed, wave_clip
 from transcription_http import process_upload, valid_identity
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -296,13 +298,22 @@ def synthesise_groq(key: str, text: str, style: str) -> dict:
 
 
 def synthesise_local(text, style, rate, language="en-NG"):
+    if language in NIGERIAN_LOCALES:
+        pcm = bytearray()
+        for chunk in nigerian_engine().chunks(text, style, rate):
+            pcm.extend(chunk)
+            if len(pcm) > MAX_AUDIO_BYTES - 44:
+                raise SpeechError(422, "speech_too_long")
+        if not pcm:
+            raise SpeechError(422, "empty_speech")
+        return {"audio_base64": base64.b64encode(wave_clip(pcm)).decode(), "mime_type": "audio/wav", "input_tokens": 0, "audio_tokens": 0}
     result = normalise_speech_wave(local_engine().speak(text, style, rate, language))
     result["input_tokens"] = 0
     result["audio_tokens"] = 0
     return result
 
 
-def make_handler(token: str, key: str = "", generate=synthesise, groq_key="", recognition_pool=None, engine="gemini", local_generate=synthesise_local):
+def make_handler(token: str, key: str = "", generate=synthesise, groq_key="", recognition_pool=None, engine="gemini", local_generate=synthesise_local, live_model=None):
     slots = threading.BoundedSemaphore(4)
     incoming_slots = threading.BoundedSemaphore(4)
     disable_limits = os.environ.get("PADI_DISABLE_ALL_LIMITS", "").lower() == "true"
@@ -329,16 +340,33 @@ def make_handler(token: str, key: str = "", generate=synthesise, groq_key="", re
                 pass  # Go/client cancelled; never log the discarded content.
 
         def do_GET(self):
-            if self.path == "/health":
-                self.respond(200, {"service": "padi-python-voice", "status": "alive", "speech": {"engine": engine, "supported_languages": list(LOCAL_LANGUAGES) if engine == "local" else list(LANGUAGE_DELIVERY)}, "recognition": recognition_pool.health() if recognition_pool else {"ready": False, "error": "model_unavailable"}})
+            if self.path == "/listen":
+                if not hmac.compare_digest(self.headers.get("Authorization", "").encode(), ("Bearer " + token).encode()):
+                    self.respond(401, {"error": "unauthenticated"})
+                elif self.headers.get("Upgrade", "").lower() != "websocket" or live_model is None:
+                    self.respond(503, {"error": "live_recognition_unavailable"})
+                elif not incoming_slots.acquire(blocking=False):
+                    self.respond(429, {"error": "transcription_busy"})
+                else:
+                    try:
+                        serve_live(self, live_model)
+                    finally:
+                        incoming_slots.release()
+            elif self.path == "/health":
+                languages = [code for code in LOCAL_LANGUAGES if code not in NIGERIAN_LOCALES or voices_installed()]
+                self.respond(200, {"service": "padi-python-voice", "status": "alive", "speech": {
+                    "engine": engine, "supported_languages": languages if engine == "local" else list(LANGUAGE_DELIVERY),
+                    "streaming_languages": list(NIGERIAN_LOCALES) if engine == "local" and voices_installed() else [],
+                }, "recognition": recognition_pool.health() if recognition_pool else {"ready": False, "error": "model_unavailable"}})
             elif self.path == "/ready":
                 state = recognition_pool.health() if recognition_pool else {"ready": False, "error": "model_unavailable"}
+                state["live_languages"] = ["en-NG", "pcm-NG", "en-GB"] if live_model is not None else []
                 self.respond(200 if state["ready"] else 503, state)
             else:
                 self.respond(404, {"error": "not_found"})
 
         def do_POST(self):
-            if self.path not in ("/synthesise", "/transcribe", "/cancel"):
+            if self.path not in ("/synthesise", "/synthesise/stream", "/transcribe", "/cancel"):
                 self.respond(404, {"error": "not_found"})
                 return
             started = time.monotonic()
@@ -399,6 +427,8 @@ def make_handler(token: str, key: str = "", generate=synthesise, groq_key="", re
                     raise ValueError()
                 if not isinstance(language, str) or language not in LANGUAGE_DELIVERY:
                     raise ValueError()
+                if self.path.endswith("/stream") and (engine != "local" or language not in NIGERIAN_LOCALES):
+                    raise ValueError()
                 if model == FAST_MODEL and (rate != 1 or language not in ("en-NG", "en-GB", "pcm-NG")):
                     raise ValueError()
             except (ValueError, TypeError, UnicodeError, TimeoutError):
@@ -411,6 +441,9 @@ def make_handler(token: str, key: str = "", generate=synthesise, groq_key="", re
                 return
             try:
                 provider = "local" if engine == "local" else "groq" if model == FAST_MODEL else "gemini"
+                if self.path.endswith("/stream"):
+                    self.stream_speech(text, style, rate)
+                    return
                 if engine == "local":
                     result = local_generate(text, style, rate, language)
                 elif model == FAST_MODEL:
@@ -428,6 +461,27 @@ def make_handler(token: str, key: str = "", generate=synthesise, groq_key="", re
             finally:
                 if not disable_limits:
                     slots.release()
+
+        def stream_speech(self, text, style, rate):
+            chunks = nigerian_engine().chunks(text, style, rate)
+            try:
+                first = next(chunks, None)
+                if not first:
+                    raise SpeechError(422, "empty_speech")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/x-ndjson")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                import itertools
+                for chunk in itertools.chain((first,), chunks):
+                    packet = {"audio_base64": base64.b64encode(wave_clip(chunk)).decode(), "mime_type": "audio/wav"}
+                    self.wfile.write(json.dumps(packet).encode() + b"\n")
+                    self.wfile.flush()
+                self.wfile.write(b'{"done":true}\n')
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            finally:
+                chunks.close()
 
     return Handler
 
@@ -459,9 +513,12 @@ def main():
             local_engine()
         except SpeechError:
             raise SystemExit("Local speech requires the eSpeak NG shared library; no Gemini/Groq speech credentials are needed.") from None
+        if voices_installed():
+            nigerian_engine()
     recognition_pool = RecognitionPool(RecognitionConfig.environment()) if os.getenv("PADI_STT_ENABLED", "false").lower() == "true" else None
     port = int(os.environ.get("PADI_PYTHON_VOICE_PORT", "8090"))
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(token, key,groq_key=groq_key, recognition_pool=recognition_pool, engine=engine))
+    live_model = load_live_model(os.getenv("PADI_LIVE_STT_MODEL_PATH")) if recognition_pool else None
+    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(token, key,groq_key=groq_key, recognition_pool=recognition_pool, engine=engine, live_model=live_model))
     server.daemon_threads = True
     logger.info("voice service ready host=127.0.0.1 port=%d engine=%s primary_model=%s fallback_model=%s gemini_key_configured=%s groq_key_configured=%s limits_disabled=%s",
         port, engine, "none" if engine == "local" else MODEL, "none" if engine == "local" else FALLBACK_MODEL or "none", bool(key), bool(groq_key), os.environ.get("PADI_DISABLE_ALL_LIMITS", "").lower() == "true")

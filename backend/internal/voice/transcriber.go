@@ -75,10 +75,11 @@ type Transcript struct {
 }
 
 type Readiness struct {
-	Ready          bool    `json:"ready"`
-	Model          string  `json:"model"`
-	Error          string  `json:"error"`
-	TimeoutSeconds float64 `json:"timeout_seconds"`
+	LiveLanguages  []string `json:"live_languages,omitempty"`
+	Ready          bool     `json:"ready"`
+	Model          string   `json:"model"`
+	Error          string   `json:"error"`
+	TimeoutSeconds float64  `json:"timeout_seconds"`
 }
 
 func NewRequestID() (string, error) {

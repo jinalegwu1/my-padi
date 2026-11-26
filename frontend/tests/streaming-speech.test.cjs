@@ -5,7 +5,7 @@ const tick = async () => { for (let i = 0; i < 30; i++) await Promise.resolve();
 
 function fixture() {
   const requests = [], audio = [];
-  const { createGroqSpeechStream, trimSpeechPadding } = loadTS('src/lib/streaming-speech.ts', {
+  const { createSpeechStream, trimSpeechPadding } = loadTS('src/lib/streaming-speech.ts', {
     '@/lib/api': { synthesiseSpeech: (...args) => new Promise((resolve, reject) => {
       requests.push({ args, resolve: value => resolve({ audio_base64: value }) });
       args[4].addEventListener('abort', () => reject(new Error('Aborted')), { once: true });
@@ -17,7 +17,7 @@ function fixture() {
     }, finish: async () => {} }) },
   });
   const controller = new AbortController();
-  return { requests, audio, controller, trimSpeechPadding, speech: createGroqSpeechStream('ada', 1, 'en-NG', controller.signal, () => {}, () => {}) };
+  return { requests, audio, controller, trimSpeechPadding, speech: createSpeechStream('ada', 1, 'en-NG', controller.signal, () => {}, () => {}) };
 }
 
 test('TTS prepares ahead with bounded concurrency and audio retains text order', async () => {
@@ -38,6 +38,57 @@ test('exit aborts synthesis, discards waiting text and prevents late playback', 
   const f = fixture(); ['One.', 'Two.', 'Three.'].forEach(text => f.speech.enqueue(text));
   await tick(); f.controller.abort(); await f.speech.finish();
   assert.equal(f.requests.length, 2); assert.deepEqual(f.audio, []);
+});
+
+test('neural audio plays before synthesis finishes and credits only a fully played phrase', async () => {
+  const clips=[], spoken=[], finishPhrase=[];
+  const wordsByClip = new Map();
+  const packet = label => {
+    const wave = Buffer.alloc(44 + 24000, wordsByClip.size + 1).toString('base64');
+    wordsByClip.set(wave,label);
+    return wave;
+  };
+  const { createSpeechStream }=loadTS('src/lib/streaming-speech.ts',{
+    '@/lib/api':{streamSpeechAudio:async(_token,words,_style,_rate,_language,_signal,chunk)=>{
+      chunk(packet(words + ' first')); await new Promise(resolve=>finishPhrase.push(resolve)); chunk(packet(words + ' last'));
+    }},
+    '@/lib/session':{readSession:async()=>({token:'a'})}, '@/lib/spoken-text':{spokenText:text=>text},
+    '@/lib/voice-playback':{createVoiceQueue:()=>({
+      enqueue:(wave)=>new Promise(resolve=>clips.push({audio:wordsByClip.get(wave),resolve})),finish:async()=>{},
+    })},
+  });
+  const speech=createSpeechStream('ada',1,'pcm-NG',new AbortController().signal,()=>{},text=>spoken.push(text),true);
+  speech.enqueue('I hear you.'); speech.enqueue('Take your time.'); await tick();
+  assert.deepEqual(clips.map(item=>item.audio),['I hear you. first']);
+  finishPhrase.shift()(); await tick();
+  assert.deepEqual(clips.map(item=>item.audio),['I hear you. first','I hear you. last','Take your time. first']);
+  assert.deepEqual(spoken,[]);
+  clips[0].resolve(); clips[1].resolve(); await tick(); assert.deepEqual(spoken,['I hear you.']);
+  finishPhrase.shift()(); await tick(); clips.slice(2).forEach(item=>item.resolve()); await speech.finish();
+  assert.deepEqual(spoken,['I hear you.','Take your time.']);
+});
+
+test('slow packets stay buffered across phrases and an interruption discards them', async () => {
+  const wave = Buffer.alloc(44 + 4800).toString('base64');
+  for (const interrupt of [false, true]) {
+    const controller = new AbortController();
+    const heard = [], credited = [];
+    const { createSpeechStream } = loadTS('src/lib/streaming-speech.ts', {
+      '@/lib/api': {streamSpeechAudio: async (_token, _text, _style, _rate, _lang, _signal, chunk) => chunk(wave)},
+      '@/lib/session': {readSession: async () => ({token:'a'})},
+      '@/lib/spoken-text': {spokenText: text => text},
+      '@/lib/voice-playback': {createVoiceQueue: () => ({
+        enqueue: async audio => { heard.push(audio); }, finish: async () => {},
+      })},
+    });
+    const speech = createSpeechStream('ada',1,'en-NG',controller.signal,() => {}, text => credited.push(text),true);
+    speech.enqueue('One.'); speech.enqueue('Two.'); await tick();
+    assert.deepEqual(heard, []);
+    if (interrupt) controller.abort();
+    await speech.finish();
+    assert.equal(heard.length, interrupt ? 0 : 2);
+    assert.deepEqual(credited, interrupt ? [] : ['One.', 'Two.']);
+  }
 });
 
 test('outer PCM padding is trimmed while every voiced sample remains intact', () => {

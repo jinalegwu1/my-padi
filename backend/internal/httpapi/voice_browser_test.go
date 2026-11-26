@@ -18,6 +18,10 @@ func TestHandsfreeBrowser(t *testing.T) {
 	if os.Getenv("PADI_VERIFY_VOICE_BROWSER") != "1" {
 		t.Skip("explicit browser voice verification disabled")
 	}
+	if os.Getenv("PADI_VERIFY_VOICE_LATENCY") == "1" {
+		runBrowserVerification(t, 2*time.Hour)
+		return
+	}
 	runBrowserVerification(t, 6*time.Minute)
 }
 
@@ -78,10 +82,17 @@ func runBrowserVerification(t *testing.T, timeout time.Duration) {
 	// The browser receives public test settings and its synthetic session only.
 	// Backend provider keys, database credentials, and the internal voice token
 	// stay in Go; none are inherited by the browser driver.
-	for _, name := range []string{"PADI_VOICE_TEST_AUDIO_PATH", "PADI_VOICE_API_URL", "PADI_VOICE_FRONTEND_URL", "PADI_VOICE_BROWSER_EXECUTABLE", "PADI_VOICE_BROWSER_FAILURES_ONLY", "SystemRoot", "WINDIR", "TMP", "TEMP"} {
+	for _, name := range []string{"PADI_VOICE_TEST_AUDIO_PATH", "PADI_VOICE_API_URL", "PADI_VOICE_FRONTEND_URL", "PADI_VOICE_BROWSER_EXECUTABLE", "PADI_VOICE_BROWSER_FAILURES_ONLY", "PADI_VERIFY_VOICE_LATENCY", "SystemRoot", "WINDIR", "TMP", "TEMP"} {
 		if value := os.Getenv(name); value != "" {
 			command.Env = append(command.Env, name+"="+value)
 		}
+	}
+	if os.Getenv("PADI_VERIFY_VOICE_LATENCY") == "1" {
+		command.Stdout, command.Stderr = os.Stdout, os.Stderr
+		if err := command.Run(); err != nil {
+			t.Fatal(err)
+		}
+		return
 	}
 	output, err := command.CombinedOutput()
 	if err != nil {

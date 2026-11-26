@@ -1,4 +1,4 @@
-import { synthesiseSpeech } from '@/lib/api';
+import { synthesiseSpeech, streamSpeechAudio } from '@/lib/api';
 import { readSession } from '@/lib/session';
 import { spokenText } from '@/lib/spoken-text';
 import { createVoiceQueue } from '@/lib/voice-playback';
@@ -33,8 +33,8 @@ export function trimSpeechPadding(encoded:string):string {
 
 /** Prepare ahead of playback, with at most two synthesis requests in flight.
  * Audio submission follows text order even when requests finish out of order. */
-export function createGroqSpeechStream(style: string, rate: number, language: string, signal: AbortSignal,
-  onStart: () => void, completed: (text: string) => void): SpeechStream {
+export function createSpeechStream(style: string, rate: number, language: string, signal: AbortSignal,
+  onStart: () => void, completed: (text: string) => void, incrementalAudio = false): SpeechStream {
   const controller = new AbortController();
   const abort = () => controller.abort();
   signal.addEventListener('abort', abort, { once: true });
@@ -45,6 +45,15 @@ export function createGroqSpeechStream(style: string, rate: number, language: st
   let sealed = false;
   let failure: unknown;
   let submission = Promise.resolve();
+  let synthesisStarted: number | undefined;
+  let suppliedMs = 0;
+  let playingPackets = false;
+  const held: (() => void)[] = [];
+  const releaseAudio = () => {
+    playingPackets = true;
+    const prepared = held.splice(0);
+    if (!controller.signal.aborted) prepared.forEach(play => play());
+  };
   const waiting: { words:string; run(): void; skip(): void }[] = [];
   const fail = (error: unknown) => {
     if (!signal.aborted && !failure) failure = error??new Error('Speech preparation failed.');
@@ -52,7 +61,7 @@ export function createGroqSpeechStream(style: string, rate: number, language: st
   };
   void account.catch(fail);
   const pump = () => {
-    if (controller.signal.aborted) { waiting.splice(0).forEach(job => job.skip()); return; }
+    if (controller.signal.aborted) { held.length = 0; waiting.splice(0).forEach(job => job.skip()); return; }
     while (running < 2 && waiting.length) { running++; waiting.shift()!.run(); }
   };
   controller.signal.addEventListener('abort', pump, { once: true });
@@ -62,6 +71,38 @@ export function createGroqSpeechStream(style: string, rate: number, language: st
       if (sealed || controller.signal.aborted) return;
       const words = spokenText(text);
       if (!words) return;
+      if (incrementalAudio) {
+        // Measure the actual delivery rate, including synthesis and transport.
+        // A slow producer needs a buffer to avoid gaps in the middle of words.
+        submission = submission.then(async () => {
+          const session = await account;
+          if (controller.signal.aborted) return;
+          if (!session) throw new Error('Sign in to hear PADI’s reply.');
+          synthesisStarted ??= performance.now();
+          let played = Promise.resolve();
+          await streamSpeechAudio(session.token, words, style, rate, language, controller.signal, wave => {
+            if (controller.signal.aborted) return;
+            const play = () => {
+              played = player.enqueue(wave, onStart, () => {});
+              void played.catch(fail);
+            };
+            if (playingPackets) { play(); return; }
+            held.push(play);
+            // Each validated packet is canonical 24 kHz, 16-bit mono PCM WAV.
+            const padding = wave.endsWith('==') ? 2 : wave.endsWith('=') ? 1 : 0;
+            suppliedMs += (wave.length / 4 * 3 - padding - 44) / 48;
+            const elapsed = performance.now() - synthesisStarted!;
+            if ((suppliedMs >= 250 && suppliedMs >= 2 * elapsed) ||
+                (suppliedMs >= 1000 && suppliedMs >= 1.25 * elapsed)) releaseAudio();
+          });
+          const credit = () => {
+            void played.then(() => { if (!controller.signal.aborted) completed(words); }).catch(fail);
+          };
+          if (playingPackets) credit();
+          else if (!controller.signal.aborted) held.push(credit);
+        }).catch(fail);
+        return;
+      }
       // Keep the first requests immediate. Combine only text still waiting for
       // a synthesis slot, reducing tiny clips and repeated provider round trips.
       const tail=waiting.at(-1);
@@ -98,6 +139,7 @@ export function createGroqSpeechStream(style: string, rate: number, language: st
       sealed = true;
       try {
         await submission.catch(fail);
+        releaseAudio();
         await player.finish().catch(fail);
         if (failure) throw failure;
       } finally {

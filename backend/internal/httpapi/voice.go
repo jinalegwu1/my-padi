@@ -27,6 +27,7 @@ func registerVoiceRoutes(mux *http.ServeMux, deps Dependencies) {
 	uploads := make(chan struct{}, 4)
 	registerSpeechSamples(mux, deps.Synthesis, deps.Logger)
 	mux.HandleFunc("/v1/voice/speak", synthesisHandler(deps))
+	mux.HandleFunc("/v1/voice/listen", liveRecognitionHandler(deps))
 	mux.HandleFunc("/v1/voice/config", func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodGet) {
 			return
@@ -42,10 +43,10 @@ func registerVoiceRoutes(mux *http.ServeMux, deps Dependencies) {
 			groqSpeech = speech.SupportsGroqLiveSpeech()
 		}
 		localOutput := false
-		var speechLanguages []string
+		var speechLanguages voice.SpeechLanguages
 		if speech, ok := deps.Synthesis.(interface {
 			SupportsLocalSpeech() bool
-			SpeechLanguages(context.Context) []string
+			SpeechLanguages(context.Context) voice.SpeechLanguages
 		}); ok && speech.SupportsLocalSpeech() {
 			localOutput = true
 			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
@@ -64,9 +65,11 @@ func registerVoiceRoutes(mux *http.ServeMux, deps Dependencies) {
 			"enabled": deps.Speech != nil && deps.Auth != nil, "max_seconds": 60,
 			"natural_speech": deps.Synthesis != nil, "live_speech": liveSpeech, "language_selection": true,
 			"groq_conversation": groqConversation, "groq_live_speech": groqSpeech,
-			"voice_text_streaming": groqConversation, "local_speech": localOutput, "speech_languages": speechLanguages,
+			"voice_text_streaming": groqConversation, "local_speech": localOutput, "speech_languages": speechLanguages.Supported,
 			"local_transcription": localSpeech, "transcription_ready": state.Ready,
-			"transcription_error": state.Error, "transcription_model": state.Model,
+			"live_recognition_languages": state.LiveLanguages,
+			"streaming_speech_languages": speechLanguages.Streaming,
+			"transcription_error":        state.Error, "transcription_model": state.Model,
 			"accepted_audio_formats": []string{"audio/webm;codecs=opus", "audio/mp4", "audio/wav"},
 		})
 	})

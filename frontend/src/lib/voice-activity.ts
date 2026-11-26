@@ -1,6 +1,6 @@
-/** Short PCM windows stay on the device until a speaking turn ends. */
+/** Keep a short pre-roll so speech onset and interruptions retain the first syllable. */
 export type PCMFrame = { data: ArrayBuffer; sampleRate: number; channels: number; voiceLevel?:number; capturedAt?:number };
-export type Utterance = { pcm: Uint8Array; sampleRate: number };
+export type Utterance = { pcm: Uint8Array; sampleRate: number; lastVoiceAt?: number };
 
 export class VoiceActivity {
   private frames: Uint8Array[] = [];
@@ -12,9 +12,10 @@ export class VoiceActivity {
   private durationMs = 0;
   private active = false;
   private noise = -65;
+  private lastVoiceAt = 0;
 
-  constructor(private began: () => void, private ended: (utterance: Utterance) => void,
-    private options:{onsetMs?:number;silenceMs?:number}={}) {}
+  constructor(private began: (rate: number, startedAt: number) => void, private ended: (utterance: Utterance) => void,
+    private options:{onsetMs?:number;silenceMs?:number | (() => number); audio?:(pcm:Uint8Array)=>void}={}) {}
   get speaking() { return this.active; }
 
   reset() {
@@ -33,6 +34,7 @@ export class VoiceActivity {
     const db = frame.voiceLevel??20*Math.log10(Math.max(1e-7,Math.sqrt(sum/(pcm.length/2))));
     const ms = pcm.length / 2 / frame.sampleRate * 1000;
     const voiced = db > Math.max(-48, Math.min(-26, this.noise+12));
+    if (voiced) this.lastVoiceAt = frame.capturedAt === undefined ? performance.now() : frame.capturedAt * 1000;
     if (!this.active) {
       this.preRoll.push(pcm); this.preDuration += ms;
       while (this.preDuration > 500 && this.preRoll.length > 1) this.preDuration -= this.preRoll.shift()!.length / 2 / this.rate * 1000;
@@ -40,18 +42,21 @@ export class VoiceActivity {
       this.speechMs = voiced ? this.speechMs+ms : 0;
       if (this.speechMs >= (this.options.onsetMs??180)) {
         this.active = true; this.frames = this.preRoll; this.preRoll = []; this.preDuration = 0; this.durationMs = this.speechMs; this.quietMs = 0;
-        this.began();
+        this.began(this.rate, Math.max(0, this.lastVoiceAt - this.speechMs));
+        this.frames.forEach(buffer => this.options.audio?.(buffer));
       }
       return;
     }
     this.frames.push(pcm); this.durationMs += ms;
+    this.options.audio?.(pcm);
     this.quietMs = voiced ? 0 : this.quietMs+ms;
-    if (this.quietMs >= (this.options.silenceMs??750) || this.durationMs >= Math.min(55_000,7*1024*1024/(2*this.rate)*1000)) {
+    const silence = typeof this.options.silenceMs === 'function' ? this.options.silenceMs() : this.options.silenceMs;
+    if (this.quietMs >= (silence??750) || this.durationMs >= Math.min(55_000,7*1024*1024/(2*this.rate)*1000)) {
       const audio = new Uint8Array(this.frames.reduce((size,buffer)=>size+buffer.length,0));
       let offset=0; this.frames.forEach(buffer=>{ audio.set(buffer,offset); offset+=buffer.length; });
       const rate=this.rate;
       this.reset();
-      this.ended({pcm:audio,sampleRate:rate});
+      this.ended({pcm:audio,sampleRate:rate,lastVoiceAt:this.lastVoiceAt});
     }
   }
 }

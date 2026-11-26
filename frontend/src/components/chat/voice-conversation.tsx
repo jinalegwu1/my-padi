@@ -1,15 +1,17 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFocusEffect, useIsFocused } from 'expo-router';
-import { useCallback, useEffect, useRef } from 'react';
-import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PadiOrb, type OrbState } from '@/components/padi-orb';
 import { ChatLocation } from '@/components/chat/chat-location';
+import { VoiceCaption } from '@/components/voice/voice-caption';
 import { fonts, spacing, useColors, useType } from '@/constants/theme';
 import { usePreferences } from '@/hooks/use-preferences';
 import { useTranslation } from '@/hooks/use-translation';
 import { useVoiceSession } from '@/hooks/use-voice-session';
+import { unlockVoicePlayback } from '@/lib/voice-playback';
 
 type Props = {
   autoStart?: boolean;
@@ -23,24 +25,38 @@ export function VoiceConversation({ autoStart = false, onEnd, onText, onMenu }: 
   const type = useType();
   const { width } = useWindowDimensions();
   const { t } = useTranslation();
-  const { preferences } = usePreferences();
+  const { preferences, update } = usePreferences();
   const voice = useVoiceSession();
   const focused = useIsFocused();
   const attempted = useRef(false);
+  const [requested, setRequested] = useState(false);
+  const captions = useRef<ScrollView>(null);
+  const followWords = useRef(true);
   useFocusEffect(useCallback(() => () => { void voice.session.cancel(); }, [voice.session]));
 
   useEffect(() => {
-    if (!focused || !autoStart || !voice.ready || voice.chatBusy || attempted.current) return;
+    if (!focused || !voice.ready || voice.chatBusy || voice.connected || voice.phase === 'preparing') return;
+    if (!requested && (!autoStart || attempted.current)) return;
     attempted.current = true;
-    voice.connect(true, false, true);
-  }, [autoStart, focused, voice.ready, voice.chatBusy, voice.connect]);
+    setRequested(false);
+    voice.connect(true, false, autoStart);
+  }, [autoStart, requested, focused, voice.ready, voice.chatBusy, voice.connected, voice.phase, voice.connect]);
 
   const busy = voice.connected || voice.phase === 'preparing';
   const state: OrbState = voice.phase === 'preparing' || voice.phase === 'transcribing' ? 'thinking' : voice.phase;
   const error = voice.configurationError ?? voice.error ?? voice.chatError;
   const handlePortrait = () => {
-    if(voice.connected)void voice.session.reactToTouch();
-    else if(!busy&&voice.ready&&!voice.chatBusy)voice.connect();
+    if (voice.connected) {
+      void voice.session.reactToTouch();
+    } else if (!busy && voice.ready && !voice.chatBusy) {
+      attempted.current = true;
+      voice.connect();
+    } else if (!busy) {
+      // Mobile browsers need a user gesture to unlock sound, even when the
+      // server's capability check is still in flight.
+      void unlockVoicePlayback().catch(() => {});
+      setRequested(true);
+    }
   };
 
   return (
@@ -76,6 +92,15 @@ export function VoiceConversation({ autoStart = false, onEnd, onText, onMenu }: 
           {t(voice.phase === 'idle' ? 'voice.tapToChat' : voice.phase === 'preparing' || voice.phase === 'transcribing' || voice.phase === 'thinking' ? 'voice.thinking' : voice.phase === 'speaking' ? 'voice.speaking' : 'voice.listening')}
         </Text>}
       </View>
+      {(voice.userText || voice.padiText) ? <ScrollView ref={captions} style={styles.captions}
+        contentContainerStyle={styles.captionContent} keyboardShouldPersistTaps="handled"
+        onContentSizeChange={() => { if (followWords.current) captions.current?.scrollToEnd({ animated: false }); }}
+        onScroll={({nativeEvent:e}) => { followWords.current=e.contentOffset.y + e.layoutMeasurement.height >= e.contentSize.height - 32; }}
+        scrollEventThrottle={100}>
+        <VoiceCaption visible={preferences.showVoiceTranscript} onToggle={() => update({showVoiceTranscript: !preferences.showVoiceTranscript})}
+          userText={voice.userText} padiText={voice.padiText} youSaidLabel={t('voice.youSaid')}
+          showLabel={t('voice.showWords')} hideLabel={t('voice.hideWords')} />
+      </ScrollView> : null}
       {error ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite"
         style={[styles.error, { color: colors.danger, fontSize: type.bodySmall }]}>{error}</Text> : null}
     </SafeAreaView>
@@ -109,6 +134,8 @@ const styles = StyleSheet.create({
   },
   textSwitchText: { fontFamily: fonts.semibold },
   orbArea: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  captions: { flexGrow: 0, maxHeight: '42%', alignSelf: 'stretch' },
+  captionContent: { paddingHorizontal: spacing.base, paddingBottom: spacing.base },
   status: { fontFamily: fonts.medium, textAlign: 'center', paddingHorizontal: spacing.base },
   error: { fontFamily: fonts.regular, lineHeight: 22, textAlign: 'center', padding: spacing.base },
 });

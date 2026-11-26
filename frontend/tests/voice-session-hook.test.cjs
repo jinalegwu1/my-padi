@@ -23,7 +23,7 @@ async function fixture(config = {}, settings = {}, failure) {
       local_transcription: true, transcription_ready: true, natural_speech: true, groq_live_speech: true, ...config }) },
     '@/lib/session': { readSession: async () => ({ token: 'token', user: { id: 'a' } }), subscribeSession: () => () => {} },
     '@/lib/voice-capture': { VoiceCapture: class {} }, '@/lib/voice-audio': voiceAudio,
-    '@/lib/streaming-speech': { createGroqSpeechStream: (...args) => {
+    '@/lib/streaming-speech': { createSpeechStream: (...args) => {
       calls.push(['groq', ...args]);
       return { enqueue: text => calls.push(['text', text]), finish: async () => { if (failure) throw failure; } };
     } },
@@ -34,6 +34,7 @@ async function fixture(config = {}, settings = {}, failure) {
     } },
     '@/lib/voice-playback': { unlockVoicePlayback: async () => {} },
     '@/lib/voice-echo': { suppressPlaybackEcho:frame=>frame },
+    '@/lib/live-recognition': { openLiveRecognition: async () => ({}) },
   });
   function Probe() { voice = useVoiceSession(); return null; }
   await act(async () => { root = create(React.createElement(Probe)); });
