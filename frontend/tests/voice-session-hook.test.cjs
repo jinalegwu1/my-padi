@@ -44,7 +44,7 @@ test('portrait calls and replies use the Groq stream with the selected voice', a
   const f = await fixture();
   try {
     assert.equal(f.voice.ready, true); f.voice.connect();
-    assert.deepEqual(f.calls[0], ['start', { greet: true, wake: false }]);
+    assert.deepEqual(f.calls[0], ['start', { greet: true, wake: false, greetBeforeCapture: false }]);
     await f.deps.greet(new AbortController().signal, () => {}, () => {});
     assert.deepEqual(f.calls[1].slice(0, 4), ['groq', 'ada', 1, 'en-NG']);
     assert.deepEqual(f.calls[2].slice(0, 3), ['greeting', 'a', 'en-NG']);

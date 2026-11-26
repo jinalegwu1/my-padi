@@ -1,4 +1,4 @@
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -12,9 +12,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ChatHeader } from '@/components/chat/chat-header';
+import { ChatLocation } from '@/components/chat/chat-location';
 import { ChatSidebar } from '@/components/chat/chat-sidebar';
 import { Composer } from '@/components/chat/composer';
 import { MessageBubble } from '@/components/chat/message-bubble';
+import { VoiceConversation } from '@/components/chat/voice-conversation';
+import { WakeManager } from '@/components/wake-manager';
 import { EmptyState } from '@/components/ui/empty-state';
 import { fonts, spacing, useColors, useType } from '@/constants/theme';
 import { useChat } from '@/hooks/use-chat';
@@ -32,17 +35,18 @@ import type { Message, ResponseRating } from '@/types';
 /**
  * The main conversation screen — the centre of the application.
  *
- * PADI's animated Orb is deliberately NOT here: it belongs to the voice screen
- * and only appears once the user activates voice. Chat replies come from the
- * authenticated Go API; the dedicated voice screen shares this conversation.
+ * Spoken and typed turns share the selected conversation.
  */
 export default function ConversationScreen() {
   const router = useRouter();
+  const { mode } = useLocalSearchParams<{ mode?: string }>();
+  const textMode = mode === 'text';
+  const focused = useIsFocused();
   const colors = useColors();
   const type = useType();
   const { t } = useTranslation();
   const { preferences } = usePreferences();
-  const { messages, status, isThinking, sendError, sendWithResponse, greet, rateResponse, reset } = useChat();
+  const { messages, status, isThinking, sendError, sendWithResponse, greet, rateResponse, conversationID, historyFor, selectConversation, newChat } = useChat();
   const listRef = useRef<FlatList<Message>>(null);
   const [session, setSession] = useState<AppSession | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
@@ -247,12 +251,10 @@ export default function ConversationScreen() {
       setSessionError('The saved session could not be cleared. Restart the app before signing in again.');
       setSession(null);
       setSpeech(null);
-      reset();
       return;
     }
     setSession(null);
     setSpeech(null);
-    reset();
     if (current) {
       try {
         await revokeSession(current.token);
@@ -267,16 +269,18 @@ export default function ConversationScreen() {
       ].filter(Boolean);
       setSignOutNotice(`You are signed out on this device. ${notices.join(' ')}`);
     }
-  }, [reset, session, stopSpeech]);
+  }, [session, stopSpeech]);
 
   useEffect(() => {
     if (!session) { greetingAttempt.current = null; return; }
-    if (status !== 'ready' || isThinking || greetingAttempt.current === session.user.id) return;
+    if (!textMode || !focused) return;
+    const checkIn = session.user.id + '/' + conversationID;
+    if (status !== 'ready' || isThinking || greetingAttempt.current === checkIn) return;
     const history = visibleChatMessages(messages, session.user.id);
     if (history.some(message => message.backendUserID === session.user.id || message.role === 'user')) return;
-    greetingAttempt.current = session.user.id;
+    greetingAttempt.current = checkIn;
     void greet(session.user.id, preferences.languageCode);
-  }, [status, session, messages, isThinking, greet, preferences.languageCode]);
+  }, [status, session, messages, conversationID, isThinking, greet, preferences.languageCode, textMode, focused]);
 
   if (status === 'loading') {
     return (
@@ -318,6 +322,7 @@ export default function ConversationScreen() {
   if (!session) {
     return (
       <SafeAreaView style={[styles.root, { backgroundColor: colors.background }]}>
+        <ChatLocation />
         <EmptyState
           icon="lock-closed-outline"
           title="Sign in to chat with PADI"
@@ -335,34 +340,50 @@ export default function ConversationScreen() {
     );
   }
 
-  return (
-    <SafeAreaView
-      style={[styles.root, { backgroundColor: colors.background }]}
-      edges={['top', 'left', 'right']}>
-      <ChatHeader
-        name={t('chat.title')}
-        status={t('chat.status')}
-        onOpenMenu={() => setSidebarOpen(true)}
-        menuLabel="Open PADI menu"
-        onSwitchToVoice={() => {
-          void unlockVoicePlayback().catch(() => undefined);
-          router.push('/voice');
-        }}
-        voiceLabel="Switch to voice"
-      />
-
-      <ChatSidebar
+  const sidebar = <ChatSidebar
         visible={sidebarOpen}
         displayName={preferences.displayName}
         onClose={() => setSidebarOpen(false)}
-        onNewChat={() => { setSidebarOpen(false); stopSpeech(); setSpeech(null); greetingAttempt.current = null; reset(); }}
+        history={sidebarOpen ? historyFor(session.user.id) : []}
+        selectedID={conversationID}
+        onOpenChat={id => { stopSpeech(); setFeedbackError(null); selectConversation(id); router.setParams({ mode: 'text' }); setSidebarOpen(false); }}
+        onNewChat={() => { stopSpeech(); setFeedbackError(null); newChat(); setSidebarOpen(false); }}
         onSettings={() => { setSidebarOpen(false); router.push('/(tabs)/settings'); }}
         onMemory={() => { setSidebarOpen(false); router.push('/memory'); }}
         onDeviceActions={() => { setSidebarOpen(false); router.push('/device-actions'); }}
         onReminders={() => { setSidebarOpen(false); router.push('/(tabs)/reminders'); }}
         onWeather={() => { setSidebarOpen(false); router.push('/weather'); }}
         onSignOut={() => { setSidebarOpen(false); void handleSignOut(); }}
+      />;
+
+  const switchToText = () => router.setParams({ mode: 'text' });
+  const switchToVoice = () => {
+    stopSpeech();
+    void unlockVoicePlayback().catch(() => undefined);
+    router.setParams({ mode: 'voice' });
+  };
+  if (!textMode) {
+    return <>
+      <VoiceConversation key={session.user.id + '/' + conversationID} autoStart
+        onText={switchToText} onEnd={switchToText} onMenu={() => setSidebarOpen(true)} />
+      {sidebar}
+    </>;
+  }
+  return (
+    <SafeAreaView
+      style={[styles.root, { backgroundColor: colors.background }]}
+      edges={['top', 'left', 'right']}>
+      {focused && preferences.wakeWordEnabled && <WakeManager />}
+      <ChatHeader
+        name={t('chat.title')}
+        status={t('chat.status')}
+        onOpenMenu={() => setSidebarOpen(true)}
+        menuLabel="Open PADI menu"
+        onSwitchToVoice={switchToVoice}
+        voiceLabel="Switch to voice"
       />
+      <ChatLocation key={session.user.id} />
+      {sidebar}
 
       <KeyboardAvoidingView
         style={styles.root}
@@ -370,7 +391,7 @@ export default function ConversationScreen() {
         keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}>
         <FlatList
           ref={listRef}
-        data={visibleChatMessages(messages, session.user.id)}
+          data={visibleChatMessages(messages, session.user.id)}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
             <MessageBubble
@@ -405,12 +426,9 @@ export default function ConversationScreen() {
         ) : null}
 
         <Composer
-          key={session.user.id}
+          key={conversationID}
           onSend={handleSend}
-          onOpenVoice={() => {
-            void unlockVoicePlayback().catch(() => undefined);
-            router.push('/voice');
-          }}
+          onOpenVoice={switchToVoice}
           placeholder={t('chat.placeholder')}
           sendLabel={t('chat.send')}
           voiceLabel={t('chat.voice')}

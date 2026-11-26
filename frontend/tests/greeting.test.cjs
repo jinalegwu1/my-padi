@@ -1,14 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadTS } = require('./helpers/load-ts.cjs');
-const { greetingRequest } = loadTS('src/lib/greeting.ts');
+const { greetingRequest, nextCheckIn } = loadTS('src/lib/greeting.ts');
 
-test('greeting is sent as an actual conversational turn', () => {
-  assert.equal(greetingRequest(), 'Hi');
-  assert.equal(greetingRequest('pcm-NG'), 'Hi');
-  assert.equal(greetingRequest('fr-FR'), 'Hi');
-});
-
-test('greetings do not inject previous opener text as synthetic user content', () => {
+test('a check-in carries only public cues, never prior message text', () => {
+  const cue = nextCheckIn([{ backendUserID: 'a', backendChat: true, role: 'padi',
+    text: 'Our private detail about plantain', checkIn: { gist_seed: 'pockets' } }], 'a');
+  assert.ok(cue.recent_topics.includes('plantain'));
+  assert.ok(cue.recent_topics.includes('pockets'));
+  assert.ok(!cue.recent_topics.includes(cue.gist_seed));
+  assert.doesNotMatch(greetingRequest(cue), /private detail/);
   assert.equal(greetingRequest(), 'Hi');
 });

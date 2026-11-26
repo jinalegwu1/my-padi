@@ -10,13 +10,15 @@ const frontend = process.env.PADI_VOICE_FRONTEND_URL || 'http://localhost:8081';
       ['/voice','End chat','/chat',true],
       ['/weather','Go back','/chat',true],
       ['/auth','Back to chat','/chat',true],
-      ['/onboarding/language','Back','/onboarding/welcome',false],
-      ['/onboarding/location','Back','/onboarding/language',false],
-      ['/onboarding/name','Back','/onboarding/location',false],
+      ['/onboarding/country','Back','/onboarding/welcome',false],
+      ...['language','location','name'].flatMap(step => [
+        ['/onboarding/'+step,null,'/onboarding/country',false],
+        ['/onboarding/'+step,null,'/chat',true],
+      ]),
     ]) {
       const context=await browser.newContext({viewport:{width:430,height:900}});
       await context.addInitScript(onboarded=>{
-        localStorage.setItem('app:v1:preferences',JSON.stringify({onboarded,countryCode:'NG',languageCode:'en-NG',displayName:'Navigation check',appearance:'light',voiceId:'ada',voiceRate:1,reduceMotion:true}));
+        localStorage.setItem('app:v1:preferences',JSON.stringify({onboarded,countryCode:'NG',languageCode:'en-NG',displayName:'Navigation check',appearance:'light',textScale:1,voiceId:'ada',voiceRate:1,reduceMotion:true}));
       },onboarded);
       const page=await context.newPage();
       const errors=[];
@@ -27,7 +29,7 @@ const frontend = process.env.PADI_VOICE_FRONTEND_URL || 'http://localhost:8081';
       await page.goto(frontend+route);
       // Exercise both a direct link and the same route after a refresh.
       await page.reload();
-      await page.getByRole('button',{name:button,exact:true}).last().click();
+      if (button) await page.getByRole('button',{name:button,exact:true}).last().click();
       await page.waitForURL(url=>url.pathname===target);
       assert.equal(errors.some(error=>error.includes('GO_BACK')),false,route+' dispatched back without history');
       assert.deepEqual(errors,[]);

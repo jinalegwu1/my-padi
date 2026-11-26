@@ -3,28 +3,36 @@ import { useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { fonts, radius, spacing, useColors, useType } from '@/constants/theme';
+import { useTranslation } from '@/hooks/use-translation';
 import { searchCountries } from '@/data/countries';
 import type { Country } from '@/types';
 
 type Props = {
+  onboarding?: boolean;
   selectedCode: string | null;
   onSelect: (country: Country) => void;
   searchPlaceholder: string;
 };
 
 /** Searchable country list. Used by onboarding and by Settings. */
-export function CountryPicker({ selectedCode, onSelect, searchPlaceholder }: Props) {
-  const colors = useColors();
+export function CountryPicker({ selectedCode, onSelect, searchPlaceholder, onboarding = false }: Props) {
+  const theme = useColors();
+  const colors = onboarding ? { ...theme, card: '#FAF8F1', text: '#19352E', border: '#D7D9CD',
+    primary: '#765522', primarySoft: '#EFEDDF', muted: '#56655B' } : theme;
+  const { t } = useTranslation();
   const type = useType();
   const [query, setQuery] = useState('');
-  const results = useMemo(() => searchCountries(query), [query]);
+  const results = useMemo(() => {
+    const matches = searchCountries(query);
+    return onboarding ? [...matches].sort((a, b) => a.name.localeCompare(b.name)) : matches;
+  }, [query, onboarding]);
 
   return (
     <View style={styles.wrap}>
       <View
         style={[
           styles.search,
-          { backgroundColor: colors.card, borderColor: colors.border },
+          { backgroundColor: onboarding ? colors.primarySoft : colors.card, borderColor: colors.border },
         ]}>
         <Ionicons name="search" size={17} color={colors.muted} />
         <TextInput
@@ -39,7 +47,7 @@ export function CountryPicker({ selectedCode, onSelect, searchPlaceholder }: Pro
         {query.length > 0 ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Clear search"
+            accessibilityLabel={t('country.clear')}
             onPress={() => setQuery('')}
             hitSlop={8}>
             <Ionicons name="close-circle" size={17} color={colors.muted} />
@@ -52,22 +60,23 @@ export function CountryPicker({ selectedCode, onSelect, searchPlaceholder }: Pro
         keyExtractor={(item) => item.code}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[styles.list, onboarding && { gap: 0 }]}
         ListEmptyComponent={
           <Text style={[styles.empty, { color: colors.muted, fontSize: type.bodySmall }]}>
-            No country matches that search.
+            {t('country.noMatches')}
           </Text>
         }
         renderItem={({ item }) => {
           const selected = item.code === selectedCode;
           return (
             <Pressable
-              accessibilityRole="radio"
+              accessibilityRole={onboarding ? 'button' : 'radio'}
               accessibilityState={{ selected }}
-              accessibilityLabel={`${item.name}, ${item.dialCode}`}
+              accessibilityLabel={onboarding ? item.name : `${item.name}, ${item.dialCode}`}
               onPress={() => onSelect(item)}
               style={({ pressed }) => [
                 styles.row,
+                onboarding && styles.countryRow,
                 {
                   backgroundColor: selected ? colors.primarySoft : colors.card,
                   borderColor: selected ? colors.primary : colors.border,
@@ -79,13 +88,13 @@ export function CountryPicker({ selectedCode, onSelect, searchPlaceholder }: Pro
                 <Text style={[styles.name, { color: colors.text, fontSize: type.body }]}>
                   {item.name}
                 </Text>
-                <Text style={[styles.dial, { color: colors.muted, fontSize: type.caption }]}>
+                {!onboarding && <Text style={[styles.dial, { color: colors.muted, fontSize: type.caption }]}>
                   {item.dialCode}
-                </Text>
+                </Text>}
               </View>
               {selected ? (
                 <Ionicons name="checkmark-circle" size={21} color={colors.primary} />
-              ) : null}
+              ) : onboarding ? <Ionicons name="chevron-forward" size={17} color={colors.muted} /> : null}
             </Pressable>
           );
         }}
@@ -116,6 +125,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
   },
+  countryRow: { minHeight: 60, paddingHorizontal: 4, borderRadius: 0, borderWidth: 0, borderBottomWidth: StyleSheet.hairlineWidth },
   flag: { fontSize: 24 },
   rowText: { flex: 1, gap: 1 },
   name: { fontFamily: fonts.medium },

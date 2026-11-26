@@ -21,15 +21,22 @@ const executablePath = process.env.PADI_VOICE_BROWSER_EXECUTABLE ||
         voiceId: 'baby', voiceRate: 1, notificationsEnabled: false, dailyCheckIn: false,
         checkInTime: '08:00', showVoiceTranscript: true,
       }));
-      localStorage.setItem('app:v1:chat-messages', '[]');
+      if (!localStorage.getItem('app:v1:chat-messages')) localStorage.setItem('app:v1:chat-messages', '[]');
     }, session);
     const page = await context.newPage();
     page.setDefaultTimeout(20000);
     page.setDefaultNavigationTimeout(120000);
     const sends = [];
+    const openings = [];
+    const turns = [];
     let hold = false, release, fail = false;
     await page.route('**/v1/chat', async route => {
       const request = route.request().postDataJSON();
+      if (request.greeting) {
+        openings.push(JSON.parse(request.messages.at(-1).content.split('\n')[1]));
+        return route.fulfill({ json: { reply: 'Check-in ' + openings.length, memory_revision: 0 } });
+      }
+      turns.push(request.messages);
       sends.push(request.messages.at(-1).content);
       if (hold) await new Promise(resolve => { release = resolve; });
       await route.fulfill({ status: fail ? 503 : 200, contentType: 'application/json', body: JSON.stringify(fail
@@ -38,7 +45,8 @@ const executablePath = process.env.PADI_VOICE_BROWSER_EXECUTABLE ||
     });
     // Opening chat and pressing Enter must never open a microphone or generate speech.
     await page.route('**/v1/voice/speak', () => assert.fail('keyboard chat generated speech'));
-    await page.goto(frontend + '/chat');
+    await page.goto(frontend + '/chat?mode=text');
+    await page.getByText('Check-in 1', { exact: true }).waitFor();
     const input = page.locator('textarea').first();
     await input.fill('Enter sends this message');
     await input.press('Enter');
@@ -69,6 +77,24 @@ const executablePath = process.env.PADI_VOICE_BROWSER_EXECUTABLE ||
     await input.press('Enter');
     await page.getByRole('alert').filter({ hasText: 'The test service is unavailable.' }).waitFor();
     assert.equal(await input.inputValue(), 'Next draft');
+    fail = false;
+    const menu = () => page.getByRole('button', { name: 'Open PADI menu' }).click();
+    await menu();
+    await page.getByRole('button', { name: /New chat/ }).click();
+    await page.getByText('Check-in 2', { exact: true }).waitFor();
+    assert.notEqual(openings[0].gist_seed, openings[1].gist_seed);
+    assert.equal(await page.getByText('Enter sends this message', {exact:true}).count(), 0);
+    await page.reload();
+    await page.getByText('Check-in 3', { exact: true }).waitFor();
+    await menu();
+    await page.getByRole('button', { name: /Enter sends this message/ }).click();
+    await page.getByText('First line\nSecond line', { exact: true }).waitFor();
+    await input.fill('Back in the original chat');
+    await input.press('Enter');
+    await page.waitForFunction(() => document.querySelector('textarea')?.value === '');
+    assert.ok(turns.at(-1).some(m => m.content === 'Enter sends this message'));
+    assert.ok(!turns.at(-1).some(m => m.content === 'Check-in 2'));
+    console.log('PASS: fresh greetings, reopening history after reload and isolated thread context.');
     console.log('PASS: browser Enter sends once, Shift+Enter adds a line, and pending/failed sends preserve the draft.');
     await context.close();
   } finally { await browser.close(); }

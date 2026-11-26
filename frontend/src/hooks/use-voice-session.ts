@@ -79,10 +79,10 @@ export function useVoiceSession() {
     changed: next => { if (mounted.current) setSnapshot(next); },
   });
   const session = sessionRef.current;
-  const connect = useCallback((greet = true, wake = false) => {
+  const connect = useCallback((greet = true, wake = false, greetBeforeCapture = false) => {
     // Start unlocking synchronously in the tap handler while capture prepares.
     void unlockVoicePlayback().catch(error => { void session.cancel(error instanceof Error ? error.message : 'Tap to chat again to enable sound.'); });
-    void session.start({ greet, wake });
+    void session.start({ greet, wake, greetBeforeCapture });
   }, [session]);
 
   useEffect(() => {

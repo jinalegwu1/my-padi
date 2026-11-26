@@ -56,7 +56,7 @@ export class HandsfreeSession {
     return {controller:new AbortController(),spoken:'',accountID,done,finish,speechTask:Promise.resolve(),played:false};
   }
 
-  async start({greet=true,wake=false}: {greet?:boolean;wake?:boolean} = {}) {
+  async start({greet=true,wake=false,greetBeforeCapture=false}: {greet?:boolean;wake?:boolean;greetBeforeCapture?:boolean} = {}) {
     if(this.controller || this.stopping) return;
     this.wakeMode=wake;
     this.wakeActivated=false;
@@ -67,13 +67,22 @@ export class HandsfreeSession {
       if(!this.alive(controller)) return;
       if(!session) throw new Error('Sign in to talk with PADI.');
       this.session=session; this.activity.reset();
+      // On chat entry PADI can say hello while the OS asks about the microphone.
+      const opening = greetBeforeCapture && greet && this.deps.greet ? this.greet(controller) : null;
       this.capture=this.deps.capture(frame=>{
         if(this.alive(controller)&&this.snapshot.connected)this.activity.feed(this.deps.filterFrame?.(frame)??frame);
       },()=>{ void this.cancel('Voice was interrupted by the device. Tap PADI to continue.'); });
-      await this.capture.start(controller.signal);
+      try {
+        await this.capture.start(controller.signal);
+      } catch (error) {
+        await opening;
+        throw error;
+      }
       if(!this.alive(controller)) return;
       this.change({connected:true});
-      if(greet && this.deps.greet) void this.greet(controller);
+      if(opening) {
+        if(this.snapshot.phase === 'preparing') this.change({phase:'listening'});
+      } else if(greet && this.deps.greet) void this.greet(controller);
       else this.change({phase:'listening'});
     } catch(error) { if(this.alive(controller)) await this.cancel(error instanceof Error?error.message:'Voice could not start.'); }
   }
@@ -97,7 +106,7 @@ export class HandsfreeSession {
       if(owned)this.work=null;
       work.finish();
       if(this.alive(sessionController)&&owned) {
-        if(!this.draining)this.change({phase:'listening'});
+        if(!this.draining)this.change({phase:this.snapshot.connected ? 'listening' : 'preparing'});
         if(this.pending&&!this.activity.speaking&&!this.draining)void this.respond();
       }
     }

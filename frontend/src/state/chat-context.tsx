@@ -1,35 +1,47 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { nextId } from '@/data/mock-conversations';
 import { usePersistentState } from '@/hooks/use-persistent-state';
 import { APIError, sendChat, streamVoiceChat, submitResponseFeedback } from '@/lib/api';
 import { hasBackend } from '@/lib/config';
-import { chatContext } from '@/lib/chat-context';
-import { greetingRequest } from '@/lib/greeting';
+import { chatContext, conversationHistory, conversationMessages } from '@/lib/chat-context';
+import { greetingRequest, nextCheckIn } from '@/lib/greeting';
 import { clearSession, readSession, subscribeSession } from '@/lib/session';
 import type { Message, ResponseRating } from '@/types';
 
 type SendResult = { status: 'sent' | 'unauthorized' | 'failed' | 'ignored'; reply?: string; messageID?: string };
 const ChatContext = createContext<ReturnType<typeof useChatState> | null>(null);
 
-/** One shared conversation and one in-flight send for text and voice screens. */
+/** Text and voice share the selected check-in and its in-flight request. */
 function useChatState() {
-  const [messages, setMessages, status] = usePersistentState<Message[]>('chat-messages', []);
-  const latest = useRef(messages);
-  latest.current = messages;
+  const [savedMessages, setMessages, status] = usePersistentState<Message[]>('chat-messages', []);
+  const latest = useRef(savedMessages);
+  latest.current = savedMessages;
+  const [conversationID, setConversationID] = useState(() => nextId('chat'));
+  const selected = useRef(conversationID);
+  const messages = useMemo(() => conversationMessages(savedMessages, conversationID), [savedMessages, conversationID]);
+  const historyFor = useCallback((owner: string) => conversationHistory(latest.current, owner), []);
   const [isThinking, setIsThinking] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const active = useRef<AbortController | null>(null);
   const epoch = useRef(0);
 
-  useEffect(() => {
-    const unsubscribe = subscribeSession(() => {
-      epoch.current++;
-      active.current?.abort();
-      setSendError(null);
-    });
-    return () => { epoch.current++; active.current?.abort(); unsubscribe(); };
+  const selectConversation = useCallback((id: string) => {
+    if (selected.current === id) return;
+    selected.current = id;
+    epoch.current++;
+    active.current?.abort();
+    active.current = null;
+    setIsThinking(false);
+    setSendError(null);
+    setConversationID(id);
   }, []);
+  const newChat = useCallback(() => selectConversation(nextId('chat')), [selectConversation]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeSession(newChat);
+    return () => { epoch.current++; active.current?.abort(); unsubscribe(); };
+  }, [newChat]);
 
   const performSend = useCallback(async (rawText: string, expectedUserID?: string, viaVoice = false, signal?: AbortSignal, languageCode?: string,
     onDelta?: (delta: string) => void, onStart?: (messageID: string) => void, greeting = false): Promise<SendResult> => {
@@ -44,6 +56,7 @@ function useChatState() {
     signal?.addEventListener('abort', abort, { once: true });
     active.current = controller;
     const started = epoch.current;
+    const threadID = selected.current;
     setIsThinking(true);
     setSendError(null);
     let userMessage: Message | undefined;
@@ -61,14 +74,17 @@ function useChatState() {
       if (controller.signal.aborted || started !== epoch.current) return { status: 'ignored' };
       if (!session) return { status: 'unauthorized' };
       if (expectedUserID && session.user.id !== expectedUserID) return { status: 'ignored' };
-      if (!greeting) userMessage = { id: nextId('user'), role: 'user', text, createdAt: Date.now(), backendUserID: session.user.id, viaVoice };
-      pending = { id: viaVoice ? nextId('padi') : nextId('pending'), role: 'padi', text: '', createdAt: Date.now(), pending: true, backendUserID: session.user.id, viaVoice };
-      const context = chatContext(latest.current, session.user.id);
+      if (!greeting) userMessage = { id: nextId('user'), role: 'user', text, createdAt: Date.now(), backendUserID: session.user.id, conversationID: threadID, viaVoice };
+      pending = { id: viaVoice ? nextId('padi') : nextId('pending'), role: 'padi', text: '', createdAt: Date.now(), pending: true, backendUserID: session.user.id, conversationID: threadID, viaVoice };
+      const thread = conversationMessages(latest.current, threadID);
+      const context = chatContext(thread, session.user.id);
+      const cue = greeting ? nextCheckIn(latest.current, session.user.id) : undefined;
+      if (cue) pending.checkIn = cue;
       requestMemoryRevision = context.memoryRevision;
       setMessages(prev => [...prev, ...(userMessage ? [userMessage] : []), pending!]);
       if (viaVoice) onStart?.(pending.id);
       try {
-        const messages = [...context.messages, { role: 'user' as const, content: text }];
+        const messages = [...context.messages, { role: 'user' as const, content: cue ? greetingRequest(cue) : text }];
         const response = viaVoice
           ? await streamVoiceChat(session.token, messages, context.memoryRevision, controller.signal, delta => {
             streamedText += delta;
@@ -144,13 +160,8 @@ function useChatState() {
   const delivered=useCallback((id:string,text:string,interrupted:boolean,accountID:string)=>{
     setMessages(prev=>prev.map(message=>message.id===id&&message.backendUserID===accountID?{...message,voiceSpokenText:text,voiceInterrupted:interrupted}:message));
   },[setMessages]);
-  const addGreeting = useCallback((text: string) => setMessages(prev => [...prev, { id: nextId('padi'), role: 'padi', text, createdAt: Date.now() }]), [setMessages]);
-  const reset = useCallback(() => {
-    active.current?.abort();
-    setSendError(null);
-    setMessages([]);
-  }, [setMessages]);
-  return { messages, status, isThinking, sendError, send, sendWithResponse, sendVoice, greet, rateResponse, delivered, addGreeting, reset };
+  return { messages, status, isThinking, sendError, send, sendWithResponse, sendVoice, greet, rateResponse, delivered,
+    conversationID, historyFor, selectConversation, newChat };
 }
 
 export function ChatProvider({ children }: { children: ReactNode }) {

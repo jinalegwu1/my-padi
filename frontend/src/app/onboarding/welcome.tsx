@@ -1,150 +1,62 @@
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { OnboardingShell } from '@/components/onboarding/onboarding-shell';
-import { PadiAvatar } from '@/components/padi-avatar';
-import { Button } from '@/components/ui/button';
-import { fonts, radius, spacing, useColors, useType } from '@/constants/theme';
-import { usePreferences } from '@/hooks/use-preferences';
+import { identity, PadiWordmark } from '@/components/onboarding/padi-wordmark';
+import { fonts, useType } from '@/constants/theme';
 import { useTranslation } from '@/hooks/use-translation';
-import { speakPadiWelcome } from '@/lib/speech';
 
-/**
- * Step 1 — PADI's warm introduction.
- * No questions here: just a hello and a promise of what the app is for.
- */
+const features = [
+  ['welcome.gist', 'welcome.gist.detail'],
+  ['welcome.checkIns', 'welcome.checkIns.detail'],
+  ['welcome.history', 'welcome.history.detail'],
+] as const;
+
 export default function WelcomeStep() {
   const router = useRouter();
-  const colors = useColors();
+  const { width, height } = useWindowDimensions();
+  const wide = width >= 820;
   const type = useType();
   const { t } = useTranslation();
-  const { preferences } = usePreferences();
-  const [speechError, setSpeechError] = useState('');
-  const [preparingVoice, setPreparingVoice] = useState(false);
-  const speech = useRef<AbortController | null>(null);
 
-  const speakIntroduction = useCallback(() => {
-    speech.current?.abort();
-    const controller = new AbortController(); speech.current = controller;
-    setSpeechError('');
-    setPreparingVoice(true);
-    void speakPadiWelcome(preferences.voiceId, preferences.languageCode, controller.signal, () => {
-      if (speech.current === controller && !controller.signal.aborted) setPreparingVoice(false);
-    }).catch(error => {
-      if (speech.current === controller && !controller.signal.aborted) setSpeechError(error instanceof Error ? error.message : 'PADI’s natural voice is unavailable. You can continue with text.');
-    }).finally(() => {
-      if (speech.current === controller) { speech.current = null; setPreparingVoice(false); }
-    });
-  }, [preferences.languageCode, preferences.voiceId]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web') speakIntroduction();
-    return () => { speech.current?.abort(); speech.current = null; };
-  }, [speakIntroduction]);
-
-  return (
-    <OnboardingShell
-      step={1}
-      totalSteps={3}
-      stepLabel={t('onboarding.step', { current: 1, total: 3 })}
-      title={t('onboarding.welcome.title')}
-      footer={
-        <>
-          {Platform.OS === 'web' || speechError ? (
-            <Button
-              title={t('onboarding.welcome.hear')}
-              variant="secondary"
-              onPress={speakIntroduction}
-              icon="volume-high"
-              disabled={preparingVoice}
-            />
-          ) : null}
-          {preparingVoice ? <Text accessibilityLiveRegion="polite" style={{ color: colors.muted }}>Preparing PADI’s voice…</Text> : null}
-          {speechError ? (
-            <Text accessibilityRole="alert" style={[styles.speechError, { color: colors.danger }]}>
-              {speechError}
-            </Text>
-          ) : null}
-          <Button
-            title={t('onboarding.welcome.cta')}
-            onPress={() => router.push('/onboarding/language')}
-            icon="arrow-forward"
-            iconPosition="end"
-          />
-        </>
-      }>
-      <View style={styles.wrap}>
-        <View style={styles.avatarWrap}>
-          <PadiAvatar size={96} />
+  return <SafeAreaView style={styles.page}>
+    <ScrollView contentContainerStyle={styles.scroller}>
+      <View style={[styles.layout, wide && styles.spread]}>
+        <View style={[styles.hero, wide ? styles.heroWide : { paddingVertical: height < 720 ? 26 : 52 }]}>
+          <PadiWordmark large={wide} />
+          <Text style={[styles.subtitle, { fontSize: type.body }]}>{t('welcome.companion')}</Text>
         </View>
-
-        <View
-          style={[
-            styles.bubble,
-            { backgroundColor: colors.card, borderColor: colors.border },
-          ]}>
-          <Text
-            style={[
-              styles.body,
-              {
-                color: colors.text,
-                fontSize: type.body,
-                lineHeight: type.lineHeight(type.body),
-              },
-            ]}>
-            {t('onboarding.welcome.body')}
-          </Text>
-        </View>
-
-        <View style={styles.promises}>
-          {[
-            { icon: '💬', text: 'Conversation first — chat freely, any time.' },
-            { icon: '🔒', text: 'Act only with permission — you stay in control.' },
-            { icon: '🌍', text: 'Speaks your language, in your own way.' },
-          ].map((item) => (
-            <View
-              key={item.text}
-              style={[
-                styles.promise,
-                { backgroundColor: colors.cardMuted, borderColor: colors.border },
-              ]}>
-              <Text style={styles.promiseIcon}>{item.icon}</Text>
-              <Text
-                style={[
-                  styles.promiseText,
-                  { color: colors.textSecondary, fontSize: type.bodySmall },
-                ]}>
-                {item.text}
-              </Text>
-            </View>
-          ))}
+        <View style={[styles.features, wide && styles.featuresWide]}>
+          {features.map(([title, description]) => <View key={title} style={styles.row}>
+            <Text style={[styles.title, { fontSize: type.subheading * 1.42 }]}>{t(title)}</Text>
+            <Text style={[styles.detail, { fontSize: type.bodySmall, lineHeight: type.lineHeight(type.bodySmall) }]}>{t(description)}</Text>
+          </View>)}
+          <Pressable accessibilityRole="button" accessibilityLabel={t('welcome.start')}
+            onPress={() => router.push('/onboarding/country')}
+            style={({ pressed }) => [styles.button, { backgroundColor: pressed ? '#CFA560' : identity.gold }]}>
+            <Text style={[styles.buttonText, { fontSize: type.body }]}>{t('welcome.start')}</Text>
+            <Ionicons name="arrow-forward" size={22} color={identity.forest} />
+          </Pressable>
         </View>
       </View>
-    </OnboardingShell>
-  );
+    </ScrollView>
+  </SafeAreaView>;
 }
 
 const styles = StyleSheet.create({
-  wrap: { gap: spacing.lg },
-  avatarWrap: { alignItems: 'center', paddingVertical: spacing.md },
-  bubble: {
-    borderRadius: radius.lg,
-    borderWidth: StyleSheet.hairlineWidth,
-    padding: spacing.lg,
-  },
-  body: { fontFamily: fonts.regular },
-  promises: { gap: spacing.sm },
-  promise: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-  },
-  promiseIcon: { fontSize: 18 },
-  promiseText: { flex: 1, fontFamily: fonts.medium, lineHeight: 20 },
-  speechError: { fontFamily: fonts.medium, textAlign: 'center' },
+  page: { flex: 1, backgroundColor: identity.forest },
+  scroller: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 26, paddingVertical: 22 },
+  layout: { width: '100%', maxWidth: 490, alignSelf: 'center' },
+  spread: { flexDirection: 'row', alignItems: 'center', maxWidth: 1080, columnGap: 70, paddingHorizontal: 18 },
+  hero: { alignItems: 'center', justifyContent: 'center' },
+  heroWide: { flex: 1, paddingVertical: 50 },
+  subtitle: { color: identity.ivory, fontFamily: fonts.regular, marginTop: 2 },
+  features: { width: '100%' },
+  featuresWide: { width: '43%', borderLeftWidth: StyleSheet.hairlineWidth, borderColor: identity.rule, paddingLeft: 46 },
+  row: { borderTopWidth: StyleSheet.hairlineWidth, borderColor: identity.rule, paddingVertical: 18, gap: 6 },
+  title: { fontFamily: identity.serif, color: identity.ivory },
+  detail: { color: identity.mist, fontFamily: fonts.regular },
+  button: { minHeight: 54, borderRadius: 12, marginTop: 22, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 22, paddingVertical: 14 },
+  buttonText: { color: identity.forest, fontFamily: fonts.bold },
 });

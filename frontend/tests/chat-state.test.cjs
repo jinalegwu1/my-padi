@@ -3,11 +3,11 @@ const assert = require('node:assert/strict');
 const React = require('react');
 const { create, act } = require('react-test-renderer');
 const { loadTS } = require('./helpers/load-ts.cjs');
-const context = loadTS('src/lib/chat-context.ts');
+const context = loadTS('src/lib/chat-context.ts', { './greeting': loadTS('src/lib/greeting.ts') });
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 
-async function fixture() {
+async function fixture(initialMessages = []) {
   let session = { token: 'a-token', user: { id: 'a' } };
   const listeners = new Set();
   const calls = [];
@@ -33,7 +33,7 @@ async function fixture() {
   let id = 0;
   const exported = loadTS('src/state/chat-context.tsx', {
     '@/data/mock-conversations': { WELCOME_MESSAGE: 'Welcome', nextId: prefix => `${prefix}-${++id}` },
-    '@/hooks/use-persistent-state': { usePersistentState: () => { const [items, update] = React.useState([]); return [items, update, 'ready']; } },
+    '@/hooks/use-persistent-state': { usePersistentState: () => { const [items, update] = React.useState(initialMessages); return [items, update, 'ready']; } },
     '@/lib/api': api, '@/lib/config': { hasBackend: true }, '@/lib/chat-context': context,
     '@/lib/greeting': loadTS('src/lib/greeting.ts'),
     '@/lib/session': {
@@ -79,17 +79,18 @@ test('first text greeting uses real chat guidance without displaying a synthetic
     await act(async () => { assert.equal((await f.text.greet('a', 'fr-FR')).status, 'sent'); });
     assert.equal(f.calls[0][4], 'text');
     assert.equal(f.calls[0][7], true);
-    assert.equal(f.calls[0][1][0].content, 'Hi');
+    assert.ok(JSON.parse(f.calls[0][1][0].content.split('\n')[1]).gist_seed);
     assert.equal(f.text.messages.length, 1);
     assert.equal(f.text.messages[0].role, 'padi');
     assert.equal(f.text.messages[0].backendUserID, 'a');
     await act(async () => { await f.text.send('My day is going well.', 'a'); });
-    assert.equal(f.calls[1][1][0].content, 'Hey! Good to see you. What has your day been up to?');
-    assert.equal(f.calls[1][1].length, 2);
+    assert.equal(f.calls[1][1][0].content, f.calls[0][1][0].content);
+    assert.equal(f.calls[1][1][1].content, 'Hey! Good to see you. What has your day been up to?');
+    assert.equal(f.calls[1][1].length, 3);
   } finally { await f.close(); }
 });
 
-test('voice greeting resumes existing context through the voice stream, and reset generates a fresh greeting', async () => {
+test('voice greeting resumes existing context through the voice stream, and New chat generates a fresh greeting', async () => {
   const f = await fixture();
   try {
     await act(async () => { await f.text.send('I am practising for an interview.', 'a'); });
@@ -101,7 +102,7 @@ test('voice greeting resumes existing context through the voice stream, and rese
     assert.equal(f.calls[1][6], 'pcm-NG');
     assert.deepEqual(deltas, ['Real reply 😊']);
     assert.equal(f.voice.messages.filter(m => m.role === 'user').length, 1);
-    await act(async () => { f.text.reset(); });
+    await act(async () => { f.text.newChat(); });
     assert.equal(f.text.messages.length, 0);
     f.backend(async () => ({ reply: 'Hey! What are we exploring today?', memory_revision: 0 }));
     await act(async () => { await f.text.greet('a'); });
@@ -110,19 +111,64 @@ test('voice greeting resumes existing context through the voice stream, and rese
   } finally { await f.close(); }
 });
 
-test('new chats do not inject previous greeting openings or account-specific hints', async () => {
+test('fresh check-ins rotate public cues, isolate accounts, and reopen the exact conversation', async () => {
   const f = await fixture();
+  const readCue = () => JSON.parse(f.calls.at(-1)[1].at(-1).content.split('\n')[1]);
   try {
-    f.backend(async () => ({ reply: 'Hey! What are we exploring today?', memory_revision: 0 }));
+    const firstID = f.text.conversationID;
+    f.backend(async () => ({ reply: 'My padi! Welcome back.', memory_revision: 0 }));
     await act(async () => { await f.text.greet('a'); });
-    const firstGreetingPrompt = f.calls.at(-1)[1][0].content;
-    await act(async () => { f.text.reset(); });
-    f.backend(async () => ({ reply: 'Hello! Fresh start.', memory_revision: 0 }));
+    const first = readCue();
+    await act(async () => { await f.text.send('Private interview details', 'a'); });
+    await act(async () => { f.text.newChat(); });
+    assert.equal(f.text.messages.length, 0);
     await act(async () => { await f.text.greet('a'); });
-    assert.equal(f.calls.at(-1)[1][0].content, firstGreetingPrompt);
+    const second = readCue();
+    assert.notEqual(second.gist_seed, first.gist_seed);
+    assert.ok(second.recent_topics.includes(first.gist_seed));
+    assert.ok(second.recent_welcomes.includes('my padi'));
+    assert.equal(f.calls.at(-1)[1].length, 1);
+    assert.doesNotMatch(JSON.stringify(second), /interview/i);
+    assert.equal(f.text.historyFor('a').length, 2);
+    await act(async () => { f.text.selectConversation(firstID); });
+    assert.equal(f.text.messages.find(m => m.role === 'user').text, 'Private interview details');
+    await act(async () => { await f.voice.sendVoice('Continue', 'a', new AbortController().signal); });
+    assert.ok(f.calls.at(-1)[1].some(m => m.content === 'Private interview details'));
     await f.switchAccount();
     await act(async () => { await f.text.greet('b'); });
-    assert.equal(f.calls.at(-1)[1][0].content, firstGreetingPrompt);
+    assert.deepEqual(readCue().recent_topics, []);
+    assert.deepEqual(readCue().recent_welcomes, []);
+    assert.equal(f.text.historyFor('b').length, 1);
+  } finally { await f.close(); }
+});
+
+test('earlier unthreaded messages can be reopened after a fresh launch', async () => {
+  const f = await fixture([{ id: 'old', role: 'user', text: 'My first message', backendChat: true,
+    backendUserID: 'a', createdAt: 10 }]);
+  try {
+    assert.deepEqual(f.text.messages, []);
+    const [previous] = f.text.historyFor('a');
+    assert.equal(previous.title, 'My first message');
+    await act(async () => { f.text.selectConversation(previous.id); });
+    await act(async () => { await f.text.send('I am back', 'a'); });
+    assert.equal(f.calls[0][1][0].content, 'My first message');
+    assert.equal(f.text.historyFor('a').length, 1);
+  } finally { await f.close(); }
+});
+
+test('switching threads while a request is pending cannot deliver the late reply into either chat', async () => {
+  const f = await fixture();
+  const held = deferred();
+  try {
+    f.backend(() => held.promise);
+    let sending;
+    await act(async () => { sending = f.text.send('Old turn', 'a'); });
+    await act(async () => { f.text.newChat(); });
+    f.backend(async () => ({ reply: 'New reply', memory_revision: 0 }));
+    await act(async () => { await f.text.send('Fresh turn', 'a'); });
+    await act(async () => { held.resolve({reply: 'Late old reply', memory_revision: 0}); await sending; });
+    assert.deepEqual(f.text.messages.map(m => m.text), ['Fresh turn', 'New reply']);
+    assert.equal(f.text.historyFor('a').length, 1);
   } finally { await f.close(); }
 });
 

@@ -96,7 +96,7 @@ async function pageFor({ microphone = true, initialMessages = [] } = {}) {
   page.setDefaultNavigationTimeout(120000);
   const requests = [];
   page.on('request', request => {
-    if (request.url().endsWith('/v1/chat')) requests.push(request.postDataJSON());
+    if (request.method() === 'POST' && request.url().endsWith('/v1/chat') && !request.postDataJSON().greeting) requests.push(request.postDataJSON());
   });
   return { context, page, requests };
 }
@@ -156,16 +156,16 @@ async function success() {
     if (path === '/v1/chat' || path.startsWith('/v1/voice/')) responses.push({ path, status: response.status() });
   });
   try {
-    await page.goto(`${frontend}/voice`);
+    await page.goto(`${frontend}/chat?mode=text`);
+    await page.getByRole('button', { name: 'Open PADI menu' }).click();
+    await page.getByRole('button', { name: /During this voice check/ }).click();
+    await page.getByRole('button', { name: 'Switch to voice' }).click();
     voiceConfig = await page.evaluate(async apiURL => (await fetch(`${apiURL}/v1/voice/config`)).json(), api);
     assert.equal(voiceConfig.local_transcription,true);assert.equal(voiceConfig.groq_conversation,true);
-    await page.getByRole('button', { name: /portrait, PADI idle$/ }).waitFor();
+    await listening(page);
     await page.screenshot({path:'/tmp/my-padi-voice-simple.png'});
-    assert.equal(await page.evaluate(() => window.__padiVoiceCheck.tracks.length),0,'Opening the screen waits for the portrait tap.');
-    await start(page);
     const greetingPlayed = await page.evaluate(() => window.__padiVoiceCheck.playing);
-    assert.ok(greetingPlayed>0,'The portrait tap speaks a real greeting.');
-    console.log('PASS: one portrait tap greeted, then activated listening.');
+    assert.ok(greetingPlayed > 0, 'Switching to voice plays the greeting automatically.');
     assert.equal(await page.getByRole('button', { name: /Record|Submit|Stop and send|Stop listening|Voice to text|Show words|Hide words/i }).count(), 0);
     assert.equal(await page.getByText(/Voice conversation active|I’m here. Let’s talk.|Talk freely.|Tap to chat to start/i).count(),0);
     assert.equal(requests.length,0,'Greeting echo must not create a user turn.');
@@ -217,7 +217,7 @@ async function success() {
     console.log('PASS: switching to text closed capture and retained the real conversation.');
 
     await page.getByRole('button', { name: 'Switch to voice', exact: true }).click();
-    await start(page);
+    await listening(page);
     const resumedReply=page.waitForResponse(response=>response.url().endsWith('/v1/chat'),{timeout:155000});
     const playedBefore=await page.evaluate(()=>window.__padiVoiceCheck.playing);
     await page.evaluate(encoded=>window.__padiVoiceCheck.playInput(encoded),continuation);
@@ -294,16 +294,19 @@ async function unavailable() {
 async function naturalSpeechUnavailable() {
   const { context, page } = await pageFor();
   try {
+    let voiceRequests = 0;
     await page.route(url => /\/v1\/voice\/(welcome|preview)$/.test(url.pathname), route => {
       if (route.request().method() === 'OPTIONS') return route.continue();
+      voiceRequests++;
       return route.fulfill({ status: 503, contentType: 'application/json',
         headers: { 'Access-Control-Allow-Origin': new URL(frontend).origin, 'Cache-Control': 'no-store' },
         body: JSON.stringify({ error: 'speech_unavailable', message: 'Natural voice unavailable for verification.' }),
       });
     });
     await page.goto(`${frontend}/onboarding/welcome`);
-    await page.getByRole('button', { name: 'Hear PADI’s introduction', exact: true }).click();
-    await page.getByRole('alert').filter({ hasText: 'Natural voice unavailable for verification.' }).waitFor();
+    await page.getByRole('button', { name: 'Get Started', exact: true }).waitFor();
+    assert.equal(await page.getByRole('button').count(), 1);
+    assert.equal(voiceRequests, 0);
     assert.equal(await page.evaluate(() => window.__padiVoiceCheck.deviceSpeech), 0);
     await page.goto(`${frontend}/settings`);
     await page.getByText('Voice', { exact: true }).last().click();
@@ -314,7 +317,7 @@ async function naturalSpeechUnavailable() {
     }
     const state = await page.evaluate(() => ({ robot: window.__padiVoiceCheck.deviceSpeech, playing: window.__padiVoiceCheck.playing }));
     assert.deepEqual(state, { robot: 0, playing: 0 });
-    console.log('PASS: introduction and all six voice choices reported natural-service failure without browser speech or fake playback.');
+    console.log('PASS: onboarding was silent and all six Settings voice previews reported the service failure.');
   } finally { await context.close(); }
 }
 

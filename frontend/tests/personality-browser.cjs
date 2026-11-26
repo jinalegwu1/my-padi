@@ -114,11 +114,18 @@ exports.verify = async (sessionFile, greetingsOnly = false, reviewOnly = false, 
       assert.equal(body.groq_only, true, 'Voice greetings must use Groq TTS only');
       return route.continue();
     });
-    const history = () => page.evaluate(() => JSON.parse(localStorage.getItem('app:v1:chat-messages') || '[]'));
+    const history = () => page.evaluate(() => {
+      const saved = JSON.parse(localStorage.getItem('app:v1:chat-messages') || '[]');
+      return saved.filter(m => m.conversationID === saved.at(-1)?.conversationID);
+    });
     let lastGreetingID = '';
     const waitGreeting = async () => {
       for (let attempt = 0; attempt < 3; attempt++) {
-        await page.waitForFunction(previous => JSON.parse(localStorage.getItem('app:v1:chat-messages') || '[]').some(m => m.role === 'padi' && m.backendChat && !m.pending && m.id !== previous) || document.querySelector('[role="alert"]')?.textContent, lastGreetingID);
+        await page.waitForFunction(previous => {
+          const last = JSON.parse(localStorage.getItem('app:v1:chat-messages') || '[]').at(-1);
+          return (last?.backendChat && last.role === 'padi' && last.id !== previous) ||
+            document.querySelector('[role="alert"]')?.textContent;
+        }, lastGreetingID);
         if (!(await page.locator('[role="alert"]').count())) break;
         if (attempt === 2) throw new Error('The configured text provider remained unavailable for greeting verification.');
         await page.waitForTimeout(30000);
@@ -135,14 +142,13 @@ exports.verify = async (sessionFile, greetingsOnly = false, reviewOnly = false, 
       return greeting;
     };
     await preferences('occasional');
-    await page.goto(`${frontend}/chat`, { timeout: 120000 });
+    await page.goto(`${frontend}/chat?mode=text`, { timeout: 120000 });
     evidence.greetings.push({ delivery: 'text', preference: 'occasional', text: await waitGreeting() });
     await page.getByRole('button', { name: 'Open PADI menu' }).click();
     await page.getByRole('button', { name: 'New chat. Start a fresh conversation' }).click();
     evidence.greetings.push({ delivery: 'text', preference: 'occasional', text: await waitGreeting() });
     assert.notEqual(evidence.greetings[0].text, evidence.greetings[1].text, 'Fresh greeting wording varies');
-    await page.goto(`${frontend}/voice`);
-    await page.getByRole('button', { name: /portrait, PADI idle$/ }).click();
+    await page.getByRole('button', { name: 'Switch to voice' }).click();
     await page.waitForFunction(() => __personalityAudio.length || document.querySelector('[role="alert"]')?.textContent);
     assert.deepEqual(await page.locator('[role="alert"]').allTextContents(), []);
     await page.getByRole('button', { name: /portrait, PADI listening$/ }).waitFor();
@@ -159,8 +165,10 @@ exports.verify = async (sessionFile, greetingsOnly = false, reviewOnly = false, 
         { id: 'reply-context', role: 'padi', text: serious.reply, backendChat: true, backendUserID: session.user.id, memoryRevision: 0, createdAt: Date.now() },
       ]));
     }, { serious, session });
-    await page.goto(`${frontend}/voice`);
-    await page.getByRole('button', { name: /portrait, PADI idle$/ }).click();
+    await page.reload();
+    await page.getByRole('button', { name: 'Open PADI menu' }).click();
+    await page.getByRole('button', { name: /My father died yesterday/ }).click();
+    await page.getByRole('button', { name: 'Switch to voice' }).click();
     await page.waitForFunction(() => __personalityAudio.length || document.querySelector('[role="alert"]')?.textContent);
     const error = await page.locator('[role="alert"]').allTextContents();
     assert.deepEqual(error, [], `Voice greeting failed: ${error.join(' ')}`);

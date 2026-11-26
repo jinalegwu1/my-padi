@@ -140,6 +140,27 @@ test('expired transcription credentials stop the microphone and clear private ca
   assert.equal(f.snapshot.connected,false);assert.equal(f.snapshot.userText,undefined);assert.ok(f.calls.includes('closed'));
 });
 
+test('chat opening plays while microphone permission is pending and survives denial', async () => {
+  let deny;
+  const permission = new Promise((_resolve, reject) => { deny = reject; });
+  const spoken = deferred();
+  const f = fixture({
+    capture: () => ({ start: () => permission, stop: async () => {} }),
+    greet: async (_signal, text, start) => { text('My padi!'); start(); await spoken.promise; },
+  });
+  const opening = f.session.start({ greetBeforeCapture: true });
+  await tick();
+  assert.equal(f.snapshot.phase, 'speaking');
+  assert.equal(f.snapshot.connected, false);
+  deny(new Error('Microphone permission denied'));
+  await tick();
+  assert.equal(f.snapshot.phase, 'speaking');
+  spoken.resolve();
+  await opening;
+  assert.equal(f.snapshot.padiText, 'My padi!');
+  assert.match(f.snapshot.error, /permission denied/);
+});
+
 test('each call greets before listening, including a resumed conversation',async()=>{
   let greetings=0;
   const f=fixture({greet:async (_signal,text,start)=>{greetings++;text('Hey! How are you?');start();}});

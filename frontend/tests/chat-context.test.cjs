@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadTS } = require('./helpers/load-ts.cjs');
-const { chatContext, visibleChatMessages } = loadTS('src/lib/chat-context.ts');
+const { chatContext, visibleChatMessages } = loadTS('src/lib/chat-context.ts', { './greeting': loadTS('src/lib/greeting.ts') });
 
 const message = (text, revision, owner = 'a') => ({ id: text, role: 'padi', text, backendChat: true, backendUserID: owner, memoryRevision: revision });
 

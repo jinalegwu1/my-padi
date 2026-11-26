@@ -67,7 +67,16 @@ export type VisualBlock =
       nodes: { label: string; hint?: string }[];
     };
 
+export type CheckInCue = {
+  gist_seed: string;
+  recent_topics: string[];
+  recent_welcomes: string[];
+};
+
 export type Message = {
+  /** Older account-owned messages belong to the original conversation. */
+  conversationID?: string;
+  checkIn?: CheckInCue;
   id: string;
   role: MessageRole;
   text: string;
@@ -168,6 +177,7 @@ export type CheckInPreferencesPatch = Partial<CheckInPreferences>;
 
 export type Preferences = {
   onboarded: boolean;
+  chatLocationPromptHandled?: boolean;
   countryCode: string | null;
   languageCode: string;
   displayName: string;

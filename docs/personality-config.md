@@ -7,7 +7,13 @@ behaviours, infer a mood, choose a humour response, or rewrite conversation turn
 ## Authoritative interface
 
 `services/padi_personality/personality_config.py` defines the immutable six-trait
-configuration. `padi_personality.core.export_personality()` returns exactly:
+configuration. The short companion prompt lives in `services/padi_personality/core.py`.
+A new check-in opens with a warm welcome and room for the person to answer.
+The frontend supplies a rotating public gist topic, recent public topics and familiar
+opening phrases as data in the hidden greeting turn. Text and voice share the selected
+chat. Earlier chats can be reopened from the account's history on that device.
+
+`padi_personality.core.export_personality()` returns exactly:
 
 - `traits`: six explicit booleans.
 - `warmth_guidance`: the authoritative composed personality instruction string.

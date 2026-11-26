@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { ComponentProps } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PadiAvatar } from '@/components/padi-avatar';
@@ -13,6 +13,9 @@ type Props = {
   displayName: string;
   onClose: () => void;
   onNewChat: () => void;
+  history: { id: string; title: string; updatedAt: number }[];
+  selectedID: string;
+  onOpenChat: (id: string) => void;
   onSettings: () => void;
   onMemory: () => void;
   onDeviceActions: () => void;
@@ -26,6 +29,7 @@ export function ChatSidebar({
   displayName,
   onClose,
   onNewChat,
+  history, selectedID, onOpenChat,
   onSettings,
   onMemory,
   onDeviceActions,
@@ -61,7 +65,7 @@ export function ChatSidebar({
               <Ionicons name="close" size={20} color={colors.textSecondary} />
             </Pressable>
           </View>
-          <View style={styles.items}>
+          <ScrollView style={styles.items} keyboardShouldPersistTaps="handled">
             {items.map((item) => (
               <Pressable
                 key={item.title}
@@ -79,7 +83,18 @@ export function ChatSidebar({
                 <Ionicons name="chevron-forward" size={17} color={colors.muted} />
               </Pressable>
             ))}
-          </View>
+            {history.length > 0 && <Text accessibilityRole="header" style={[styles.historyTitle, { color: colors.muted }]}>Chat history</Text>}
+            {history.map(chat => (
+              <Pressable key={chat.id} accessibilityRole="button" accessibilityState={{ selected: chat.id === selectedID }}
+                onPress={() => onOpenChat(chat.id)}
+                style={[styles.item, { backgroundColor: chat.id === selectedID ? colors.cardMuted : 'transparent' }]}>
+                <View style={styles.itemText}>
+                  <Text numberOfLines={1} style={[styles.itemTitle, { color: colors.text }]}>{chat.title}</Text>
+                  <Text style={[styles.itemSubtitle, { color: colors.muted }]}>{new Date(chat.updatedAt).toLocaleDateString()}</Text>
+                </View>
+              </Pressable>
+            ))}
+          </ScrollView>
           <Pressable accessibilityRole="button" onPress={onSignOut} style={({ pressed }) => [styles.signOut, { borderColor: colors.border, opacity: pressed ? 0.7 : 1 }]}>
             <Ionicons name="log-out-outline" size={18} color={colors.danger} />
             <Text style={[styles.signOutText, { color: colors.danger, fontSize: type.bodySmall }]}>Sign out</Text>
@@ -99,7 +114,8 @@ const styles = StyleSheet.create({
   profileTitle: { fontFamily: fonts.bold },
   profileSubtitle: { fontFamily: fonts.regular },
   close: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  items: { flex: 1, gap: 2 },
+  items: { flex: 1 },
+  historyTitle: { fontFamily: fonts.semibold, margin: spacing.sm },
   item: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, borderRadius: radius.md, paddingVertical: spacing.sm, paddingHorizontal: spacing.sm },
   iconChip: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   itemText: { flex: 1, gap: 1 },

@@ -9,6 +9,7 @@ import { fonts, spacing, useColors, useType } from '@/constants/theme';
 import { APIError, getAuthConfiguration, requestLogin, requestRegistration, verifyCode } from '@/lib/api';
 import { hasBackend } from '@/lib/config';
 import { saveSession } from '@/lib/session';
+import { unlockVoicePlayback } from '@/lib/voice-playback';
 
 type AuthMode = 'login' | 'register';
 
@@ -50,6 +51,7 @@ export default function AuthScreen() {
   }, [configAttempt]);
 
   const requestCode = async () => {
+    void unlockVoicePlayback().catch(() => undefined);
     setError(null);
     setNotice('');
     setBusy(true);
@@ -82,6 +84,7 @@ export default function AuthScreen() {
   };
 
   const verify = async () => {
+    void unlockVoicePlayback().catch(() => undefined);
     setError(null);
     setBusy(true);
     try {

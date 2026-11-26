@@ -1,59 +1,37 @@
-"""Core PADI personality module."""
+"""The companion voice shared by text and speech."""
 
-from .conversation.response_style import build_warmth_guidance
-from .conversation.understanding import UNDERSTANDING_GUIDANCE
-from .emotions.emotion_recognition import EMOTION_RECOGNITION_GUIDANCE
-from .emotions.emotional_responses import EMOTIONAL_RESPONSE_GUIDANCE
-from .humour.jokes import JOKE_GUIDANCE
-from .humour.playful_teasing import PLAYFUL_TEASING_GUIDANCE
-from .humour.storytelling import HUMOROUS_STORYTELLING_GUIDANCE
-from .personalities.comedian import COMEDIAN_GUIDANCE
-from .personalities.emotional_intelligence import WARMTH_SUPPORT_GUIDANCE
-from .personalities.intellectual import INTELLECTUAL_GUIDANCE
 from .personality_config import PADI_PERSONALITY_CONFIG, PersonalityConfig
 
 
-def export_personality(
-    config: PersonalityConfig = PADI_PERSONALITY_CONFIG,
-) -> dict:
-    """Export Go's two-key personality contract without mutating configuration."""
-
-    warmth_guidance = build_warmth_guidance(config)
-
-    guidance = [
-        UNDERSTANDING_GUIDANCE,
-        warmth_guidance,
+def export_personality(config: PersonalityConfig = PADI_PERSONALITY_CONFIG) -> dict:
+    """Export the prompt and immutable trait settings through the existing API."""
+    sections = [
+        "You're PADI, their digital padi. Understand the user's message before deciding how to respond. "
+        "Speak like a close friend in natural Nigerian English, Pidgin, or their chosen language. Keep it short enough for them to jump in. "
+        "At a new check-in, speak first: welcome them warmly, ask how they are, then give them a turn. "
+        "Vary your welcome and avoid recent_welcomes. Listen to their answer before starting any gist. "
+        "Follow their tone and humour preferences. Be honest about what you know and remember. Give them space.",
     ]
-
     if config.emotionally_aware:
-        guidance.extend(
-            [
-                EMOTION_RECOGNITION_GUIDANCE,
-                EMOTIONAL_RESPONSE_GUIDANCE,
-            ]
+        sections.append(
+            "Catch the detail that matters. Celebrate a win. When something hurts, put the jokes down and listen. "
+            "Some days a warm welcome is the whole gist."
         )
-
     if config.funny:
-        guidance.extend(
-            [
-                COMEDIAN_GUIDANCE,
-                JOKE_GUIDANCE,
-                HUMOROUS_STORYTELLING_GUIDANCE,
-            ]
+        sections.append(
+            "In a light moment, bring fresh gist of your own. The check-in's gist_seed is an optional starting idea. "
+            "Avoid recent_topics. Retire used premises and opening lines. An inside joke can return with a new twist if they pick it up."
         )
-
+    if config.witty:
+        sections.append("Pick up their exact words for a comeback. Let a good line land.")
     if config.playful:
-        guidance.append(PLAYFUL_TEASING_GUIDANCE)
-
+        sections.append(
+            "When football banter starts, find their club and take the rival corner. Stick to your side. "
+            "Yab the football, never a sore spot. When they land one, laugh and collect your own."
+        )
     if config.intelligent:
-        guidance.append(INTELLECTUAL_GUIDANCE)
-
+        sections.append("Give straight answers, disagree kindly, and offer advice when it's welcome.")
     return {
         "traits": config.to_dict(),
-        # Keep the existing Go wire contract while delivering the composed rules.
-        "warmth_guidance": (
-            "\n\n".join(section.strip() for section in guidance if section.strip())
-            if config.warm
-            else ""
-        ),
+        "warmth_guidance": "\n\n".join(sections) if config.warm else "",
     }
