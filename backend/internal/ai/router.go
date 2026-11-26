@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	defaultModelTimeout    = 20 * time.Second
+	defaultModelTimeout    = 8 * time.Second
 	maxModelTimeout        = 2 * time.Minute
 	defaultMaxOutputTokens = 1024
 	maxOutputTokens        = 4096
@@ -429,6 +429,9 @@ func (router *Router) generateWithModel(ctx context.Context, modelID string, req
 					continue
 				}
 			}
+			if isTimeoutError(err) {
+				return Response{}, err
+			}
 			if retryable(err) && !shouldFallbackImmediately(err) &&
 				!(request.Voice && shouldVoiceFallbackImmediately(err)) {
 				continue
@@ -447,6 +450,14 @@ func (router *Router) generateWithModel(ctx context.Context, modelID string, req
 		return result, nil
 	}
 	return Response{}, lastErr
+}
+
+func isTimeoutError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var providerErr *ProviderError
+	return errors.As(err, &providerErr) && providerErr.Status == 408
 }
 
 func shouldFallbackImmediately(err error) bool {
@@ -497,15 +508,27 @@ func (router *Router) candidates(request Request) []string {
 		return unique
 	}
 
-	candidates := []string{
-		router.routing.PrimaryModel,
-		router.routing.BackupModel,
-		router.routing.FastModel,
-		router.routing.ReasoningModel,
+	// Simple conversations go to the fast model first for sub-5-second replies.
+	// Complex conversations keep the primary reasoning route.
+	var ordered []string
+	if request.Complexity == ComplexitySimple && router.routing.FastModel != "" {
+		ordered = []string{
+			router.routing.FastModel,
+			router.routing.PrimaryModel,
+			router.routing.BackupModel,
+			router.routing.ReasoningModel,
+		}
+	} else {
+		ordered = []string{
+			router.routing.PrimaryModel,
+			router.routing.BackupModel,
+			router.routing.FastModel,
+			router.routing.ReasoningModel,
+		}
 	}
-	seen := make(map[string]bool, len(candidates))
-	unique := candidates[:0]
-	for _, modelID := range candidates {
+	seen := make(map[string]bool, len(ordered))
+	unique := ordered[:0]
+	for _, modelID := range ordered {
 		if modelID == "" || seen[modelID] {
 			continue
 		}

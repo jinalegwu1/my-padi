@@ -142,9 +142,9 @@ func TestRouterTriesPrimaryBeforeFallbackForEveryTask(t *testing.T) {
 			wantContent: "primary",
 		},
 		{
-			name:        "simple conversation tries primary first",
+			name:        "simple conversation tries fast model first",
 			request:     testRequest(TaskConversation, ComplexitySimple),
-			wantContent: "primary",
+			wantContent: "fast",
 		},
 		{
 			name:        "complex task tries primary first",
@@ -157,9 +157,9 @@ func TestRouterTriesPrimaryBeforeFallbackForEveryTask(t *testing.T) {
 			wantContent: "primary",
 		},
 		{
-			name:        "technical assistance tries primary first",
+			name:        "technical assistance with simple complexity tries fast model first",
 			request:     testRequest(TaskTechnical, ComplexitySimple),
-			wantContent: "primary",
+			wantContent: "fast",
 		},
 		{
 			name:        "decision support tries primary first",

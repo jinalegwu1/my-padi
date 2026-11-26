@@ -341,14 +341,19 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Greeting:             body.Greeting,
 		},
 	}
+	_, complexity := ai.InferTaskAndComplexity(messages)
 	if body.Delivery == "voice" {
-		_, complexity := ai.InferTaskAndComplexity(messages)
 		if complexity != ai.ComplexityComplex {
 			// Ordinary live turns use the configured fast model. Detailed work
 			// keeps the normal reasoning route and output budget.
 			chatRequest.Complexity = ai.ComplexitySimple
 			chatRequest.MaxOutputTokens = 1024
 		}
+	} else if complexity == ai.ComplexitySimple {
+		// Short text exchanges also get the fast model and a tighter output
+		// budget so replies appear within a few seconds.
+		chatRequest.Complexity = ai.ComplexitySimple
+		chatRequest.MaxOutputTokens = 1024
 	}
 	if body.Stream {
 		streamer, ok := handler.chat.(StreamingVoiceChatGenerator)
