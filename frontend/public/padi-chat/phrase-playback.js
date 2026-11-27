@@ -11,6 +11,7 @@ export function createPhrasePlayback({ signal, makePlayer, prepare, clean, onSta
   let preparing = Promise.resolve();
   let finishing;
   let failure;
+  let first = true;
 
   function fail(error) {
     if (!controller.signal.aborted) failure = error;
@@ -48,8 +49,8 @@ export function createPhrasePlayback({ signal, makePlayer, prepare, clean, onSta
       });
       release();
       if (lastPlayed) {
-        lastPlayed.then(() => {
-          if (!controller.signal.aborted) delivered(words);
+        lastPlayed.then(heard => {
+          if (heard !== false && !controller.signal.aborted) delivered(words);
         }).catch(fail);
       }
     } finally {
@@ -61,7 +62,10 @@ export function createPhrasePlayback({ signal, makePlayer, prepare, clean, onSta
     enqueue(text) {
       if (finishing || controller.signal.aborted) return;
       const words = clean(text);
-      if (words) preparing = preparing.then(() => preparePhrase(words)).catch(fail);
+      for (const phrase of playbackPhrases(words, first)) {
+        first = false;
+        preparing = preparing.then(() => preparePhrase(phrase)).catch(fail);
+      }
     },
     finish() {
       finishing ??= (async () => {
@@ -76,4 +80,63 @@ export function createPhrasePlayback({ signal, makePlayer, prepare, clean, onSta
       return finishing;
     },
   };
+}
+
+// A slow synthesizer can finish a short opening thought quickly. Subsequent
+// requests can prepare during playback, with breaths at punctuation when possible.
+export function playbackPhrases(text, first = true) {
+  if (!text) return [];
+  const parts = [];
+  let rest = text.trim();
+  while (rest) {
+    const limit = first ? 38 : 110;
+    const head = rest.slice(0, limit + 1);
+    const boundary = /[.!?](?:["”’)]*)(?=\s|$)|(?<=.{12})[,;:—](?=\s)/u.exec(head);
+    let cut = rest.length;
+    if (boundary && !/\b(?:mr|mrs|ms|dr|prof|st|e\.g|i\.e)\.$/i.test(head.slice(0, boundary.index + 1))) {
+      cut = boundary.index + boundary[0].length;
+    } else if (rest.length > limit) {
+      const space = head.lastIndexOf(' ');
+      cut = space > 0 ? space : Math.min(rest.indexOf(' ') < 0 ? rest.length : rest.indexOf(' '), 650);
+    }
+    parts.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trimStart();
+    first = false;
+  }
+  return parts;
+}
+
+const maxCacheChars = 16 * 1024 * 1024;
+let owner;
+let cache = new Map();
+let cacheChars = 0;
+
+// Only completed phrases enter this account-scoped, in-memory replay cache.
+export async function prepareVoicePackets(account, key, signal, produce, packet) {
+  if (signal.aborted) return;
+  if (owner !== account) { owner = account; cache = new Map(); cacheChars = 0; }
+  const entries = cache;
+  const known = entries.get(key);
+  if (known) {
+    entries.delete(key);
+    entries.set(key, known);
+    for (const wave of known.waves) { if (signal.aborted) return; packet(wave); }
+    return;
+  }
+  const waves = [];
+  let size = 0;
+  await produce(wave => {
+    if (signal.aborted) return;
+    packet(wave);
+    size += wave.length;
+    if (size <= maxCacheChars) waves.push(wave);
+  });
+  if (!size || signal.aborted || cache !== entries || entries.has(key) || size > maxCacheChars) return;
+  while (cacheChars + size > maxCacheChars) {
+    const oldest = entries.keys().next().value;
+    cacheChars -= entries.get(oldest).size;
+    entries.delete(oldest);
+  }
+  entries.set(key, {waves, size});
+  cacheChars += size;
 }

@@ -14,7 +14,7 @@ async function loadFrame() {
 
 // The document receives display state. Credentials, HTTP and device APIs stay
 // in the host. Only local, length-bounded actions reach the controller.
-export function PortraitFrame({state, voice, recorder, onAction, onFailed, subscribeLevel}) {
+export function PortraitFrame({state, voice, recorder, onAction, onFailed, output, onReady}) {
   const frame = useRef(null);
   const alive = useRef(false);
   const [ready, setReady] = useState(false);
@@ -27,20 +27,22 @@ export function PortraitFrame({state, voice, recorder, onAction, onFailed, subsc
     alive.current = true;
     bundled ??= loadFrame().catch(error => { bundled = undefined; throw error; });
     bundled.then(value => { if (alive.current) setSource(value); }).catch(() => { if (alive.current) onFailed(); });
-    return () => { alive.current = false; };
-  }, [onFailed]);
+    return () => { alive.current = false; output.detach(); };
+  }, [onFailed, output]);
   useEffect(() => { if (ready) publish('state', state); }, [ready, state]);
   useEffect(() => { if (ready && voice) publish('voice', voice); }, [ready, voice]);
   useEffect(() => { if (ready && recorder) publish('recorder', recorder); }, [ready, recorder]);
-  useEffect(() => {
-    if (ready && state.owner && state.mode !== 'text') return subscribeLevel(level => publish('level', {...level, voiceId:'ada'}));
-  }, [ready, state.owner, state.mode, subscribeLevel]);
   async function receive({nativeEvent}) {
     if (!local(nativeEvent.url) || typeof nativeEvent.data !== 'string' || nativeEvent.data.length > 11000) return;
     let packet;
     try { packet = JSON.parse(nativeEvent.data); } catch { return; }
+    if (packet?.action === 'audioEvent') { output.receive(packet.value); return; }
     if (!packet || !Number.isSafeInteger(packet.id) || packet.id <= 0 || typeof packet.action !== 'string') return;
-    if (packet.action === 'open') setReady(true);
+    if (packet.action === 'open') {
+      output.attach(data => frame.current?.injectJavaScript('window.padiFrameAudio(' + JSON.stringify(data) + ');true;'));
+      setReady(true);
+      onReady(true);
+    }
     const result = await onAction(packet.action, packet.value);
     publish('result', {id:packet.id, result:result ?? null});
   }
@@ -49,6 +51,7 @@ export function PortraitFrame({state, voice, recorder, onAction, onFailed, subsc
     originWhitelist:['*'], incognito:true, domStorageEnabled:false,
     allowFileAccess:false, allowFileAccessFromFileURLs:false, allowUniversalAccessFromFileURLs:false,
     mixedContentMode:'never', javaScriptCanOpenWindowsAutomatically:false, setSupportMultipleWindows:false,
+    allowsInlineMediaPlayback:true, mediaPlaybackRequiresUserAction:false,
     mediaCapturePermissionGrantType:'deny', webviewDebuggingEnabled:false, dataDetectorTypes:'none',
     onShouldStartLoadWithRequest:request=>local(request.url),
     onError:onFailed, onContentProcessDidTerminate:onFailed, onRenderProcessGone:onFailed,

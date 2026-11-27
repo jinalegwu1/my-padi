@@ -37,6 +37,7 @@
             <div><div class="wordmark">PADI</div><h1 id="screen-title">Text chat</h1></div>
           </div>
           <div class="header-actions">
+            <button id="enable-voice-audio" class="pill" type="button" hidden>Enable sound</button>
             <button id="auto-speak" class="icon-only" aria-label="Speak replies automatically" aria-pressed="false" hidden><i aria-hidden="true" class="icon volume"></i></button>
             <button id="end-voice" class="icon-only" aria-label="End chat" title="End chat" hidden><i aria-hidden="true" class="icon down"></i></button>
             <button id="switch-mode" class="pill" hidden><i aria-hidden="true" class="icon mic"></i><span>Voice</span></button>
@@ -69,7 +70,7 @@
         <section id="voice-view" class="voice-view" aria-label="Voice conversation" hidden>
           <div class="call">
             <button id="portrait" aria-label="Tap to chat"><span class="face"><img class="photo" alt=""><img class="blink" alt=""><img class="mouth" alt=""></span></button>
-            <h2 id="voice-name"></h2><p id="voice-status" role="status"></p>
+            <h2 id="voice-name"></h2><p id="voice-status" role="status"></p><p class="voice-buffer" role="status">Preparing audio…</p>
             <div id="voice-options" hidden>
               <button id="voice-captions" class="pill"></button>
               <button id="voice-retry"></button>

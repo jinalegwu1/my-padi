@@ -1,0 +1,2 @@
+.voice-buffer { display: none; margin: .25rem 0; font-size: .85rem; }
+html[data-voice-output="buffering"] .voice-buffer { display: block; }

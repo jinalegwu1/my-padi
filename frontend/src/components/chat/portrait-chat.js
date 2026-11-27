@@ -12,9 +12,7 @@ import { syncAccountCountry } from '@/lib/account-country';
 import { revokeSession } from '@/lib/api';
 import { unregisterCurrentPushDevice } from '@/lib/push-notifications';
 import { visibleChatMessages } from '@/lib/chat-context';
-import { subscribePortraitSpeech } from '@/lib/portrait-speech';
-import { createChatResponseSpeech } from '@/lib/chat-response-speech';
-import { createSpeechStream } from '@/lib/streaming-speech';
+import { createDocumentVoice } from '@/lib/document-voice';
 import { takeReadySpeech } from '@/lib/voice-audio';
 import { fetchWeatherForCoordinates } from '@/lib/weather';
 import { latestPreferenceID } from '../../../public/padi-chat/preference-review';
@@ -42,8 +40,13 @@ export function PortraitChat({fallback}) {
   const [paused, setPaused] = useState(false), [speech, setSpeech] = useState(null);
   const [recording, setRecording] = useState(null), [frameFailed, setFrameFailed] = useState(false);
   const recorder = useRef(null), turn = useRef(null), audio = useRef(null), greeting = useRef('');
-  const voice = useVoiceSession((signal, start, delivered) => createSpeechStream('baby', preferences.voiceRate,
-    preferences.languageCode, signal, start, delivered, voice.configuration?.streaming_speech_languages?.includes(preferences.languageCode)));
+  const [output] = useState(createDocumentVoice);
+  const [documentReady, setDocumentReady] = useState(false);
+  function createOutput(signal, start, delivered, echo = false) {
+    return output.stream({owner:account?.user.id, languageCode:preferences.languageCode, voiceRate:preferences.voiceRate,
+      streaming:voice.configuration?.streaming_speech_languages?.includes(preferences.languageCode), echo}, signal, start, delivered);
+  }
+  const voice = useVoiceSession((signal, start, delivered) => createOutput(signal, start, delivered, true));
   const stopAudio = useCallback(() => {
     audio.current?.controller.abort();
     audio.current = null;
@@ -89,7 +92,7 @@ export function PortraitChat({fallback}) {
   const review = latestPreferenceID(messages, owner);
   const opened = useRef('');
   useEffect(() => {
-    if (!focused || !owner || loading || frameFailed || chat.status !== 'ready' || paused) return;
+    if (!documentReady || !focused || !owner || loading || frameFailed || chat.status !== 'ready' || paused) return;
     const key = owner + '/' + chat.conversationID + '/' + mode;
     if (mode === 'text' && !messages.length && greeting.current !== key && !chat.isThinking) {
       greeting.current = key;
@@ -100,7 +103,7 @@ export function PortraitChat({fallback}) {
       opened.current = key;
       voice.connect(mode === 'voice', mode === 'text', mode === 'voice');
     }
-  }, [focused, owner, loading, frameFailed, chat.status, paused, mode, chat.conversationID,
+  }, [documentReady, focused, owner, loading, frameFailed, chat.status, paused, mode, chat.conversationID,
     messages.length, chat.isThinking, chat.greet, voice.ready, voice.connect, preferences.languageCode, preferences.wakeWordEnabled]);
   useEffect(() => () => { opened.current = ''; }, [mode, focused]);
 
@@ -112,22 +115,29 @@ export function PortraitChat({fallback}) {
     const playback = new AbortController();
     const automatic = preferences.autoSpeakReplies;
     if (automatic) audio.current = {controller:playback, automatic:true};
-    const output = automatic && createSpeechStream('baby', preferences.voiceRate, preferences.languageCode,
-      playback.signal, () => {}, () => {}, voice.configuration?.streaming_speech_languages?.includes(preferences.languageCode));
+    const automaticSpeech = automatic && createOutput(playback.signal, () => {
+      if (audio.current?.controller !== playback) return;
+      audio.current.started = true;
+      if (audio.current.id && !audio.current.paused) setSpeech({id:audio.current.id, phase:'speaking'});
+    }, () => {});
     let remainder = '', first = true;
     try {
       const result = await chat.sendStreamingText(text, owner, controller.signal, delta => {
-        if (!output || playback.signal.aborted) return;
+        if (!automaticSpeech || playback.signal.aborted) return;
         const ready = takeReadySpeech(remainder + delta, first);
-        ready.sentences.forEach(sentence => output.enqueue(sentence));
+        ready.sentences.forEach(sentence => automaticSpeech.enqueue(sentence));
         if (ready.sentences.length) first = false;
         remainder = ready.remainder;
       });
-      if (result.status !== 'sent') { playback.abort(); return false; }
-      if (output && !playback.signal.aborted) {
-        if (remainder.trim()) output.enqueue(remainder);
-        void output.finish().catch(error => { if (!playback.signal.aborted) setNotice(error.message); })
-          .finally(() => { if (audio.current?.controller === playback) audio.current = null; });
+      if (result.status !== 'sent') { playback.abort(); if (automaticSpeech) void automaticSpeech.finish().catch(() => {}); return false; }
+      if (automaticSpeech && !playback.signal.aborted) {
+        if (audio.current?.controller === playback) {
+          audio.current.id = result.messageID;
+          setSpeech({id:result.messageID, phase:audio.current.started ? 'speaking':'loading'});
+        }
+        if (remainder.trim()) automaticSpeech.enqueue(remainder);
+        void automaticSpeech.finish().catch(error => { if (!playback.signal.aborted) setNotice(error.message); })
+          .finally(() => { if (audio.current?.controller === playback) { audio.current = null; setSpeech(null); } });
       }
       return true;
     } finally { if (turn.current === controller) turn.current = null; }
@@ -162,17 +172,19 @@ export function PortraitChat({fallback}) {
       else if (type === 'stop') stopAudio();
       else if (type === 'pause' || type === 'resume') {
         const active = audio.current;
-        if (active?.id === value) { await active.player[type](); if (audio.current === active) setSpeech({id:value,phase:type === 'pause'?'paused':'speaking'}); }
+        if (active?.id === value) { active.paused = type === 'pause'; await output[type](); if (audio.current === active) setSpeech({id:value,phase:type === 'pause'?'paused':'speaking'}); }
       } else if (type === 'play') {
         const message = messages.find(m=>m.id===value && m.backendUserID===owner && m.role==='padi' && m.backendChat);
         if (!message) return;
         stopAudio();
         const controller = new AbortController();
-        const player = createChatResponseSpeech({...preferences,voiceId:'baby',text:message.text,signal:controller.signal,
-          onStart:()=>{ if (!controller.signal.aborted) setSpeech({id:value,phase:'speaking'}); }});
-        audio.current = {id:value, controller, player};
+        const player = createOutput(controller.signal, () => {
+          if (!controller.signal.aborted && !audio.current?.paused) setSpeech({id:value,phase:'speaking'});
+        }, () => {});
+        audio.current = {id:value, controller};
         setSpeech({id:value,phase:'loading'});
-        try { await player.play(); } finally { if (audio.current?.controller === controller) stopAudio(); }
+        player.enqueue(message.text);
+        try { await player.finish(); } finally { if (audio.current?.controller === controller) stopAudio(); }
       } else if (type === 'external' && typeof value === 'string' && /^https?:\/\//i.test(value)) await Linking.openURL(value);
       else if (type === 'weather' && (await Location.requestForegroundPermissionsAsync()).granted) {
         const position = await Location.getCurrentPositionAsync({accuracy:Location.Accuracy.Low});
@@ -196,5 +208,5 @@ export function PortraitChat({fallback}) {
   return createElement(SafeAreaView,{style:{flex:1,backgroundColor:'#123c32'}},
     focused && owner && mode === 'record' && createElement(Recorder,{reference:recorder, changed:setRecording}),
     createElement(PortraitFrame,{state, voice:{phase:voice.phase,connected:voice.connected,userText:voice.userText,padiText:voice.padiText},
-      recorder:recording,onAction:action,onFailed:failed,subscribeLevel:subscribePortraitSpeech}));
+      recorder:recording,onAction:action,onFailed:failed,output,onReady:setDocumentReady}));
 }

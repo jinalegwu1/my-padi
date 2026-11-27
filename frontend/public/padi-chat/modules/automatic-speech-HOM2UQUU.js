@@ -1,1 +1,13 @@
-import{a as h}from"./chunk-AJUFN7HS.js";import"./chunk-OZ2NDMIG.js";import{b as f}from"./chunk-DOJQV6DN.js";import{d as c,e as u,f as m}from"./chunk-4DYWZHQL.js";import"./chunk-PRFFR5IG.js";import"./chunk-HDRHO2C5.js";function P({voiceId:l,voiceRate:d,languageCode:o,signal:a,config:S,onStart:w}){let t=!1,n,s=()=>{n?.(),n=null};a.addEventListener("abort",s,{once:!0});let i=h(l,d,o,a,w,()=>{},S.streaming_speech_languages?.includes(o)===!0,async(e,r,y,b)=>{t&&!r.aborted&&await new Promise(v=>{n=v}),r.aborted||await m(e,r,y,b)}),p=f(e=>i.enqueue(e));return{append:p.append,async finish(e){try{p.finish(e),await i.finish()}finally{a.removeEventListener("abort",s)}},async pause(){t=!0,await c()},async resume(){t=!1,s(),await u()}}}export{P as automaticSpeech};
+import { a as createSpeechStream } from './chunk-AJUFN7HS.js';
+import { b as splitDeltas } from './chunk-DOJQV6DN.js';
+import { d as pause, e as resume } from './chunk-4DYWZHQL.js';
+
+export function automaticSpeech({voiceId, voiceRate, languageCode, signal, config, owner, onStart}) {
+  const streaming = config.streaming_speech_languages?.includes(languageCode) === true;
+  const audio = createSpeechStream(voiceId, voiceRate, languageCode, signal, onStart, () => {}, streaming, owner);
+  const text = splitDeltas(words => audio.enqueue(words));
+  return {
+    append: text.append, pause, resume,
+    finish(reply) { text.finish(reply); return audio.finish(); },
+  };
+}
