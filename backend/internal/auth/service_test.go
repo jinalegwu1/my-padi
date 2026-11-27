@@ -25,6 +25,18 @@ func newMemoryAuthStore() *memoryAuthStore {
 	return &memoryAuthStore{challenges: make(map[string]Challenge)}
 }
 
+func (store *memoryAuthStore) SetCountry(_ context.Context, owner, code string, onlyIfMissing bool) (string, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if owner != store.user.ID {
+		return "", ErrUnauthenticated
+	}
+	if !onlyIfMissing || store.user.CountryCode == "" {
+		store.user.CountryCode = code
+	}
+	return store.user.CountryCode, nil
+}
+
 func (store *memoryAuthStore) CreateChallenge(_ context.Context, challenge Challenge) (bool, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()

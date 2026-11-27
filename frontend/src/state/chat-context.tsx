@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import { nextId } from '@/data/mock-conversations';
 import { usePersistentState } from '@/hooks/use-persistent-state';
-import { APIError, sendChat, streamVoiceChat, submitResponseFeedback } from '@/lib/api';
+import { APIError, sendChat, streamChat, streamVoiceChat, submitResponseFeedback } from '@/lib/api';
 import { hasBackend } from '@/lib/config';
 import { chatContext, conversationHistory, conversationMessages } from '@/lib/chat-context';
 import { greetingRequest, nextCheckIn } from '@/lib/greeting';
@@ -65,9 +65,9 @@ function useChatState() {
     let requestMemoryRevision = 0;
     const removeTurn = () => setMessages(prev => prev.filter(message => message.id !== pending?.id && message.id !== userMessage?.id));
     const keepPartialStream = () => setMessages(prev => prev.map(message => message.id === userMessage?.id
-      ? {...message,backendChat:true,memoryRevision:requestMemoryRevision}
+      ? {...message,backendChat:viaVoice,memoryRevision:requestMemoryRevision}
       : message.id === pending?.id
-      ? { ...message, text: streamedText, pending: false, backendChat: true, memoryRevision:requestMemoryRevision,voiceInterrupted: true }
+      ? { ...message, text: streamedText, pending: false, backendChat: viaVoice, memoryRevision:requestMemoryRevision, partial: true, voiceInterrupted: viaVoice }
       : message));
     try {
       const session = await readSession();
@@ -85,12 +85,13 @@ function useChatState() {
       if (viaVoice) onStart?.(pending.id);
       try {
         const messages = [...context.messages, { role: 'user' as const, content: cue ? greetingRequest(cue) : text }];
-        const response = viaVoice
-          ? await streamVoiceChat(session.token, messages, context.memoryRevision, controller.signal, delta => {
+        const stream = viaVoice ? streamVoiceChat : streamChat;
+        const response = viaVoice || onDelta
+          ? await stream(session.token, messages, context.memoryRevision, controller.signal, delta => {
             streamedText += delta;
             setMessages(prev => prev.map(message => message.id === pending!.id ? { ...message, text: streamedText } : message));
             onDelta?.(delta);
-          }, context.voiceContext, languageCode, greeting)
+          }, context.voiceContext, languageCode, greeting, viaVoice ? 'voice' : 'text')
           : await sendChat(session.token, messages, context.memoryRevision, controller.signal, 'text', context.voiceContext, languageCode, greeting);
         const currentSession = await readSession();
         if (controller.signal.aborted || started !== epoch.current || currentSession?.token !== session.token) {
@@ -107,11 +108,11 @@ function useChatState() {
         return { status: 'sent', reply: response.reply, messageID: replyID };
       } catch (error) {
         if (controller.signal.aborted || started !== epoch.current) {
-          if (started === epoch.current && viaVoice && streamedText.trim()) keepPartialStream();
+          if (started === epoch.current && streamedText.trim()) keepPartialStream();
           else removeTurn();
           return { status: 'ignored' };
         }
-        if (viaVoice && streamedText.trim()) keepPartialStream();
+        if (streamedText.trim()) keepPartialStream();
         else removeTurn();
         if (error instanceof APIError && error.status === 401) {
           const currentSession = await readSession();
@@ -133,6 +134,8 @@ function useChatState() {
 
   const send = useCallback(async (text: string, expectedUserID?: string) => (await performSend(text, expectedUserID)).status, [performSend]);
   const sendWithResponse = useCallback((text: string, expectedUserID?: string) => performSend(text, expectedUserID), [performSend]);
+  const sendStreamingText = useCallback((text: string, owner: string, signal: AbortSignal, onDelta: (delta: string) => void) =>
+    performSend(text, owner, false, signal, undefined, onDelta), [performSend]);
   const sendVoice = useCallback((text: string, expectedUserID: string, signal: AbortSignal, languageCode = 'en-NG',
     onDelta?: (delta: string) => void, onStart?: (messageID: string) => void) =>
     performSend(text, expectedUserID, true, signal, languageCode, onDelta, onStart), [performSend]);
@@ -160,7 +163,7 @@ function useChatState() {
   const delivered=useCallback((id:string,text:string,interrupted:boolean,accountID:string)=>{
     setMessages(prev=>prev.map(message=>message.id===id&&message.backendUserID===accountID?{...message,voiceSpokenText:text,voiceInterrupted:interrupted}:message));
   },[setMessages]);
-  return { messages, status, isThinking, sendError, send, sendWithResponse, sendVoice, greet, rateResponse, delivered,
+  return { messages, status, isThinking, sendError, send, sendWithResponse, sendStreamingText, sendVoice, greet, rateResponse, delivered,
     conversationID, historyFor, selectConversation, newChat };
 }
 

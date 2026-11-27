@@ -5,21 +5,18 @@ const assert = require('node:assert/strict');
 const { createServer } = require('node:http');
 const { readFileSync, existsSync, mkdirSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
-const ts = require('typescript');
 const { chromium } = require('playwright-core');
 
-const captureSource = readFileSync(join(__dirname, '../src/lib/voice-capture.web.ts'), 'utf8');
+const captureSource = readFileSync(join(__dirname, '../src/lib/voice-capture.web.js'), 'utf8');
 const worklet = captureSource.match(/const worklet = `([\s\S]*?)`;/)[1];
-const compile = (name, publish) => {
-  const code = ts.transpileModule(readFileSync(join(__dirname, '../src/lib', name), 'utf8'), {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText;
-  return `(function() { const exports = {}; const require = name => name === 'react-native' ? {Platform:{OS:'web'}} : {}; ${code}\n${publish} })();`;
+const expose = (name, exported) => {
+  const code = readFileSync(join(__dirname, '../src/lib', name), 'utf8');
+  return `(function() { const module = {exports:{}}; const require = name => name === 'react-native' ? {Platform:{OS:'web'}} : {}; ${code}\nwindow.${exported} = module.exports.${exported}; })();`;
 };
 const scripts = [
-  compile('voice-capture.web.ts', 'window.VoiceCapture = exports.VoiceCapture;'),
-  compile('voice-activity.ts', 'window.wavAudio = exports.wavAudio;'),
-  compile('voice-audio.ts', 'window.audioUpload = exports.audioUpload;'),
+  expose('voice-capture.web.js', 'VoiceCapture'),
+  expose('voice-activity.js', 'wavAudio'),
+  expose('voice-audio.js', 'audioUpload'),
 ].join('\n');
 const output = process.env.PADI_VOICE_CAPTURE_OUTPUT_DIR;
 if (output) mkdirSync(output, { recursive: true });

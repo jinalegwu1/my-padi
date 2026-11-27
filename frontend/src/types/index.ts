@@ -85,6 +85,8 @@ export type Message = {
   visual?: VisualBlock;
   /** Marks a message from a voice conversation. Legacy demo turns are not backendChat. */
   viaVoice?: boolean;
+  /** A stream ended after some text arrived. */
+  partial?: boolean;
   /** Fully played speech segments; an interrupted segment is never guessed. */
   voiceSpokenText?: string;
   voiceInterrupted?: boolean;
@@ -176,6 +178,8 @@ export type CheckInPreferences = {
 export type CheckInPreferencesPatch = Partial<CheckInPreferences>;
 
 export type Preferences = {
+  countryOwner?: string | null;
+  countrySyncPending?: boolean | 'import';
   onboarded: boolean;
   chatLocationPromptHandled?: boolean;
   countryCode: string | null;

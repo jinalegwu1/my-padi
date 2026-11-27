@@ -21,7 +21,7 @@ test('human voice catalog contains the six requested people and portraits', () =
   assert.deepEqual(VOICES.map((voice) => voice.id), ['baby', 'ada', 'chidi', 'zainab', 'tunde', 'amara']);
   assert.deepEqual(
     VOICES.map((voice) => [voice.name, voice.gender]),
-    [['PADI', 'male'], ['Ada', 'female'], ['Chidi', 'female'], ['Zainab', 'female'], ['Tunde', 'male'], ['Amara', 'male']],
+    [['PADI', 'female'], ['Ada', 'female'], ['Chidi', 'female'], ['Zainab', 'female'], ['Tunde', 'male'], ['Amara', 'male']],
   );
   for (const voice of VOICES) {
     assert.ok(['images.unsplash.com', 'images.pexels.com'].includes(new URL(voice.imageUrl).hostname));

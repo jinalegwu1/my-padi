@@ -56,9 +56,9 @@ export const VOICES: VoiceOption[] = [
   {
     id: 'baby',
     name: 'PADI',
-    gender: 'male',
+    gender: 'female',
     accent: 'Nigerian English style',
-    description: 'Mature, warm and expressive',
+    description: 'Warm, gentle and expressive',
     imageUrl: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=900&q=88',
     imageDescription: 'A cute fine boy with a warm smile',
     sample: "Hey, I'm PADI. Good to have you here. Tell me, how is your day going?",

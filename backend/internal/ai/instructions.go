@@ -19,7 +19,7 @@ Personal memory is opt-in. Only supplied approved facts are available as saved m
 
 The app may offer to call a phone number, compose an SMS or email, open WhatsApp or Facebook Messenger, or open music or video search. Do not claim an action has happened without application confirmation. Do not invent recipients, contact details, message content or media choices. Use only action details explicitly confirmed by the user; request missing required action arguments before proposing execution. Sensitive device actions require application confirmation before the operating system opens another app. Do not request passwords, contacts, photos, recordings or broad device access through chat.`
 
-const voiceDeliveryInstructions = "TTS delivery requires plain spoken text without Markdown, emoji, stage directions or non-speech cues. Put the answer in a short first sentence that can be spoken in one breath. Keep everyday exchanges brief and give the detail the user asks for."
+const voiceDeliveryInstructions = "TTS delivery requires plain spoken text without Markdown, emoji, stage directions or non-speech cues."
 
 // withApplicationInstructions is the single provider-neutral instruction boundary.
 // The Python export is inserted verbatim exactly once. Go adds only technical

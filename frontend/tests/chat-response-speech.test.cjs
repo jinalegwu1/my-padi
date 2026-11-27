@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { loadTS } = require('./helpers/load-ts.cjs');
+const { loadTS, loadJS } = require('./helpers/load-ts.cjs');
 
 function speech(overrides = {}) {
   const synthesisCalls = [];
@@ -18,7 +18,7 @@ function speech(overrides = {}) {
     playStandaloneSpeech: async (...args) => { playbackCalls.push(args); args[2](); },
     ...overrides.playback,
   };
-  const voiceAudio = loadTS('src/lib/voice-audio.ts', {
+  const voiceAudio = loadJS('src/lib/voice-audio.js', {
     'react-native': { Platform: { OS: 'web' } },
     'expo-file-system': {},
   });

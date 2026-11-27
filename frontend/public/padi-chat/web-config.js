@@ -1,9 +1,9 @@
 const apiKey = 'padi.chat.api-base.v1';
 
-export function openWebChat(apiBase) {
+export function openWebChat(apiBase, documentPath = '/padi-chat.html') {
   // Only the Expo build's public configuration crosses the page navigation.
   sessionStorage.setItem(apiKey, apiBase);
-  const page = new URL('/padi-chat.html', location.origin);
+  const page = new URL(documentPath, location.origin);
   page.searchParams.set('route', location.pathname + location.search);
   location.replace(page.href);
 }

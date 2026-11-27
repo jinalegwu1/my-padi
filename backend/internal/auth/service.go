@@ -27,8 +27,10 @@ var (
 )
 
 type User struct {
-	ID       string `json:"id"`
-	FullName string `json:"full_name"`
+	ID          string `json:"id"`
+	FullName    string `json:"full_name"`
+	CountryCode string `json:"country_code,omitempty"`
+	PhoneNumber string `json:"-"`
 }
 
 type Session struct {
@@ -55,6 +57,7 @@ type SessionRecord struct {
 }
 
 type Store interface {
+	SetCountry(context.Context, string, string, bool) (string, error)
 	CreateChallenge(context.Context, Challenge) (bool, error)
 	CancelChallenge(context.Context, string) error
 	VerifyChallenge(context.Context, string, []byte, SessionRecord, time.Time) (User, error)
@@ -264,4 +267,9 @@ func ValidVerificationCode(code string) bool {
 	}
 	_, err := strconv.Atoi(code)
 	return err == nil && strings.Trim(code, "0123456789") == ""
+}
+
+// SetCountry updates only the account resolved by the authenticated handler.
+func (service *Service) SetCountry(ctx context.Context, owner, code string, onlyIfMissing bool) (string, error) {
+	return service.store.SetCountry(ctx, owner, code, onlyIfMissing)
 }

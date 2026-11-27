@@ -1,11 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { loadTS } = require('./helpers/load-ts.cjs');
+const { loadJS } = require('./helpers/load-ts.cjs');
 const tick = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 
 function fixture() {
   const requests = [], audio = [];
-  const { createSpeechStream, trimSpeechPadding } = loadTS('src/lib/streaming-speech.ts', {
+  const { createSpeechStream, trimSpeechPadding } = loadJS('src/lib/streaming-speech.js', {
     '@/lib/api': { synthesiseSpeech: (...args) => new Promise((resolve, reject) => {
       requests.push({ args, resolve: value => resolve({ audio_base64: value }) });
       args[4].addEventListener('abort', () => reject(new Error('Aborted')), { once: true });
@@ -48,7 +48,7 @@ test('neural audio plays before synthesis finishes and credits only a fully play
     wordsByClip.set(wave,label);
     return wave;
   };
-  const { createSpeechStream }=loadTS('src/lib/streaming-speech.ts',{
+  const { createSpeechStream }=loadJS('src/lib/streaming-speech.js',{
     '@/lib/api':{streamSpeechAudio:async(_token,words,_style,_rate,_language,_signal,chunk)=>{
       chunk(packet(words + ' first')); await new Promise(resolve=>finishPhrase.push(resolve)); chunk(packet(words + ' last'));
     }},
@@ -68,13 +68,17 @@ test('neural audio plays before synthesis finishes and credits only a fully play
   assert.deepEqual(spoken,['I hear you.','Take your time.']);
 });
 
-test('slow packets stay buffered across phrases and an interruption discards them', async () => {
+test('a slow completed phrase plays while the next buffers and interruption discards pending audio', async () => {
   const wave = Buffer.alloc(44 + 4800).toString('base64');
   for (const interrupt of [false, true]) {
     const controller = new AbortController();
     const heard = [], credited = [];
-    const { createSpeechStream } = loadTS('src/lib/streaming-speech.ts', {
-      '@/lib/api': {streamSpeechAudio: async (_token, _text, _style, _rate, _lang, _signal, chunk) => chunk(wave)},
+    let finishSecond;
+    const { createSpeechStream } = loadJS('src/lib/streaming-speech.js', {
+      '@/lib/api': {streamSpeechAudio: async (_token, text, _style, _rate, _lang, _signal, chunk) => {
+        chunk(wave);
+        if (text === 'Two.') await new Promise(resolve => { finishSecond = resolve; });
+      }},
       '@/lib/session': {readSession: async () => ({token:'a'})},
       '@/lib/spoken-text': {spokenText: text => text},
       '@/lib/voice-playback': {createVoiceQueue: () => ({
@@ -83,11 +87,13 @@ test('slow packets stay buffered across phrases and an interruption discards the
     });
     const speech = createSpeechStream('ada',1,'en-NG',controller.signal,() => {}, text => credited.push(text),true);
     speech.enqueue('One.'); speech.enqueue('Two.'); await tick();
-    assert.deepEqual(heard, []);
+    assert.deepEqual(credited, ['One.']);
+    assert.equal(heard.length, 1);
     if (interrupt) controller.abort();
+    finishSecond();
     await speech.finish();
-    assert.equal(heard.length, interrupt ? 0 : 2);
-    assert.deepEqual(credited, interrupt ? [] : ['One.', 'Two.']);
+    assert.equal(heard.length, interrupt ? 1 : 2);
+    assert.deepEqual(credited, interrupt ? ['One.'] : ['One.', 'Two.']);
   }
 });
 
@@ -106,9 +112,10 @@ test('outer PCM padding is trimmed while every voiced sample remains intact', ()
 });
 
 test('a long unfinished first sentence releases usable text without losing words', () => {
-  const { takeReadySpeech }=loadTS('src/lib/voice-audio.ts',{'react-native':{Platform:{OS:'web'}},'expo-file-system':{}});
+  const { takeReadySpeech }=loadJS('src/lib/voice-audio.js',{'react-native':{Platform:{OS:'web'}},'expo-file-system':{}});
   const text=Array.from({length:80},(_,i)=>`word${i}`).join(' ');
   const first=takeReadySpeech(text);
-  assert.equal(first.sentences.length,1);assert.ok(first.sentences[0].length<=160);
+  assert.equal(first.sentences.length,1);assert.ok(first.sentences[0].length<=56);
   assert.equal(first.sentences[0]+' '+first.remainder,text);
+  assert.deepEqual(takeReadySpeech('Ada, tell me what happened.'), {sentences:['Ada,'], remainder:'tell me what happened.'});
 });

@@ -1,8 +1,8 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
-const {loadTS}=require('./helpers/load-ts.cjs');
-const {speechEnvelope,portraitSpeech,subscribePortraitSpeech}=loadTS('src/lib/portrait-speech.ts');
-const {wavAudio}=loadTS('src/lib/voice-activity.ts');
+const { loadJS }=require('./helpers/load-ts.cjs');
+const {speechEnvelope,portraitSpeech,subscribePortraitSpeech}=loadJS('src/lib/portrait-speech.js');
+const {wavAudio}=loadJS('src/lib/voice-activity.js');
 
 test('mouth energy follows voiced PCM, stays closed for silence, and stops at the clip end',()=>{
   const pcm=new Uint8Array(16000*2);

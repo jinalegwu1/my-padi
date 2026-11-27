@@ -42,5 +42,5 @@ export function nextCheckIn(messages: Message[], userID: string): CheckInCue {
 }
 
 export function greetingRequest(cue?: CheckInCue): string {
-  return cue ? 'Hi\n' + JSON.stringify(cue) : 'Hi';
+  return cue ? 'Hi\n' + JSON.stringify({ ...cue, source: 'app_generated_conversation_starter' }) : 'Hi';
 }

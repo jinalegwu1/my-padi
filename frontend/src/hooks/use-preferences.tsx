@@ -14,7 +14,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   highContrast: false,
   voiceId: 'baby',
   voiceRate: 1,
-  autoSpeakReplies: false,
+  autoSpeakReplies: true,
   notificationsEnabled: true,
   dailyCheckIn: true,
   checkInTime: '08:00',
@@ -41,7 +41,7 @@ const PreferencesContext = createContext<PreferencesContextValue | null>(null);
 
 /**
  * App-wide preferences (onboarding answers, appearance, accessibility, voice).
- * Stored on the device only; no account or backend involved.
+ * Country also syncs to the signed-in account. The remaining values are device preferences.
  */
 export function PreferencesProvider({ children }: { children: ReactNode }) {
   const [preferences, setPreferences, status] = usePersistentState<Preferences>(
@@ -61,7 +61,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   }, [setPreferences]);
 
   const value = useMemo(
-    () => ({ preferences, status, update, reset }),
+    () => ({ preferences: { ...DEFAULT_PREFERENCES, ...preferences }, status, update, reset }),
     [preferences, status, update, reset],
   );
 

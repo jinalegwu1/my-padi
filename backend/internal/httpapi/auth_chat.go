@@ -29,6 +29,7 @@ const (
 )
 
 type AuthAPI interface {
+	SetCountry(context.Context, string, string, bool) (string, error)
 	RequestRegistration(context.Context, auth.Profile, string) (auth.ChallengeResult, error)
 	RequestLogin(context.Context, string, string) (auth.ChallengeResult, error)
 	Verify(context.Context, string, string) (auth.Session, error)
@@ -235,10 +236,6 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 400, "invalid_request", "Choose text or voice delivery.")
 		return
 	}
-	if body.Stream && body.Delivery != "voice" {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", "Streaming is only available for voice conversations.")
-		return
-	}
 	if body.Language != "" && !validSpeechLanguage(body.Language) {
 		writeAPIError(w, 400, "invalid_request", "Choose a supported conversation language.")
 		return
@@ -304,6 +301,28 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			messages = append([]ai.Message{{Role: ai.RoleSystem, Content: context}}, messages...)
 		}
 	}
+	if user.PhoneNumber != "" {
+		if ownPhoneQuestion(messages[len(messages)-1].Content) {
+			reply := "Your registered phone number is " + user.PhoneNumber + "."
+			w.Header().Set("Cache-Control", "no-store")
+			if body.Stream {
+				w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+				_ = writeServerEvent(w, "delta", map[string]string{"text": reply})
+				_ = writeServerEvent(w, "done", map[string]any{"reply": reply, "memory_revision": memoryRevision})
+			} else {
+				writeJSON(w, http.StatusOK, map[string]any{"reply": reply, "memory_revision": memoryRevision})
+			}
+			return
+		}
+		// Previous local account lookups may be part of the client's history.
+		for i := range messages {
+			messages[i].Content = strings.ReplaceAll(messages[i].Content, user.PhoneNumber, "[account phone number]")
+		}
+		if body.VoiceContext != nil {
+			body.VoiceContext.InterruptedReply = strings.ReplaceAll(body.VoiceContext.InterruptedReply, user.PhoneNumber, "[account phone number]")
+			body.VoiceContext.SpokenPrefix = strings.ReplaceAll(body.VoiceContext.SpokenPrefix, user.PhoneNumber, "[account phone number]")
+		}
+	}
 	if body.Delivery == "voice" || body.VoiceContext != nil || body.Greeting && body.Language != "" {
 		instruction := ""
 		if body.Delivery == "voice" && body.Language != "" {
@@ -328,7 +347,7 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			messages = append([]ai.Message{{Role: ai.RoleSystem, Content: instruction}}, messages...)
 		}
 	}
-	if context := accountProfileContext(user.FullName, memoryState); context != "" {
+	if context := accountProfileContext(user, memoryState); context != "" {
 		messages = append([]ai.Message{{Role: ai.RoleSystem, Content: context}}, messages...)
 	}
 	chatRequest := ai.Request{
@@ -356,12 +375,23 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		chatRequest.MaxOutputTokens = 1024
 	}
 	if body.Stream {
+		if !chatRequest.Voice {
+			streamer, ok := handler.chat.(interface {
+				StreamText(context.Context, ai.Request, func(string) error) (ai.Response, error)
+			})
+			if !ok {
+				writeAPIError(w, 503, "text_stream_unavailable", "Text streaming is unavailable.")
+				return
+			}
+			handler.streamChat(w, ctx, streamer.StreamText, chatRequest, memoryRevision)
+			return
+		}
 		streamer, ok := handler.chat.(StreamingVoiceChatGenerator)
 		if !ok || !streamer.SupportsGroqVoiceStreaming() {
 			writeAPIError(w, http.StatusServiceUnavailable, "voice_stream_unavailable", "Voice text streaming is not configured.")
 			return
 		}
-		handler.streamVoice(w, ctx, streamer, chatRequest, memoryRevision)
+		handler.streamChat(w, ctx, streamer.StreamVoice, chatRequest, memoryRevision)
 		return
 	}
 	response, err := handler.chat.Generate(ctx, chatRequest)
@@ -383,19 +413,19 @@ func (handler chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}{Reply: response.Content, MemoryRevision: memoryRevision})
 }
 
-func (handler chatHandler) streamVoice(w http.ResponseWriter, ctx context.Context, streamer StreamingVoiceChatGenerator, request ai.Request, memoryRevision int64) {
+func (handler chatHandler) streamChat(w http.ResponseWriter, ctx context.Context, stream func(context.Context, ai.Request, func(string) error) (ai.Response, error), request ai.Request, memoryRevision int64) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		writeAPIError(w, http.StatusInternalServerError, "stream_unavailable", "This server cannot stream voice responses.")
+		writeAPIError(w, http.StatusInternalServerError, "stream_unavailable", "This server cannot stream replies.")
 		return
 	}
-	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	response, err := streamer.StreamVoice(ctx, request, func(delta string) error {
+	response, err := stream(ctx, request, func(delta string) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

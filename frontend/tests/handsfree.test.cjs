@@ -1,9 +1,9 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
-const {loadTS}=require('./helpers/load-ts.cjs');
-const activity=loadTS('src/lib/voice-activity.ts');
-const voiceAudio=loadTS('src/lib/voice-audio.ts',{'react-native':{Platform:{OS:'web'}},'expo-file-system':{}});
-const {HandsfreeSession}=loadTS('src/lib/handsfree-session.ts',{'@/lib/voice-activity':activity,'@/lib/voice-audio':voiceAudio});
+const { loadJS }=require('./helpers/load-ts.cjs');
+const activity=loadJS('src/lib/voice-activity.js');
+const voiceAudio=loadJS('src/lib/voice-audio.js',{'react-native':{Platform:{OS:'web'}},'expo-file-system':{}});
+const {HandsfreeSession}=loadJS('src/lib/handsfree-session.js',{'@/lib/voice-activity':activity,'@/lib/voice-audio':voiceAudio});
 const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return {promise,resolve};};
 const tick=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
 const settle=async()=>{await tick();await new Promise(resolve=>setTimeout(resolve,400));await tick();};
@@ -54,10 +54,48 @@ test('live captions revise in place, preserve hesitation and send the final word
   await tick();
   assert.deepEqual(commits,['I want to visit Abuja.']);
   assert.equal(f.snapshot.userText,'I want to visit Abuja.');
-  assert.ok(blocks >= 40,'Audio includes speech onset and the pre-roll');
+  assert.equal(blocks, 36, 'Both speech runs, internal hesitation and 300 ms of final silence are sent');
   partial('stale caption');
   assert.equal(f.snapshot.userText,'I want to visit Abuja.');
   await f.session.cancel();
+});
+
+test('independent audio recognition resolves an ambiguous greeting while genuine I and longer speech pass through', async () => {
+  const finals = [{ checkGreeting: true }, 'i', 'I saw Ada', { checkGreeting: true }, { checkGreeting: true }];
+  const checks = ['Hi!', 'I.', 'eye drops'];
+  const f = fixture({
+    openRecognition: async () => ({ begin: () => ({ write() {}, finish: async () => finals.shift() }) }),
+    transcribe: async (_token, wav) => {
+      assert.equal(Buffer.from(wav.subarray(0, 4)).toString(), 'RIFF');
+      return checks.shift();
+    },
+  });
+  await f.session.start({ greet: false });
+  for (let i = 0; i < 5; i++) { f.voice(); f.quiet(); await tick(); }
+  assert.deepEqual(f.calls.filter(Array.isArray), [['chat','Hi!'], ['chat','i'], ['chat','I saw Ada'], ['chat','I.']]);
+  assert.match(f.snapshot.error, /say that again/);
+  assert.equal(f.snapshot.connected, true);
+  await f.session.cancel();
+});
+
+test('speaking again or closing the microphone cancels an outstanding greeting check', async () => {
+  for (const speakAgain of [false, true]) {
+    const finals = [{ checkGreeting: true }, 'I feel better'];
+    const pending = deferred();
+    let checking;
+    const f = fixture({
+      openRecognition: async () => ({ begin: () => ({ write() {}, finish: async () => finals.shift() }) }),
+      transcribe: async (_token, _wav, signal) => { checking = signal; return pending.promise; },
+    });
+    await f.session.start({ greet: false });
+    f.voice(); f.quiet(); await tick();
+    assert.equal(checking.aborted, false);
+    if (speakAgain) { f.voice(); f.quiet(); } else await f.session.cancel();
+    assert.equal(checking.aborted, true);
+    pending.resolve('Hi'); await tick();
+    assert.deepEqual(f.calls.filter(Array.isArray), speakAgain ? [['chat', 'I feel better']] : []);
+    await f.session.cancel();
+  }
 });
 
 test('a tap during playback leaves the reply playing; speaking captures a new turn', async () => {
@@ -296,7 +334,7 @@ test('a 700 ms pause and continuation produce one complete user turn',async()=>{
   assert.equal(uploaded,undefined);
   f.voice();for(let i=0;i<26;i++)f.frame(frame());await tick();assert.equal(uploaded,undefined);
   for(let i=0;i<2;i++)f.frame(frame());await tick();
-  assert.ok(uploaded.length>=44+2900/1000*32000);
+  assert.equal(uploaded.length, 44 + 1.8 * 32000); // 400 + 700 + 400 + 300 ms
   assert.deepEqual(f.calls.filter(value=>Array.isArray(value)),[['chat','Please help me plan dinner tomorrow.']]);
   await f.session.cancel();
 });

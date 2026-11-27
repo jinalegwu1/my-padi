@@ -28,6 +28,7 @@ import { hasBackend } from '@/lib/config';
 import { visibleChatMessages } from '@/lib/chat-context';
 import { createChatResponseSpeech } from '@/lib/chat-response-speech';
 import { unregisterCurrentPushDevice } from '@/lib/push-notifications';
+import { syncAccountCountry } from '@/lib/account-country';
 import { clearSession, readSession, type AppSession } from '@/lib/session';
 import { unlockVoicePlayback } from '@/lib/voice-playback';
 import type { Message, ResponseRating } from '@/types';
@@ -166,7 +167,8 @@ export default function ConversationScreen() {
     let active = true;
     setSessionLoading(true);
     readSession()
-      .then((current) => {
+      .then(async (current) => {
+        if (current) await syncAccountCountry(current, false, true);
         if (active) {
           setSession(current);
           setSessionError(null);

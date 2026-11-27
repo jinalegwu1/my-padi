@@ -23,7 +23,7 @@ func NewAuthStore(ctx context.Context, db *sql.DB) (*AuthStore, error) {
 	}
 	var schemaReady bool
 	if err := db.QueryRowContext(ctx, `
-		SELECT to_regclass('public.users') IS NOT NULL
+		SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'country_code')
 		   AND to_regclass('public.auth_challenges') IS NOT NULL
 		   AND to_regclass('public.sessions') IS NOT NULL
 		   AND EXISTS (
@@ -261,8 +261,8 @@ func (store *AuthStore) VerifyChallenge(
 		}
 	} else {
 		if err := tx.QueryRowContext(ctx, `
-			SELECT id, full_name FROM users WHERE phone_number = $1
-		`, challenge.phone).Scan(&user.ID, &user.FullName); err != nil {
+			SELECT id, full_name, COALESCE(country_code, '') FROM users WHERE phone_number = $1
+		`, challenge.phone).Scan(&user.ID, &user.FullName, &user.CountryCode); err != nil {
 			return auth.User{}, fmt.Errorf("load authenticated user: %w", err)
 		}
 	}
@@ -281,13 +281,13 @@ func (store *AuthStore) VerifyChallenge(
 func (store *AuthStore) ResolveSession(ctx context.Context, tokenHash []byte, now time.Time) (auth.User, error) {
 	var user auth.User
 	if err := store.db.QueryRowContext(ctx, `
-		SELECT users.id, users.full_name
+		SELECT users.id, users.full_name, COALESCE(users.country_code, ''), users.phone_number
 		FROM sessions
 		JOIN users ON users.id = sessions.user_id
 		WHERE sessions.token_hash = $1
 		  AND sessions.expires_at > $2
 		  AND sessions.revoked_at IS NULL
-	`, tokenHash, now).Scan(&user.ID, &user.FullName); errors.Is(err, sql.ErrNoRows) {
+	`, tokenHash, now).Scan(&user.ID, &user.FullName, &user.CountryCode, &user.PhoneNumber); errors.Is(err, sql.ErrNoRows) {
 		return auth.User{}, auth.ErrUnauthenticated
 	} else if err != nil {
 		return auth.User{}, fmt.Errorf("resolve user session: %w", err)
@@ -310,4 +310,12 @@ func advisoryKey(value string) int64 {
 	hash := fnv.New64a()
 	_, _ = hash.Write([]byte(value))
 	return int64(hash.Sum64())
+}
+
+func (store *AuthStore) SetCountry(ctx context.Context, owner, code string, onlyIfMissing bool) (string, error) {
+	var saved string
+	err := store.db.QueryRowContext(ctx, `UPDATE users SET country_code = CASE
+		WHEN $3 THEN COALESCE(country_code, $2) ELSE $2 END
+		WHERE id = $1 RETURNING country_code`, owner, code, onlyIfMissing).Scan(&saved)
+	return saved, err
 }

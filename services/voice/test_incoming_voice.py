@@ -25,6 +25,8 @@ import app
 import audio_processing
 from audio_processing import decode_audio_file, prepare_audio
 from local_recognition import RecognitionConfig, RecognitionPool, load_model, recognise_file
+from live_recognition import LiveTurn, load_live_model
+from install_conversation_models import MODEL_DIR, VOSK_NAME
 from voice_errors import SpeechError
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -226,6 +228,38 @@ class AudioTests(unittest.TestCase):
         # WebRTC VAD may keep a few speech frames after the waveform ends.
         # The existing trim margins are 500 ms per edge, plus that VAD tail.
         self.assertLessEqual(len(prepared), len(raw) + 32000 + 6400 + 44)
+
+
+class ShortGreetingTests(unittest.TestCase):
+    def test_recorded_hi_and_pronoun_through_the_local_models(self):
+        directory = os.environ.get("PADI_LIVE_STT_MODEL_PATH", str(MODEL_DIR / VOSK_NAME))
+        live = load_live_model(directory)
+        if live is None or not (MODEL / "model.bin").is_file():
+            self.skipTest("Install the local Vosk and Whisper checkpoints for the listening regression")
+        config = RecognitionConfig(model_path=str(MODEL))
+        whisper = load_model(config)
+        # Windows retained by the real 50 ms capture detector for these two
+        # public fixtures. The browser verification also injects each full file.
+        for name, start_ms, duration_ms, expected in [
+            ("hi-soft-onset.wav", 850, 1000, "hi"),
+            ("spoken-i.wav", 650, 1150, "i"),
+        ]:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as folder:
+                source = ROOT / "frontend/tests/fixtures" / name
+                with wave.open(str(source)) as wav:
+                    wav.setpos(start_ms * 16)
+                    pcm = wav.readframes(duration_ms * 16)
+                turn = LiveTurn(live)
+                turn.handle(json.dumps({"type": "start", "turn": 1, "rate": 16000, "check_short_words": True}))
+                for i in range(0, len(pcm), 1600):
+                    turn.handle(pcm[i:i + 1600])
+                final = turn.handle('{"type":"finish","turn":1}')
+                clip = Path(folder) / "capture.wav"
+                clip.write_bytes(wave_bytes(pcm))
+                checked = recognise_file(whisper, config, str(clip), "audio/wav", "en")["text"].strip(" .!?").lower()
+                self.assertEqual(checked, expected)
+                self.assertEqual(bool(final.get("check_greeting")), final["text"] == "i")
+                self.assertEqual(checked if final.get("check_greeting") else final["text"], expected)
 
 
 class WorkerTests(unittest.TestCase):

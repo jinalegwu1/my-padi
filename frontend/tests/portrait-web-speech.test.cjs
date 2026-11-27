@@ -115,3 +115,12 @@ test('a dropped caption connection uses the retained microphone turn once, until
   assert.equal(await turnTranscript(closed(), audio, true, upload, call.signal), '');
   assert.equal(uploads, 1);
 });
+
+test('a one-word interruption is checked against its audio without remapping an ordinary word', async () => {
+  const clip = {pcm:new Uint8Array(32000), sampleRate:16000};
+  const signal = new AbortController().signal;
+  for (const verified of ['Hi.', 'Guy.', 'Bye.']) {
+    assert.equal(await turnTranscript(Promise.resolve('guy'), clip, true, async()=>verified, signal, true), verified);
+  }
+  assert.equal(await turnTranscript(Promise.resolve('guy'), clip, true, ()=>assert.fail('unexpected upload'), signal), 'guy');
+});

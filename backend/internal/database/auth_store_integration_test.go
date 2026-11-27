@@ -72,6 +72,21 @@ func TestPostgresAuthenticationAndUsageIntegration(t *testing.T) {
 	if user.ID != session.User.ID || user.FullName != "Integration Test" {
 		t.Fatalf("authenticated user = %+v, want registration profile", user)
 	}
+	for _, step := range []struct {
+		code string
+		seed bool
+		want string
+	}{
+		{"NG", true, "NG"}, {"US", true, "NG"}, {"GH", false, "GH"},
+	} {
+		if got, err := service.SetCountry(ctx, user.ID, step.code, step.seed); err != nil || got != step.want {
+			t.Fatal("country profile did not persist", err)
+		}
+		resolved, err := service.Authenticate(ctx, session.Token)
+		if err != nil || resolved.CountryCode != step.want || resolved.PhoneNumber != phoneNumber {
+			t.Fatal("account fields did not survive session resolution", err)
+		}
+	}
 	if err := service.Logout(ctx, session.Token); err != nil {
 		t.Fatalf("Logout() error = %v", err)
 	}

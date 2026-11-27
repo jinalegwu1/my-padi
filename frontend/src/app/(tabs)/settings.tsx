@@ -22,6 +22,8 @@ import { usePersonalityPreferences } from '@/hooks/use-personality-preferences';
 import { usePreferences } from '@/hooks/use-preferences';
 import { useTranslation } from '@/hooks/use-translation';
 import { formatTimeLabel, timeSlots } from '@/lib/date';
+import { selectAccountCountry, syncAccountCountry } from '@/lib/account-country';
+import { readSession, subscribeSession } from '@/lib/session';
 import type { AppearanceMode, CheckInPreferences, CheckInPreferencesPatch } from '@/types';
 
 type CheckInTimeTarget = 'morning_time' | 'afternoon_time' | 'evening_time' | 'quiet_hours_start' | 'quiet_hours_end';
@@ -55,12 +57,33 @@ export default function SettingsScreen() {
   useFocusEffect(useCallback(() => { void reload(); }, [reload]));
 
   const [languageOpen, setLanguageOpen] = useState(false);
+  const [countryError, setCountryError] = useState('');
+  const [accountCountry, setAccountCountry] = useState<string | null | undefined>(undefined);
+  useFocusEffect(useCallback(() => {
+    let generation = 0;
+    const load = async () => {
+      const current = ++generation;
+      setCountryError('');
+      setAccountCountry(undefined);
+      try {
+        const session = await readSession();
+        const code = session && await syncAccountCountry(session);
+        if (current === generation) setAccountCountry(code || null);
+      } catch (error) {
+        if (current === generation) setCountryError(error instanceof Error ? error.message : 'Your country could not sync.');
+      }
+    };
+    void load();
+    const unsubscribe = subscribeSession(load);
+    return () => { generation++; unsubscribe(); };
+  }, []));
   const [countryOpen, setCountryOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [checkInTimeTarget, setCheckInTimeTarget] = useState<CheckInTimeTarget | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
 
-  const country = findCountry(preferences.countryCode);
+  const countryCode = accountCountry ?? (preferences.countryOwner ? null : preferences.countryCode);
+  const country = findCountry(countryCode);
   const voice = findVoice(preferences.voiceId);
 
   const appearanceOptions: { value: AppearanceMode; label: string }[] = [
@@ -519,11 +542,13 @@ export default function SettingsScreen() {
         onClose={() => setCountryOpen(false)}
         scroll={false}>
         <View style={styles.pickerSheet}>
+          {!!countryError && <Text accessibilityRole="alert" style={{color:colors.danger}}>{countryError}</Text>}
           <CountryPicker
-            selectedCode={preferences.countryCode}
-            onSelect={(selected) => {
-              update({ countryCode: selected.code });
-              setCountryOpen(false);
+            selectedCode={countryCode}
+            onSelect={async (selected) => {
+              setCountryError('');
+              try { const saved = await selectAccountCountry(selected.code); setAccountCountry(saved ?? null); setCountryOpen(false); }
+              catch (error) { setCountryError(error instanceof Error ? error.message : 'Your country could not sync.'); }
             }}
             searchPlaceholder={t('onboarding.country.search')}
           />

@@ -146,6 +146,29 @@ func isLoopbackHost(host string) bool {
 }
 
 func (router *Router) Generate(ctx context.Context, request Request) (Response, error) {
+	return router.generate(ctx, request, nil)
+}
+
+// StreamText follows ordinary text routing, retries and usage accounting.
+// A provider with only a complete-response API delivers one verified delta.
+func (router *Router) StreamText(ctx context.Context, request Request, emit func(string) error) (Response, error) {
+	return router.generate(ctx, request, &textStream{emit: emit})
+}
+
+type textStream struct {
+	emit    func(string) error
+	started bool
+}
+
+func (stream *textStream) write(delta string) error {
+	if delta == "" {
+		return nil
+	}
+	stream.started = true
+	return stream.emit(delta)
+}
+
+func (router *Router) generate(ctx context.Context, request Request, stream *textStream) (Response, error) {
 	if err := validateRequest(request); err != nil {
 		return Response{}, err
 	}
@@ -166,7 +189,7 @@ func (router *Router) Generate(ctx context.Context, request Request) (Response, 
 	candidates := router.candidates(request)
 	var lastErr error
 	for _, modelID := range candidates {
-		result, err := router.generateWithModel(ctx, modelID, request)
+		result, err := router.generateWithModel(ctx, modelID, request, stream)
 		if err == nil {
 			return result, nil
 		}
@@ -174,7 +197,7 @@ func (router *Router) Generate(ctx context.Context, request Request) (Response, 
 			return Response{}, ctx.Err()
 		}
 		lastErr = err
-		if !shouldAdvanceProviderChain(err) {
+		if stream != nil && stream.started || !shouldAdvanceProviderChain(err) {
 			return Response{}, err
 		}
 	}
@@ -214,7 +237,7 @@ func (router *Router) GenerateWithModel(ctx context.Context, modelID string, req
 	if _, exists := router.models[modelID]; !exists {
 		return Response{}, fmt.Errorf("unknown AI model %q", modelID)
 	}
-	return router.generateWithModel(ctx, modelID, request)
+	return router.generateWithModel(ctx, modelID, request, nil)
 }
 
 // SupportsGroqVoiceStreaming retains the capability name used by existing
@@ -364,7 +387,7 @@ func (router *Router) streamWithModel(ctx context.Context, modelID string, reque
 	return result, nil
 }
 
-func (router *Router) generateWithModel(ctx context.Context, modelID string, request Request) (Response, error) {
+func (router *Router) generateWithModel(ctx context.Context, modelID string, request Request, stream *textStream) (Response, error) {
 	model := router.models[modelID]
 	if router.limiter == nil {
 		return Response{}, ErrUsageLimiterUnavailable
@@ -389,7 +412,14 @@ func (router *Router) generateWithModel(ctx context.Context, modelID string, req
 		}
 		modelContext, cancel := context.WithTimeout(ctx, timeout)
 		started := router.now()
-		result, err := router.providers[model.Provider].Generate(modelContext, model, request)
+		provider := router.providers[model.Provider]
+		var result Response
+		var err error
+		if progressive, ok := provider.(StreamingProvider); ok && stream != nil {
+			result, err = progressive.Stream(modelContext, model, request, stream.write)
+		} else {
+			result, err = provider.Generate(modelContext, model, request)
+		}
 		cancel()
 		duration := router.now().Sub(started)
 		if err == nil && (result.Usage.InputTokens < 0 || result.Usage.OutputTokens < 0) {
@@ -420,6 +450,9 @@ func (router *Router) generateWithModel(ctx context.Context, modelID string, req
 			}
 			router.observe(model, duration, false, classifyError(err), result.Usage)
 			lastErr = err
+			if stream != nil && stream.started {
+				return Response{}, err
+			}
 			if errors.Is(err, ErrOutputTokenLimit) && !completionRetried && ctx.Err() == nil {
 				if larger, ok := largerCompletionBudget(request); ok {
 					request = larger
@@ -447,6 +480,11 @@ func (router *Router) generateWithModel(ctx context.Context, modelID string, req
 		result.Provider = model.Provider
 		result.Model = model.Model
 		router.observe(model, duration, true, "", result.Usage)
+		if stream != nil && !stream.started {
+			if err := stream.write(result.Content); err != nil {
+				return Response{}, err
+			}
+		}
 		return result, nil
 	}
 	return Response{}, lastErr

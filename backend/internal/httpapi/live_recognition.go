@@ -3,6 +3,8 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -11,6 +13,20 @@ import (
 
 type liveRecognizer interface {
 	OpenLive(context.Context) (*websocket.Conn, error)
+}
+
+// Gorilla's wire limit applies before decompression. Bound the decoded message
+// as well before passing credentials, commands or PCM to the existing service.
+func readLiveFrame(conn *websocket.Conn, limit int64) (int, []byte, error) {
+	kind, reader, err := conn.NextReader()
+	if err != nil {
+		return 0, nil, err
+	}
+	frame, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if int64(len(frame)) > limit {
+		return 0, nil, errors.New("live frame exceeds decoded byte limit")
+	}
+	return kind, frame, err
 }
 
 // Browser WebSockets cannot carry an Authorization header. The first frame
@@ -32,20 +48,22 @@ func liveRecognitionHandler(deps Dependencies) http.HandlerFunc {
 		}
 		// The router's CORS middleware already validates web origins. Native
 		// clients authenticate with the same first frame.
-		upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+		upgrader := websocket.Upgrader{EnableCompression: true, CheckOrigin: func(*http.Request) bool { return true }}
 		client, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
 		defer client.Close()
-		client.SetReadLimit(4096)
+		client.EnableWriteCompression(false)
+		client.SetReadLimit(4096 + 128) // allow framing overhead on incompressible input
 		client.SetReadDeadline(time.Now().Add(5 * time.Second))
 		var hello struct{ Token, Language string }
 		fail := func(message string) {
 			client.SetWriteDeadline(time.Now().Add(time.Second))
 			_ = client.WriteJSON(map[string]string{"type": "error", "message": message})
 		}
-		if err := client.ReadJSON(&hello); err != nil || hello.Token == "" {
+		_, credentials, err := readLiveFrame(client, 4096)
+		if err != nil || json.Unmarshal(credentials, &hello) != nil || hello.Token == "" {
 			fail("Sign in to use live captions.")
 			return
 		}
@@ -69,7 +87,7 @@ func liveRecognitionHandler(deps Dependencies) http.HandlerFunc {
 		}
 		defer upstream.Close()
 		upstream.SetReadLimit(16 * 1024)
-		client.SetReadLimit(32000)
+		client.SetReadLimit(32000 + 128)
 		client.SetReadDeadline(time.Time{})
 		if client.WriteJSON(map[string]string{"type": "ready"}) != nil {
 			return
@@ -82,7 +100,7 @@ func liveRecognitionHandler(deps Dependencies) http.HandlerFunc {
 		inputEnded := make(chan string, 1)
 		go func() {
 			for {
-				kind, data, err := client.ReadMessage()
+				kind, data, err := readLiveFrame(client, 32000)
 				if err != nil {
 					inputEnded <- ""
 					return

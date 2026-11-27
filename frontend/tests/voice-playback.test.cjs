@@ -1,8 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { loadTS } = require('./helpers/load-ts.cjs');
-const speechMotion=loadTS('src/lib/portrait-speech.ts');
-const echo=loadTS('src/lib/voice-echo.ts');
+const { loadJS } = require('./helpers/load-ts.cjs');
+const speechMotion=loadJS('src/lib/portrait-speech.js');
+const echo=loadJS('src/lib/voice-echo.js');
 
 test('one tap unlocks subsequent audio replies and interruption stops the current source',async()=>{
   const original=global.AudioContext;
@@ -19,7 +19,7 @@ test('one tap unlocks subsequent audio replies and interruption stops the curren
     }
   };
   try {
-    const {playVoice,unlockVoicePlayback}=loadTS('src/lib/voice-playback.web.ts',{'@/lib/portrait-speech':speechMotion,'@/lib/voice-echo':echo});
+    const {playVoice,unlockVoicePlayback}=loadJS('src/lib/voice-playback.web.js',{'@/lib/portrait-speech':speechMotion,'@/lib/voice-echo':echo});
     await unlockVoicePlayback();
     let started=0;
     const controller=new AbortController();
@@ -44,7 +44,7 @@ test('cancelled decoding never starts a stale audio reply',async()=>{
     createBufferSource(){played=true;throw new Error('Must not play stale audio');}
   };
   try {
-    const {playVoice}=loadTS('src/lib/voice-playback.web.ts',{'@/lib/portrait-speech':speechMotion,'@/lib/voice-echo':echo});
+    const {playVoice}=loadJS('src/lib/voice-playback.web.js',{'@/lib/portrait-speech':speechMotion,'@/lib/voice-echo':echo});
     const controller=new AbortController();
     const promise=playVoice('AAAA',controller.signal,()=>assert.fail('Cancelled audio started'));
     await new Promise(setImmediate);controller.abort();decode({});await promise;

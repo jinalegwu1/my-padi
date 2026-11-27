@@ -26,6 +26,7 @@ async function pageFor({ microphone = true, initialMessages = [], voiceId = 'ada
   // list rejects microphone permission rather than leaving a pending prompt.
   await context.grantPermissions(microphone ? ['microphone'] : [], { origin: frontend });
   await context.addInitScript(({ session, preferences, initialMessages }) => {
+    if (window !== window.top) return;
     sessionStorage.setItem('padi.auth.session.v1', JSON.stringify(session));
     localStorage.setItem('app:v1:preferences', JSON.stringify(preferences));
     localStorage.setItem('app:v1:chat-messages', JSON.stringify(initialMessages));
@@ -82,14 +83,34 @@ async function pageFor({ microphone = true, initialMessages = [], voiceId = 'ada
       });
       observer.observe(document.body, {subtree:true, childList:true, characterData:true});
     };
-    state.playInput = async encoded => {
+    const playing = new Map();
+    function remainingPlayback() {
+      if (state.output?.state !== 'running') return 0;
+      const now = state.output.currentTime;
+      let end = now;
+      for (const clip of playing.values()) {
+        if (clip.start <= end) end = Math.max(end, clip.end);
+      }
+      return (end - now) * 1000;
+    }
+    state.playInput = async (encoded, duringPlayback = false) => {
       if (!state.input || state.input.state !== 'running') throw new Error('Test microphone is not running.');
       const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
       const buffer = await state.input.decodeAudioData(bytes.buffer);
       const source = state.input.createBufferSource();
       source.buffer = buffer;
       source.connect(state.destination);
-      if (state.turn) {
+      if (duringPlayback) {
+        // Decode first, then inject in this same browser task. "Speaking" can
+        // stay on screen between phrases while a slow engine renders the next.
+        const deadline = performance.now() + 90000;
+        let available;
+        while ((available = remainingPlayback()) < 550 || performance.now() < state.turn?.audibleAt) {
+          if (performance.now() > deadline) throw new Error('No continuous 550 ms playback window for interruption.');
+          await new Promise(requestAnimationFrame);
+        }
+        state.interruption = { startedAt: performance.now(), available, paused: state.paused };
+      } else if (state.turn) {
         const {last} = speechEdges(buffer);
         if (last === undefined) throw new Error('The test recording has no audible speech.');
         state.turn.lastWordAt = performance.now() + last * 1000;
@@ -99,7 +120,6 @@ async function pageFor({ microphone = true, initialMessages = [], voiceId = 'ada
     };
     const play = AudioBufferSourceNode.prototype.start;
     const pause = AudioBufferSourceNode.prototype.stop;
-    const playing = new WeakSet();
     const echoes = new WeakMap();
     AudioBufferSourceNode.prototype.start = function (...args) {
       if (this.context !== state.input) {
@@ -108,12 +128,14 @@ async function pageFor({ microphone = true, initialMessages = [], voiceId = 'ada
         const start = Math.max(this.context.currentTime, args[0] || 0);
         const delay = start - this.context.currentTime;
         state.lastPlaybackStarted = performance.now() + delay * 1000;
-        state.playback.push({start, end: start + this.buffer.duration});
+        const clip = {start, end: start + this.buffer.duration};
+        state.output = this.context;
+        state.playback.push(clip);
         if (state.turn && state.turn.audibleAt === undefined) {
           const first = speechEdges(this.buffer).first;
           if (first !== undefined) state.turn.audibleAt = state.lastPlaybackStarted + first * 1000;
         }
-        playing.add(this);
+        playing.set(this, clip);
         this.addEventListener('ended', () => { if (playing.delete(this)) { state.ended++; state.activePlayback--; } }, { once: true });
         // Route a copy of actual TTS into the test microphone to exercise
         // echo suppression through the real capture worklet, not just flags.
@@ -130,6 +152,10 @@ async function pageFor({ microphone = true, initialMessages = [], voiceId = 'ada
     AudioBufferSourceNode.prototype.stop = function (...args) {
       const echo = echoes.get(this);
       if (echo) pause.call(echo);
+      const clip = playing.get(this);
+      if (clip && clip.start <= this.context.currentTime && this.context.currentTime < clip.end) {
+        state.lastPlayingStopAt = performance.now();
+      }
       if (playing.delete(this)) { state.paused++; state.activePlayback--; }
       return pause.apply(this, args);
     };
@@ -461,13 +487,14 @@ async function naturalSpeechUnavailable() {
   } finally { await context.close(); }
 }
 
-(async () => {
+async function verify(check) {
   try {
     browser = await chromium.launch({
       ...(process.env.PADI_VOICE_BROWSER_EXECUTABLE ? { executablePath: process.env.PADI_VOICE_BROWSER_EXECUTABLE } : { channel: 'chrome' }),
       headless: true,
       args: ['--use-fake-device-for-media-stream'],
     });
+    if (check) { await check({ pageFor, frontend, publicSpeech, continuation, completedStream, assertClosed }); return; }
     if (process.env.PADI_VERIFY_LIVE_CAPTIONS === '1') { await liveCaptions(); return; }
     if (process.env.PADI_VERIFY_VOICE_LATENCY === '1') { await checkLatency(); return; }
     if (!failuresOnly) await success();
@@ -483,4 +510,6 @@ async function naturalSpeechUnavailable() {
   } finally {
     await browser?.close();
   }
-})();
+}
+module.exports = { verify };
+if (require.main === module) void verify();

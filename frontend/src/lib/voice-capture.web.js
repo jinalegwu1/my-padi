@@ -1,5 +1,3 @@
-export type PCMFrame = { data: ArrayBuffer; sampleRate: number; channels: number; capturedAt?:number };
-
 // AudioWorklet captures 16 kHz PCM off the UI thread for local voice detection
 // and metering. The recording path compresses the microphone stream separately.
 const worklet = `class PadiCapture extends AudioWorkletProcessor {
@@ -87,67 +85,106 @@ const worklet = `class PadiCapture extends AudioWorkletProcessor {
     return true;
   }
 } registerProcessor('padi-capture',PadiCapture);`;
-
-export class VoiceCapture {
-  private stream: MediaStream | null = null;
-  private context: AudioContext | null = null;
-  private node: AudioWorkletNode | null = null;
-  private starting: Promise<void> | null = null;
-  private cleanup: Promise<void> | null = null;
-  private url: string | null = null;
-  private source: MediaStreamAudioSourceNode | null = null;
-  private recordingDestination: MediaStreamAudioDestinationNode | null = null;
-  private stopped = false;
-  private detachAbort: (() => void) | null = null;
-
-  constructor(private onFrame: (frame: PCMFrame) => void, private interrupted: () => void) {}
-
-  start(signal: AbortSignal): Promise<void> {
+class VoiceCapture {
+  stream = null;
+  context = null;
+  node = null;
+  starting = null;
+  cleanup = null;
+  url = null;
+  source = null;
+  recordingDestination = null;
+  stopped = false;
+  detachAbort = null;
+  /** @param {(frame: {data: ArrayBuffer, sampleRate: number, channels: number, capturedAt?: number}) => void} onFrame */
+  constructor(onFrame, interrupted) {
+    this.onFrame = onFrame;
+    this.interrupted = interrupted;
+  }
+  start(signal) {
     if (signal.aborted || this.stopped) return Promise.resolve();
-    const abort = () => { this.stopped = true; this.release(); };
-    signal.addEventListener('abort', abort, { once: true });
+    const abort = () => {
+      this.stopped = true;
+      this.release();
+    };
+    signal.addEventListener('abort', abort, {
+      once: true
+    });
     this.detachAbort = () => signal.removeEventListener('abort', abort);
     // Resume directly from the start-button gesture, before awaiting permission.
     if (!navigator.mediaDevices?.getUserMedia || typeof AudioWorkletNode === 'undefined') return Promise.reject(new Error('Hands-free voice requires a supported browser on localhost or HTTPS.'));
     // Use the device's audio clock for full-duplex capture/playback. Asking
     // for a separate 16 kHz engine can desynchronise MediaStream input from
     // speaker playback. The worklet still exports mono 16 kHz PCM.
-    this.context = new AudioContext({ latencyHint: 'interactive' });
+    this.context = new AudioContext({
+      latencyHint: 'interactive'
+    });
     void this.context.resume().catch(() => undefined);
     this.starting = this.prepare(signal);
     return this.starting;
   }
-
-  private async prepare(signal: AbortSignal): Promise<void> {
-    let context = this.context!;
+  async prepare(signal) {
+    let context = this.context;
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-      if (signal.aborted || this.stopped) { this.release(); return; }
-      this.stream.getTracks().forEach(track => { track.onended = this.interrupted; });
-      let source: MediaStreamAudioSourceNode;
-      try { source = context.createMediaStreamSource(this.stream); }
-      catch (error) {
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+      if (signal.aborted || this.stopped) {
+        this.release();
+        return;
+      }
+      this.stream.getTracks().forEach(track => {
+        track.onended = this.interrupted;
+      });
+      let source;
+      try {
+        source = context.createMediaStreamSource(this.stream);
+      } catch (error) {
         // Some engines accept a 16 kHz context but cannot attach their
         // microphone at that rate. Reuse the stream in the default engine.
         if (context.sampleRate !== 16000) throw error;
         await context.close().catch(() => undefined);
-        if (signal.aborted || this.stopped) { this.release(); return; }
+        if (signal.aborted || this.stopped) {
+          this.release();
+          return;
+        }
         context = this.context = new AudioContext();
         void context.resume().catch(() => undefined);
-        source = context.createMediaStreamSource(this.stream!);
+        source = context.createMediaStreamSource(this.stream);
       }
-      this.url = URL.createObjectURL(new Blob([worklet], { type: 'application/javascript' }));
+      this.url = URL.createObjectURL(new Blob([worklet], {
+        type: 'application/javascript'
+      }));
       await context.audioWorklet.addModule(this.url);
-      URL.revokeObjectURL(this.url); this.url = null;
-      if (signal.aborted || this.stopped) { this.release(); return; }
-      this.node = new AudioWorkletNode(context, 'padi-capture', { channelCount: 1, channelCountMode: 'explicit', outputChannelCount: [1] });
+      URL.revokeObjectURL(this.url);
+      this.url = null;
+      if (signal.aborted || this.stopped) {
+        this.release();
+        return;
+      }
+      this.node = new AudioWorkletNode(context, 'padi-capture', {
+        channelCount: 1,
+        channelCountMode: 'explicit',
+        outputChannelCount: [1]
+      });
       this.node.port.onmessage = event => {
         if (signal.aborted || this.stopped) return;
-        const {endTime, ...frame} = event.data;
+        const {
+          endTime,
+          ...frame
+        } = event.data;
         // Echo alignment follows the captured sample, even when JavaScript is
         // busy decoding/preparing TTS and worklet messages arrive late.
         const age = Number.isFinite(endTime) ? Math.max(0, context.currentTime - endTime) : 0;
-        this.onFrame({...frame, capturedAt: performance.now()/1000 - age});
+        this.onFrame({
+          ...frame,
+          capturedAt: performance.now() / 1000 - age
+        });
       };
       this.source = source;
       source.connect(this.node);
@@ -165,27 +202,42 @@ export class VoiceCapture {
       throw new Error('The microphone could not start. Check browser microphone permission and try again.');
     }
   }
-
-  private release(): void {
-    this.detachAbort?.(); this.detachAbort = null;
+  release() {
+    this.detachAbort?.();
+    this.detachAbort = null;
     this.recordingDestination?.stream.getTracks().forEach(track => track.stop());
     this.recordingDestination = null;
-    this.source?.disconnect(); this.source = null;
-    if (this.node) { this.node.port.onmessage = null; this.node.disconnect(); this.node = null; }
-    this.stream?.getTracks().forEach(track => { track.onended = null; track.stop(); }); this.stream = null;
-    void this.context?.close().catch(() => undefined); this.context = null;
-    if (this.url) { URL.revokeObjectURL(this.url); this.url = null; }
+    this.source?.disconnect();
+    this.source = null;
+    if (this.node) {
+      this.node.port.onmessage = null;
+      this.node.disconnect();
+      this.node = null;
+    }
+    this.stream?.getTracks().forEach(track => {
+      track.onended = null;
+      track.stop();
+    });
+    this.stream = null;
+    void this.context?.close().catch(() => undefined);
+    this.context = null;
+    if (this.url) {
+      URL.revokeObjectURL(this.url);
+      this.url = null;
+    }
   }
-
-  stop(): Promise<void> {
+  stop() {
     this.stopped = true;
     this.release();
-    this.cleanup ??= (async () => { await this.starting?.catch(() => undefined); this.release(); })();
+    this.cleanup ??= (async () => {
+      await this.starting?.catch(() => undefined);
+      this.release();
+    })();
     return this.cleanup;
   }
 
   /** Reuse the microphone engine for compression without playing it aloud. */
-  recordingStream(): MediaStream {
+  recordingStream() {
     if (!this.context || !this.source) throw new Error('The microphone is not ready.');
     if (!this.recordingDestination) {
       this.recordingDestination = this.context.createMediaStreamDestination();
@@ -196,3 +248,5 @@ export class VoiceCapture {
     return this.recordingDestination.stream;
   }
 }
+
+module.exports = { VoiceCapture };

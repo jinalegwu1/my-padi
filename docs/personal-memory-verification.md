@@ -15,14 +15,13 @@ Native device validation remains pending.
 
 Memory is off by default for each account. Old local demo entries and the old
 device-local memory switch are not imported as facts or treated as consent.
-Saving is manual; automatic extraction or saving from conversation is not
-implemented. PADI's shared instructions explain this limitation.
+In text or voice chat, an explicit first-person preference such as “I don't like loud music” offers **Remember this preference**. This opens the Memory editor with the user's own wording. Enable personal memory if needed, review the entry, and choose **Save and approve memory**. Reply ratings and PADI's conversation starters do not create facts.
 
 ## Account recognition and everyday questions
 
 The authenticated account name now reaches AI replies. This is basic account
 profile data, separate from opt-in personal memory. The name remains available
-when memory is off; other registration fields are not added to AI context.
+when memory is off. The selected account country is available in both text and voice. Asking for one's registered phone number uses a local authenticated lookup. The phone number is excluded from provider-bound profile and subsequent chat history.
 Sign-up and Memory screens explain this distinction.
 
 PADI recognises personal questions such as “Do you know me?”, “What is my name?”,

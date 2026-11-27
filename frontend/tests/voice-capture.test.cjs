@@ -1,9 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { loadTS } = require('./helpers/load-ts.cjs');
+const { loadJS } = require('./helpers/load-ts.cjs');
 const { captureHarness, joinPCM, tone, pcm16 } = require('./helpers/voice-capture.cjs');
-const { VoiceActivity, wavAudio } = loadTS('src/lib/voice-activity.ts');
-const { audioUpload } = loadTS('src/lib/voice-audio.ts', { 'react-native': { Platform: { OS: 'web' } }, 'expo-file-system': {} });
+const { VoiceActivity, wavAudio } = loadJS('src/lib/voice-activity.js');
+const { audioUpload } = loadJS('src/lib/voice-audio.js', { 'react-native': { Platform: { OS: 'web' } }, 'expo-file-system': {} });
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
 function assertWave(bytes, seconds) {
@@ -147,9 +147,32 @@ test('the existing detector still requires 180 ms of speech and 750 ms of silenc
     assert.equal(ended, undefined);
     f.feed(new Float32Array(16000 * 0.05));
     assert.ok(ended);
-    // The 500 ms pre-roll includes the onset; the 750 ms quiet tail follows it.
-    assertWave(wavAudio(ended), 1.25);
+    // Keep the whole 500 ms pre-roll and 300 ms of the final silence.
+    assertWave(wavAudio(ended), 0.8);
   } finally { await f.close(); }
+});
+
+test('soft speech keeps its quiet onset and internal pause on the socket and in the fallback WAV', () => {
+  let result;
+  const wire = [];
+  const detector = new VoiceActivity(() => {}, turn => { result = turn; }, {
+    onsetMs: 120, silenceMs: 1200, audio: pcm => wire.push(Buffer.from(pcm)),
+  });
+  const silence = new Uint8Array(1600);
+  const faint = pcm16(tone(16000, 0.05, 2400, 0.001));
+  const vowel = pcm16(tone(16000, 0.05, 200, 0.004));
+  const input = [];
+  function feed(block, count) {
+    for (let i = 0; i < count; i++) {
+      input.push(Buffer.from(block));
+      detector.feed({ data: block.buffer, sampleRate: 16000, channels: 1 });
+    }
+  }
+  feed(silence, 20); feed(faint, 2); feed(vowel, 4);
+  feed(silence, 14); feed(faint, 2); feed(vowel, 4); feed(silence, 24);
+  const expected = Buffer.concat(input.slice(15, -18));
+  assert.deepEqual(Buffer.concat(wire), expected);
+  assert.deepEqual(Buffer.from(result.pcm), expected);
 });
 
 test('permission denial creates no worklet and closes the requested audio context', async () => {

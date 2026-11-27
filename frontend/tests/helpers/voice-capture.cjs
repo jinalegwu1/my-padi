@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { resolveObjectURL } = require('node:buffer');
 const vm = require('node:vm');
-const { loadTS } = require('./load-ts.cjs');
+const { loadJS } = require('./load-ts.cjs');
 
 // Execute the actual Blob-loaded worklet, including its resampler. The mocks
 // supply browser resources; none of the capture or DSP code is copied here.
@@ -66,7 +66,7 @@ exports.captureHarness = (options = {}) => {
     connect() {}
     disconnect() { this.disconnected = true; }
   };
-  const { VoiceCapture } = loadTS('src/lib/voice-capture.web.ts');
+  const { VoiceCapture } = loadJS('src/lib/voice-capture.web.js');
   const capture = new VoiceCapture(frame => { frames.push(frame); options.onFrame?.(frame); }, () => { interruptions++; options.onInterrupted?.(); });
   return {
     VoiceCapture, capture, frames, contexts, nodes, requested, track,

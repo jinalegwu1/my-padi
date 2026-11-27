@@ -2,15 +2,15 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const React = require('react');
 const { create, act } = require('react-test-renderer');
-const { loadTS } = require('./helpers/load-ts.cjs');
-const voiceAudio = loadTS('src/lib/voice-audio.ts', { 'react-native': { Platform: { OS: 'web' } }, 'expo-file-system': {} });
+const { loadJS } = require('./helpers/load-ts.cjs');
+const voiceAudio = loadJS('src/lib/voice-audio.js', { 'react-native': { Platform: { OS: 'web' } }, 'expo-file-system': {} });
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 async function fixture(config = {}, settings = {}, failure) {
   const calls = [];
   const preferences = { voiceId: 'ada', voiceRate: 1, languageCode: 'en-NG', ...settings };
   let deps, voice, root;
-  const { useVoiceSession } = loadTS('src/hooks/use-voice-session.ts', {
+  const { useVoiceSession } = loadJS('src/hooks/use-voice-session.js', {
     'react-native': { Platform: { OS: 'ios' }, AppState: { addEventListener: () => ({ remove() {} }) } },
     '@/hooks/use-chat': { useChat: () => ({ status: 'ready', isThinking: false,
       greet: async (accountID, language, signal, onDelta) => {

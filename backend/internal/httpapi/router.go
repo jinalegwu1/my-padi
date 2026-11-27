@@ -27,6 +27,7 @@ func NewRouter(readiness ReadinessChecker, dependencies ...Dependencies) http.Ha
 		logger = slog.Default()
 	}
 	registerAuthRoutes(mux, deps.Auth, logger)
+	mux.HandleFunc("/v1/account/country", accountCountryHandler(deps.Auth, logger))
 	registerMemoryRoutes(mux, deps.Auth, deps.Memory, logger)
 	registerResponseFeedbackRoute(mux, deps.Auth, deps.ResponseFeedback, logger)
 	registerPersonalityPreferencesRoute(mux, deps.Auth, deps.Personality, logger)

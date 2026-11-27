@@ -10,6 +10,29 @@ import (
 	"testing"
 )
 
+func TestStreamTextKeepsTextRoutingAndNeverRetriesAfterPublication(t *testing.T) {
+	partial := &completionProvider{emitPartial: true}
+	complete := &fakeProvider{response: Response{Content: "Take your time."}}
+	router := testRouter(t, []ModelConfig{
+		{ID: "fast", Provider: ProviderGroq, Model: "fast", Retries: 1},
+		{ID: "primary", Provider: ProviderGemini, Model: "primary"},
+	}, map[string]Provider{ProviderGroq: partial, ProviderGemini: complete},
+		RoutingConfig{FastModel: "fast", PrimaryModel: "primary", VoicePrimaryModel: "primary"}, nil)
+	request := Request{Task: TaskConversation, Complexity: ComplexitySimple, Messages: []Message{{Role: RoleUser, Content: "Hello there."}}}
+	var text strings.Builder
+	emit := func(s string) error { _, err := text.WriteString(s); return err }
+	_, err := router.StreamText(context.Background(), request, emit)
+	if err == nil || partial.calls != 1 || complete.calls != 0 || text.Len() == 0 {
+		t.Fatal("partial typed reply must stop on its ordinary text model")
+	}
+	request.Complexity = ComplexityComplex
+	text.Reset()
+	result, err := router.StreamText(context.Background(), request, emit)
+	if err != nil || complete.lastRequest.Voice || result.Content != "Take your time." || text.String() != result.Content {
+		t.Fatal("a complete-response text model must retain its ordinary route and deliver its verified reply once")
+	}
+}
+
 func TestVoiceTextModelsShareContextAndFallbackBeforeFirstDeltaOnly(t *testing.T) {
 	for _, test := range []struct {
 		name     string

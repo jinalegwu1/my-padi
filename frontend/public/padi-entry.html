@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en-NG">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#102e29">
+<title>Welcome to PADI</title>
+<style>
+@font-face{font-family:Jakarta;src:url("/padi-chat/media/PlusJakartaSans_400Regular-MJLHH3MY.ttf")}
+@font-face{font-family:Jakarta;font-weight:700;src:url("/padi-chat/media/PlusJakartaSans_700Bold-6TV34UFS.ttf")}
+:root{--forest:#102e29;--leaf:#23483b;--ink:#15392f;--gold:#e3bc77;--cream:#faf8f1;--mist:#c7d5ca;color-scheme:light;font:100%/1.55 Jakarta,system-ui,sans-serif;background:var(--forest);color:var(--cream)}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;min-height:100dvh}button,input{font:inherit}button{cursor:pointer}button:disabled{opacity:.6;cursor:wait}button:focus-visible,input:focus-visible{outline:3px solid #b48540;outline-offset:4px}[hidden]{display:none!important}h1,h2,p{margin:0}.shell{max-width:1200px;margin:auto;padding:clamp(1.25rem,4vw,3.6rem) clamp(1.4rem,6vw,5.25rem)}
+header{display:flex;justify-content:space-between;align-items:center;padding-bottom:1.3rem;border-bottom:1px solid #456358}.brand{display:inline-flex;align-items:center;gap:.7rem;font:700 1.65rem Georgia,serif;letter-spacing:.07em;color:var(--gold)}.brand img{width:38px;height:36px;object-fit:contain}.back{min-height:44px;border:1px solid #70867a;border-radius:50px;background:transparent;color:var(--cream);padding:.4rem 1rem}
+.hero{display:grid;grid-template-columns:1.1fr .9fr;gap:clamp(1.4rem,6vw,5.2rem);align-items:center;padding:clamp(2.4rem,5vw,4.8rem) 0}.hero-copy{min-width:0}h1{font:400 clamp(3.4rem,6.8vw,6.3rem)/.99 Georgia,serif;letter-spacing:-.055em;text-wrap:balance}.hero h1{max-width:9em}.hero-art{margin:0 auto;width:min(100%,23rem);aspect-ratio:1/.92;border:1px solid #a9905b;padding:8px;border-radius:48% 48% 5px 5px;background:#2a4638}.hero-art img{display:block;width:100%;height:100%;object-fit:cover;object-position:50% 42%;border-radius:inherit}
+.primary{display:inline-flex;align-items:center;justify-content:space-between;gap:1.8rem;min-height:52px;border:0;border-radius:2rem;background:var(--gold);color:var(--forest);font-weight:700;padding:.75rem 1.4rem}.primary span[aria-hidden]{font-size:1.4rem;line-height:1}.hero .primary{margin-top:2rem}.features{display:grid;grid-template-columns:repeat(3,1fr);gap:clamp(1rem,3vw,3rem);padding-bottom:1.5rem}.features article{border-top:1px solid #577567;padding:1rem 0}.features h2{font:400 1.45rem Georgia,serif;color:var(--gold);margin-bottom:.4rem}.features p{color:var(--mist);font-size:.95rem;max-width:26ch}
+.detail{display:grid;grid-template-columns:1fr 1.15fr;gap:clamp(1.4rem,6vw,5.2rem);align-items:start;padding:clamp(2rem,5vw,4.7rem) 0}.detail h1{font-size:clamp(2.75rem,5.6vw,5rem);max-width:10ch}.detail-intro p{margin-top:1.15rem;max-width:34ch;color:var(--mist)}.sheet{background:var(--cream);color:var(--ink);border-radius:1.4rem;padding:clamp(1.25rem,3vw,2rem);min-width:0}.sheet input{width:100%;min-height:48px;border:1px solid #bac7b8;border-radius:.65rem;background:#fffdf7;color:var(--ink);padding:.6rem .85rem}.search-box{position:relative}.search-box input{padding-right:3rem}.clear{position:absolute;right:3px;top:3px;height:42px;width:42px;border:0;background:none;color:var(--ink);font-size:1.4rem}.countries{max-height:min(55vh,33rem);overflow:auto;margin-top:.75rem;overscroll-behavior:contain}.countries button{display:flex;align-items:center;gap:.85rem;width:100%;min-height:48px;border:0;border-top:1px solid #d3dbcf;background:none;text-align:left;color:var(--ink)}.countries button:hover{background:#eaf0e5}.country-flag{font-size:1.35rem}.chevron{margin-left:auto}.sheet label{display:block;font-weight:700;margin:0 0 .85rem}.sheet label input{display:block;margin-top:.3rem;font-weight:400}.sheet .primary{background:var(--forest);color:var(--cream);width:100%;justify-content:center;margin-top:.55rem}.secondary{display:block;background:transparent;border:0;color:#255342;text-decoration:underline;text-underline-offset:3px;min-height:44px;margin:.3rem auto 0}.hint,.notice{font-size:.83rem;line-height:1.5}.hint{color:#52675b;margin:.55rem 0}.notice{margin:.7rem 0;color:#235340}.error{color:#952e24}.shell:has(> .error:not([hidden]))>.error{color:#ffd1ba}.sr{position:absolute;clip:rect(0,0,0,0);width:1px;height:1px;overflow:hidden}
+@media(max-width:700px){.shell{padding:1.1rem 1.4rem max(1.4rem,env(safe-area-inset-bottom))}header{padding-bottom:.8rem}.hero{grid-template-columns:1.15fr .85fr;gap:1rem;padding:2.5rem 0 2rem}.hero h1{font-size:clamp(2.65rem,9.5vw,4.35rem)}.hero .primary{margin-top:1.3rem;gap:.9rem;min-height:46px}.hero-art{aspect-ratio:1/1.28;padding:4px}.features{display:block}.features article{padding:.9rem 0}.features p{max-width:none}.detail{grid-template-columns:1fr;gap:1.4rem;padding:1.7rem 0}.detail h1{font-size:2.8rem;max-width:none}.detail-intro p{margin-top:.6rem;max-width:none}.countries{max-height:54vh}}
+@media(max-width:355px){.hero{grid-template-columns:1fr}.hero-art{display:none}}
+@media(prefers-reduced-motion:no-preference){.hero-art img{animation:arrive .5s ease-out}@keyframes arrive{from{opacity:.65}to{opacity:1}}}
+</style>
+</head>
+<body>
+<main class="shell">
+<header><div class="brand"><img alt="" src="/padi-chat/media/gold-knot-7ZCF5SZY.png">PADI</div><button class="back" id="back" hidden>← Back</button></header>
+<section id="welcome" hidden>
+  <div class="hero"><div class="hero-copy"><h1 data-copy="welcome.companion">Your everyday companion</h1><button id="start" class="primary"><span data-copy="welcome.start">Get Started</span><span aria-hidden="true">→</span></button></div>
+    <figure class="hero-art"><img src="/padi-chat/media/ada-KDZYEDLK.jpg" alt="PADI in a patterned headwrap"></figure></div>
+  <div class="features"><article><h2 data-copy="welcome.gist">Gist &amp; banter</h2><p data-copy="welcome.gist.detail">Everyday stories and a little friendly rivalry.</p></article><article><h2 data-copy="welcome.checkIns">Check-ins</h2><p data-copy="welcome.checkIns.detail">A warm hello and room to say how you feel.</p></article><article><h2 data-copy="welcome.history">Chat history</h2><p data-copy="welcome.history.detail">Pick up a conversation where you left off.</p></article></div>
+</section>
+<section id="country" class="detail" hidden>
+  <div class="detail-intro"><h1 data-copy="country.choose">Select your country</h1></div>
+  <div class="sheet"><label class="sr" for="search" data-copy="onboarding.country.search">Search countries</label><div class="search-box"><input id="search" type="text" autocomplete="off" placeholder="Search countries"><button id="clear" class="clear" aria-label="Clear search" hidden>×</button></div><div id="countries" class="countries"></div><p id="empty" data-copy="country.noMatches" hidden>No matching countries.</p></div>
+</section>
+<section id="auth" class="detail" hidden>
+  <div class="detail-intro"><h1 id="auth-title">Welcome back</h1><p id="intro">Use your phone number to securely sign in and chat with PADI.</p></div>
+  <div class="sheet"><form id="auth-form">
+    <fieldset id="fields" style="border:0;padding:0;margin:0">
+    <div id="profile" hidden><label>Full name<input name="name" autocomplete="name" maxlength="120" placeholder="Your name"></label><label>Date of birth<input name="birth" type="date" autocomplete="bday"></label></div>
+    <label id="phone-label">Phone number<input name="phone" type="tel" autocomplete="tel" maxlength="16" placeholder="+2348012345678"></label>
+    <label id="code-label" hidden>Six-digit code<input name="code" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000"></label>
+    </fieldset><p id="notice" class="notice" role="status" hidden></p><p id="form-error" class="notice error" role="alert" hidden></p>
+    <button id="submit" class="primary" type="submit" disabled>Loading sign-in…</button>
+    <button id="retry" class="secondary" type="button" hidden>Retry connection</button><button id="switch" class="secondary" type="button">New to PADI? Create an account</button>
+    <p class="hint" id="privacy"></p>
+  </form></div>
+</section>
+<p id="page-error" class="error" role="alert" hidden></p>
+</main>
+<script>
+(() => {
+  const by = id => document.getElementById(id);
+  const form = by('auth-form');
+  const pending = new Map();
+  let sequence = 0, state, mode = 'login', challenge = '', otp, busy = false;
+  const native = !!window.ReactNativeWebView;
+  function act(action, value) {
+    if (!native) return window.padiEntryAction(action, value);
+    const id = ++sequence;
+    return new Promise((resolve, reject) => {
+      pending.set(id, {resolve, reject});
+      window.ReactNativeWebView.postMessage(JSON.stringify({id, action, value}));
+    });
+  }
+  window.padiEntryResult = (id, value, error) => {
+    const item = pending.get(id);
+    if (!item) return;
+    pending.delete(id);
+    if (error) item.reject(new Error(error)); else item.resolve(value);
+  };
+  function notice(id, text) { by(id).textContent = text || ''; by(id).hidden = !text; }
+  function countries() {
+    const query = by('search').value.trim().toLowerCase();
+    const matches = state.countries.filter(c => c.name.toLowerCase().includes(query) || c.code.toLowerCase().includes(query));
+    by('clear').hidden = !query; by('empty').hidden = !!matches.length;
+    by('countries').replaceChildren(...matches.map(c => {
+      const row = document.createElement('button');
+      row.type = 'button'; row.setAttribute('aria-label', c.name);
+      const flag = document.createElement('span'); flag.className = 'country-flag'; flag.textContent = c.flag;
+      const end = document.createElement('span'); end.className = 'chevron'; end.setAttribute('aria-hidden','true'); end.textContent = c.code === state.selected ? '✓' : '›';
+      row.append(flag, document.createTextNode(c.name), end);
+      row.onclick = () => run(() => act('country', c.code));
+      return row;
+    }));
+  }
+  function auth() {
+    const checking = !!challenge, register = mode === 'register';
+    by('auth-title').textContent = checking ? 'Verify your phone' : register ? 'Create your PADI account' : 'Welcome back';
+    by('intro').textContent = checking ? 'Enter the six-digit code sent by SMS. It expires after five minutes.' :
+      otp === false ? 'OTP verification is temporarily disabled for development. No SMS will be sent.' : 'Use your phone number to securely sign in and chat with PADI.';
+    by('profile').hidden = !register || checking; by('phone-label').hidden = checking; by('code-label').hidden = !checking;
+    form.elements.name.required = form.elements.birth.required = register && !checking;
+    form.elements.phone.required = !checking; form.elements.code.required = checking;
+    by('fields').disabled = busy; by('submit').disabled = busy || typeof otp !== 'boolean';
+    by('submit').textContent = checking ? 'Verify and continue' : otp == null ? 'Loading sign-in…' : otp ? 'Send verification code' : register ? 'Create account and continue' : 'Sign in and continue';
+    by('switch').disabled = busy; by('switch').textContent = checking ? 'Use a different phone number' : register ? 'Already have an account? Sign in' : 'New to PADI? Create an account';
+    by('privacy').textContent = otp === false ? 'Use a test account while phone verification is disabled.' : 'PADI stores your account profile. Verification codes are sent through Termii.';
+  }
+  async function configure() {
+    notice('form-error',''); by('retry').hidden = true;
+    try { otp = (await act('authConfig')).otp_required; } catch (e) { notice('form-error',e.message); by('retry').hidden = false; }
+    auth();
+  }
+  async function run(work) {
+    if (busy) return;
+    busy = true; notice('page-error',''); notice('form-error',''); auth();
+    try { await work(); } catch(e) { notice(state.screen === 'auth' ? 'form-error' : 'page-error',e.message); }
+    finally { busy = false; auth(); }
+  }
+  by('start').onclick = () => run(() => act('start'));
+  by('back').onclick = () => run(() => act('back'));
+  by('search').oninput = countries;
+  by('clear').onclick = () => { by('search').value = ''; countries(); by('search').focus(); };
+  by('retry').onclick = configure;
+  by('switch').onclick = () => {
+    if (challenge) { challenge = ''; form.elements.code.value = ''; } else mode = mode === 'login' ? 'register' : 'login';
+    notice('notice',''); notice('form-error',''); auth();
+  };
+  form.onsubmit = event => {
+    event.preventDefault();
+    void run(async () => {
+      if (challenge) { await act('verify', {challenge_id:challenge, code:form.elements.code.value.trim()}); return; }
+      const input = {phone_number:form.elements.phone.value.trim()};
+      if (mode === 'register') Object.assign(input,{full_name:form.elements.name.value.trim(), date_of_birth:form.elements.birth.value});
+      const result = await act(mode,input);
+      if (result?.challenge_id) { challenge = result.challenge_id; notice('notice',result.message); auth(); requestAnimationFrame(()=>form.elements.code.focus()); }
+    });
+  };
+  async function open() {
+    try {
+      state = await act('open');
+      document.documentElement.lang = state.language;
+      document.documentElement.style.fontSize = Math.max(.9,Math.min(1.5,state.textScale || 1))*100+'%';
+      document.querySelectorAll('[data-copy]').forEach(el=>{if(state.copy[el.dataset.copy])el.textContent=state.copy[el.dataset.copy];});
+      for (const id of ['welcome','country','auth']) by(id).hidden = id !== state.screen;
+      by('back').hidden = state.screen === 'welcome';
+      by('back').setAttribute('aria-label',state.copy['onboarding.back'] || 'Back');
+      by('search').placeholder = state.copy['onboarding.country.search'] || 'Search countries';
+      by('clear').setAttribute('aria-label',state.copy['country.clear'] || 'Clear search');
+      document.title = ({welcome:'Welcome',country:'Select your country',auth:'Sign in'})[state.screen] + ' · PADI';
+      if (state.screen === 'country') countries();
+      if (state.screen === 'auth') await configure();
+    } catch (e) { notice('page-error',e.message); }
+  }
+  if (native) void open();
+  else import('/padi-chat/entry-web.js').then(open).catch(()=>notice('page-error','PADI could not open. Reload the page to try again.'));
+})();
+</script>
+</body></html>

@@ -2,9 +2,9 @@
 
 Live conversations send microphone PCM to a persistent Vosk recognizer through
 the authenticated Go WebSocket. English and Pidgin captions revise in place. The
-configured chat model writes the reply. Two Nigerian-accented VITS checkpoints
-synthesize Nigerian English and Pidgin locally. PADI uses the male checkpoint
-and Ada uses the female one. The player receives 24 kHz mono audio in order.
+configured chat model writes the reply. PADI uses the local adult female
+Nigerian VITS checkpoint for Nigerian English and Pidgin. The signature profile
+adds phrasing, pause timing and headroom. The player receives 24 kHz mono audio in order.
 Other installed output locales continue to use eSpeak NG. Uploaded recordings
 and input locales outside the live recognizer use Faster-Whisper.
 
@@ -12,8 +12,12 @@ Run `npm run setup:voice` from the root to install the Python runtime, speech
 dependencies and pinned conversation models. The speech service loads the models
 from disk. The en-US Vosk checkpoint is a general English recognizer. Assess
 Pidgin, names and regional accents using actual speech. The two Nigerian-accented
-voice checkpoints support an English alphabet and accept Pidgin text. Voice and
-pronunciation acceptance requires listening in both languages.
+voice checkpoints support an English alphabet and accept Pidgin text. The live
+recognizer flags standalone “I” transcripts from recordings of up to 2.5 seconds
+when the client supports a second check. The client checks the retained audio
+with the installed Whisper worker, which can recover a weak initial “h”. Listen to the
+current candidates and review the measured limitations in the
+[signature voice report](../../docs/signature-voice.md).
 
 For file transcription, run `services/voice/.venv/bin/python services/voice/install_model.py --model base`.
 Set `PADI_STT_ENABLED=true`, `PADI_PYTHON_VOICE_ENABLED=true`,

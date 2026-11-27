@@ -27,6 +27,7 @@ class LiveTurn:
         self.previous = ""
         self.audio_bytes = 0
         self.partial_at = 0
+        self.check_short_words = False
 
     def handle(self, message):
         if isinstance(message, str):
@@ -45,13 +46,19 @@ class LiveTurn:
                     self.recognizer.Reset()
                 self.turn, self.active, self.audio_bytes = number, True, 0
                 self.partial_at = 0
+                self.check_short_words = command.get("check_short_words") is True
                 self.parts, self.previous = [], ""
                 return {"type": "ack"}
             if command.get("type") != "finish" or not self.active or number != self.turn:
                 raise ValueError("Unexpected turn command")
             self.active = False
             tail = json.loads(self.recognizer.FinalResult())["text"]
-            return {"type": "final", "turn": self.turn, "text": self.transcript(tail)}
+            final = {"type": "final", "turn": self.turn, "text": self.transcript(tail)}
+            # A weak initial h can leave only "i" in Vosk's alternatives.
+            # The client already retains short turns for an independent check.
+            if self.check_short_words and final["text"] == "i" and 0 < self.audio_bytes <= 2.5 * self.rate * 2:
+                final["check_greeting"] = True
+            return final
         if not self.active or not 0 < len(message) <= 32000 or len(message) % 2:
             raise ValueError("Invalid live audio")
         self.audio_bytes += len(message)

@@ -8,8 +8,8 @@ const { join, resolve, extname } = require('node:path');
 const { tmpdir } = require('node:os');
 const { mkdtempSync } = require('node:fs');
 const { chromium } = require('playwright-core');
-const { loadTS } = require('./helpers/load-ts.cjs');
-const { wavAudio } = loadTS('src/lib/voice-activity.ts');
+const { loadJS } = require('./helpers/load-ts.cjs');
+const { wavAudio } = loadJS('src/lib/voice-activity.js');
 
 const root = resolve(__dirname, '../..');
 const session = JSON.parse(readFileSync(process.argv[2], 'utf8'));

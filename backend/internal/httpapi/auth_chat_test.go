@@ -93,6 +93,16 @@ func (service testAuthAPI) Authenticate(context.Context, string) (auth.User, err
 	return service.user, service.err
 }
 
+func (service testAuthAPI) SetCountry(_ context.Context, owner, code string, onlyIfMissing bool) (string, error) {
+	if owner != service.user.ID {
+		return "", auth.ErrUnauthenticated
+	}
+	if onlyIfMissing && service.user.CountryCode != "" {
+		return service.user.CountryCode, service.err
+	}
+	return code, service.err
+}
+
 func (service testAuthAPI) Logout(context.Context, string) error {
 	return service.err
 }

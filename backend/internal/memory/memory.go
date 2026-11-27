@@ -222,11 +222,11 @@ func categoryTerms(category string) []string {
 	case "name":
 		return []string{"name", "call"}
 	case "interests":
-		return []string{"interest", "interests", "hobbies", "enjoy", "like", "love"}
+		return []string{"interest", "interests", "hobbies", "enjoy", "like", "likes", "dislike", "dislikes", "love"}
 	case "relationships":
 		return []string{"family", "relationships", "people"}
 	case "preferences":
-		return []string{"preferences", "prefer"}
+		return []string{"preferences", "prefer", "like", "likes", "dislike", "dislikes"}
 	case "plans":
 		return []string{"plans", "goals", "projects", "events"}
 	}

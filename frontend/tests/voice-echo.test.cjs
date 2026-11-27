@@ -1,9 +1,9 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
-const {loadTS}=require('./helpers/load-ts.cjs');
+const { loadJS }=require('./helpers/load-ts.cjs');
 
 function fixture(){
-  const echo=loadTS('src/lib/voice-echo.ts');
+  const echo=loadJS('src/lib/voice-echo.js');
   const samples=new Float32Array(32000);
   for(let i=0;i<samples.length;i++)samples[i]=.08*Math.sin(i*2*Math.PI*440/16000)+.03*Math.sin(i*2*Math.PI*700/16000);
   let position=.8;
@@ -30,7 +30,7 @@ test('delayed speaker PCM is rejected without muting unrelated user speech',()=>
 });
 
 test('speaker-only PCM cannot start a turn, while speech over it triggers onset',()=>{
-  const f=fixture();const {VoiceActivity}=loadTS('src/lib/voice-activity.ts');
+  const f=fixture();const {VoiceActivity}=loadJS('src/lib/voice-activity.js');
   let began=0;
   const activity=new VoiceActivity(()=>began++,()=>{}, {onsetMs:120,silenceMs:1400});
   for(let i=0;i<6;i++){activity.feed(f.suppressPlaybackEcho(f.frame()));f.advance(.05);}

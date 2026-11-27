@@ -1,17 +1,17 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { loadTS } = require('./helpers/load-ts.cjs');
-const { spokenText } = loadTS('src/lib/spoken-text.ts');
+const { loadTS, loadJS } = require('./helpers/load-ts.cjs');
+const { spokenText } = loadJS('src/lib/spoken-text.js');
 
 test('natural speech segments preserve decimals, list numbers and every spoken word',()=>{
-  const {speechSegments}=loadTS('src/lib/voice-audio.ts',{'react-native':{Platform:{OS:'web'}},'expo-file-system':{}});
+  const {speechSegments}=loadJS('src/lib/voice-audio.js',{'react-native':{Platform:{OS:'web'}},'expo-file-system':{}});
   const text='1. Get 2.5 litres. Ask Dr. Ada for help! Keep every word.';
   assert.equal(speechSegments(text).join(' '),text);
   assert.deepEqual(speechSegments(''),[]);
 });
 
 test('streamed speech releases complete sentences and buffers an unfinished sentence',()=>{
-  const {takeCompletedSentences}=loadTS('src/lib/voice-audio.ts',{'react-native':{Platform:{OS:'web'}},'expo-file-system':{}});
+  const {takeCompletedSentences}=loadJS('src/lib/voice-audio.js',{'react-native':{Platform:{OS:'web'}},'expo-file-system':{}});
   assert.deepEqual(takeCompletedSentences('Hello there. How are').sentences,['Hello there.']);
   assert.equal(takeCompletedSentences('Hello there. How are').remainder,'How are');
   assert.deepEqual(takeCompletedSentences('Dr. Ada is here!').sentences,['Dr. Ada is here!']);
@@ -91,7 +91,7 @@ test('unsigned personal text stays private while fixed introductions and preview
 });
 
 test('long voice replies play their first sentence before the rest without losing words',()=>{
-  const {speechSegments}=loadTS('src/lib/voice-audio.ts',{'react-native':{Platform:{OS:'web'}},'expo-file-system':{}});
+  const {speechSegments}=loadJS('src/lib/voice-audio.js',{'react-native':{Platform:{OS:'web'}},'expo-file-system':{}});
   const first='Here is the answer.';
   const text=first+' '+Array(12).fill('This is a further explanation.').join(' ');
   const segments=speechSegments(text);

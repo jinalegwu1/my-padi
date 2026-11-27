@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -15,7 +15,9 @@ import { MEMORY_CATEGORY_META, MEMORY_CATEGORY_ORDER } from '@/data/mock-memory'
 import { useMemory } from '@/hooks/use-memory';
 import { useTranslation } from '@/hooks/use-translation';
 import { formatRelative } from '@/lib/date';
-import type { MemoryCategory, MemoryItem } from '@/types';
+import { readJSON } from '@/lib/storage';
+import { preferenceDraft } from '../../public/padi-chat/preference-review';
+import type { Message, MemoryCategory, MemoryItem } from '@/types';
 
 /**
  * Memory management: review, correct, pause and delete what PADI remembers.
@@ -26,7 +28,7 @@ export default function MemoryScreen() {
   const colors = useColors();
   const type = useType();
   const { t } = useTranslation();
-  const { accountID, enabled, grouped, counts, status, busy, error, reload, add, correct, togglePaused, remove, setEnabled } = useMemory();
+  const { accountID, enabled, items, grouped, counts, status, busy, error, reload, add, correct, togglePaused, remove, setEnabled } = useMemory();
 
   const [editing, setEditing] = useState<MemoryItem | undefined>(undefined);
   const [draft, setDraft] = useState('');
@@ -50,6 +52,37 @@ export default function MemoryScreen() {
   }, [accountID]);
 
   useFocusEffect(useCallback(() => { void reload(); }, [reload]));
+
+  const { message: messageID } = useLocalSearchParams<{ message?: string }>();
+  const reviewed = useRef('');
+  useEffect(() => {
+    let active = true;
+    if (status !== 'ready' || !accountID || typeof messageID !== 'string') return;
+    const key = accountID + '/' + messageID;
+    if (reviewed.current === key) return;
+    void readJSON<Message[]>('chat-messages', []).then(messages => {
+      if (!active) return;
+      const suggestion = preferenceDraft(messages.find(m => m.id === messageID && m.backendUserID === accountID), accountID);
+      if (!suggestion) return;
+      if (!enabled) {
+        setNotice('Turn on personal memory to review and save this preference.');
+        return;
+      }
+      reviewed.current = key;
+      if (items.some(item => item.category === 'preferences' && item.value === suggestion.value)) {
+        setNotice('This preference is already in your memory.');
+        return;
+      }
+      setNotice('');
+      setDialogAccountID(accountID);
+      setEditing(undefined);
+      setCategory('preferences');
+      setLabel(suggestion.label);
+      setDraft(suggestion.value);
+      setEditorOpen(true);
+    }).catch(() => { if (active) setNotice('The original chat message could not be opened.'); });
+    return () => { active = false; };
+  }, [accountID, enabled, items, status, messageID]);
 
   const save = async () => {
     const saved = editing
@@ -173,7 +206,7 @@ export default function MemoryScreen() {
         </View>
 
         <Text style={[styles.consentBody, { color: colors.textSecondary, fontSize: type.caption }]}>
-          PADI uses your account name to recognise you. Personal memories are saved and used with your approval. After a memory change, PADI starts fresh with the saved facts currently allowed. Previous messages stay visible. Changes affect the next request.
+          PADI uses your account name and selected country in chat. Personal memories are saved and used with your approval. After a memory change, PADI starts fresh with the saved facts currently allowed. Previous messages stay visible. Changes affect the next request.
         </Text>
         {error ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{error}</Text> : null}
         {error && status === 'ready' ? <Button title="Reload memory" variant="secondary" disabled={busy} onPress={() => { void reload(); }} /> : null}

@@ -2,9 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const React = require('react');
 const { create, act } = require('react-test-renderer');
-const { loadTS } = require('./helpers/load-ts.cjs');
+const { loadTS, loadJS } = require('./helpers/load-ts.cjs');
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-const speechMotion=loadTS('src/lib/portrait-speech.ts');
+const speechMotion=loadJS('src/lib/portrait-speech.js');
 
 function animations() {
   const values = [], started = [];

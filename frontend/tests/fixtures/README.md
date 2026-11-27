@@ -34,3 +34,16 @@ published references, source revisions, row numbers and file hashes. References
 are dataset annotations; the limited fixtures do not establish dialect-wide
 accuracy. The noise/silence variants are generated at test time and deleted.
 Normal microphone recordings and model checkpoints are never committed here.
+
+## Short greetings
+
+`hi-soft-onset.wav` derives from Dvortygirl's recorded “hi”. The regression
+fixture is mono 16 kHz PCM. Its amplitude is 15% of the source, with the first
+212 ms further attenuated to simulate a microphone weakening the initial “h”
+(10 ms transition). It has one second of leading and two seconds of trailing
+silence. This adaptation is distributed under CC BY-SA 3.0.
+[Recording](https://commons.wikimedia.org/wiki/File:En-us-hi.ogg) · [License](https://creativecommons.org/licenses/by-sa/3.0/)
+
+`spoken-i.wav` derives from Muke Tever's public-domain recording of the
+pronoun “I”. It uses the same format and edge silence, at 6% amplitude.
+Both source recordings are US English. [Recording and dedication](https://commons.wikimedia.org/wiki/File:En-us-I.ogg)
