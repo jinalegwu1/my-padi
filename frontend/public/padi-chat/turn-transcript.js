@@ -1,3 +1,46 @@
+// Final decoding can run during the silence window. For short turns keep the
+// exact PCM so a mid-sentence pause can be undone on the same live socket.
+export function beginLiveTurn(recognition, rate, partial) {
+  if (!recognition) return null;
+  let generation = 0;
+  function open() {
+    const current = ++generation;
+    return recognition.begin(rate, words => { if (generation === current) partial(words); });
+  }
+  let input = open();
+  let recording = [];
+  let bytes = 0;
+  let final;
+  return {
+    write(pcm) {
+      if (recording) {
+        recording.push(pcm);
+        bytes += pcm.byteLength;
+        // Leave room for up to one more second of audio below the speech
+        // threshold. A resumed turn must fit the socket's 256 KiB backlog.
+        if (!final && bytes > Math.min(3 * rate * 2, 96 * 1024)) recording = null;
+      }
+      if (!final) input.write(pcm);
+    },
+    quiet(ms) {
+      if (!recording) return;
+      if (!final && ms >= 450) {
+        final = input.finish();
+        final.catch(() => {});
+      } else if (final && ms === 0) {
+        input = open();
+        for (const pcm of recording) input.write(pcm);
+        recording = null;
+        final = undefined;
+      }
+    },
+    finish() {
+      recording = null;
+      return final ?? input.finish();
+    },
+  };
+}
+
 // An overlapping, one-word interruption can sound quite different to the live
 // recognizer. Check the retained recording before submitting a doubtful word.
 export async function turnTranscript(live, utterance, canUpload, upload, signal, interrupted = false) {

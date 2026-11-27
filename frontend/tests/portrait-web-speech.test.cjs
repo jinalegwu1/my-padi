@@ -1,7 +1,65 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createPhrasePlayback } = require('../public/padi-chat/phrase-playback.js');
-const { turnTranscript } = require('../public/padi-chat/turn-transcript.js');
+const { b: collectSentences } = require('../public/padi-chat/modules/chunk-DOJQV6DN.js');
+const { beginLiveTurn, turnTranscript } = require('../public/padi-chat/turn-transcript.js');
+const { VoiceActivity } = require('../public/padi-chat/voice-activity.js');
+const { loadTS } = require('./helpers/load-ts.cjs');
+
+test('the web call applies the saved fast voice only to supported speech output', async () => {
+  const config = {
+    enabled: true, natural_speech: true, local_speech: true, voice_text_streaming: true,
+    speech_languages: ['en-GB', 'en-NG', 'pcm-NG'], streaming_speech_languages: ['en-NG', 'pcm-NG'],
+    live_recognition_languages: ['en-NG', 'en-GB', 'pcm-NG', 'fr-FR'],
+  };
+  let session, checks = 0;
+  const { openVoice } = loadTS('public/padi-chat/voice-call.js', {
+    './modules/voice-O2A7VXYY.js': {
+      HandsfreeSession: class { constructor(options) { session = options; } start() {} cancel() {} },
+      openLiveRecognition: (_token, language) => language,
+    },
+    './modules/chunk-Z7CSBWWK.js': {},
+    './modules/chunk-AJUFN7HS.js': { a: (_style, rate, language, _signal, _start, _delivered, streaming) => ({rate, language, streaming}) },
+    './modules/chunk-DOJQV6DN.js': {},
+    './modules/chunk-4DYWZHQL.js': {},
+    './modules/chunk-PRFFR5IG.js': {
+      a: (settings, language) => settings.streaming_speech_languages.includes(language),
+      i: async () => { checks++; return config; },
+    },
+  });
+  function call(languageCode, fastEnglishVoice) {
+    const preferences = {languageCode, fastEnglishVoice, voiceRate: 1.15, voiceId: 'ada'};
+    const updates = [];
+    const voice = openVoice({chat: {account: {user: {id: 'test'}}}, preferences, changed: state => updates.push(state), report() {}});
+    return {voice, preferences, updates};
+  }
+
+  const {voice, preferences, updates} = call('pcm-NG', false);
+  await voice.start();
+  assert.equal(checks, 1);
+  assert.equal(updates.some(state => state.fastEnglishAvailable), true);
+  const original = session.createSpeech();
+  preferences.fastEnglishVoice = true;
+  assert.deepEqual(session.createSpeech(), {rate: 1.15, language: 'en-GB', streaming: false});
+  assert.deepEqual(original, {rate: 1.15, language: 'pcm-NG', streaming: true});
+  assert.equal(session.openRecognition(), 'pcm-NG');
+  voice.close();
+
+  for (const [language, local] of [['fr-FR', true], ['en-NG', false]]) {
+    config.local_speech = local;
+    const {voice, updates} = call(language, true);
+    await voice.start();
+    assert.equal(updates.some(state => state.fastEnglishAvailable), false);
+    if (language === 'fr-FR') {
+      assert.equal(updates.at(-1).offer.language, language);
+      await voice.touch('captions');
+      assert.equal(session.createSpeech(), null);
+    } else {
+      assert.equal(session.createSpeech().language, language);
+    }
+    voice.close();
+  }
+});
 
 function wave(size, sample) {
   const bytes = Buffer.alloc(44 + size * 2);
@@ -15,11 +73,11 @@ function wave(size, sample) {
   return bytes.toString('base64');
 }
 
-function setup() {
+function setup(live = false) {
   const output = [], requests = [], credits = [], pending = [];
   const call = new AbortController();
   const stream = createPhrasePlayback({
-    signal: call.signal, clean: text => text, onStart() {},
+    signal: call.signal, live, clean: text => text, onStart() {},
     delivered: text => credits.push(text),
     prepare: (words, signal, packet) => new Promise((end, fail) => {
       requests.push({ words, packet, end, fail });
@@ -39,6 +97,55 @@ function setup() {
   return { stream, call, output, requests, credits, pending };
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test('live replies can speak the opening before the rest of the sentence arrives', () => {
+  for (const opening of ['Yes!', 'Of course,', 'We can go over the']) {
+    const spoken = [];
+    const stream = collectSentences(words => spoken.push(words), { live: true });
+    const next = opening.endsWith('the') ? ' details' : '';
+    stream.append(opening + next + ' ');
+    assert.deepEqual(spoken, [opening]);
+    stream.append('together.');
+    stream.finish(opening + next + ' together.');
+    assert.equal(spoken.join(' '), opening + next + ' together.');
+  }
+});
+
+test('early recognition survives a resumed sentence and submits once after a full second', async () => {
+  const passes = [], captions = [], submitted = [];
+  const recognition = { begin(rate, partial) {
+    const pass = { audio: [], partial, finishes: 0 };
+    passes.push(pass);
+    return { write: pcm => pass.audio.push(Buffer.from(pcm)), finish() {
+      pass.finishes++;
+      return Promise.resolve(passes.length === 1 ? 'please' : 'please continue');
+    } };
+  } };
+  let input;
+  const detector = new VoiceActivity(rate => {
+    input = beginLiveTurn(recognition, rate, word => captions.push(word));
+  }, () => submitted.push(input.finish()), {
+    onsetMs: 120, audio: pcm => input.write(pcm), quiet: ms => input.quiet(ms),
+  });
+  function feed(sample, count) {
+    const data = new Int16Array(800).fill(sample).buffer;
+    for (let i = 0; i < count; i++) detector.feed({ data, channels: 1, sampleRate: 16000 });
+  }
+  feed(1500, 8);
+  feed(0, 19);
+  assert.equal(passes[0].finishes, 1);
+  assert.equal(submitted.length, 0);
+  feed(1800, 8);
+  passes[0].partial('stale');
+  passes[1].partial('please continue');
+  assert.deepEqual(captions, ['please continue']);
+  feed(0, 19);
+  assert.equal(submitted.length, 0);
+  feed(0, 1);
+  assert.deepEqual(await Promise.all(submitted), ['please continue']);
+  assert.equal(passes[1].audio.length, 8 + 19 + 8 + 6);
+  assert.deepEqual(passes.map(pass => pass.finishes), [1, 1]);
+});
 
 test('a slow first phrase plays while the second is still being synthesized', async () => {
   const { stream, output, requests, credits, pending } = setup();
@@ -61,6 +168,24 @@ test('a slow first phrase plays while the second is still being synthesized', as
   pending[1].resolve(); await done;
   assert.equal(output.length, 2);
   assert.deepEqual(credits, ['Hi there.', 'I hear you.']);
+});
+
+test('live calls schedule even a short first packet on arrival and credit only the complete phrase', async () => {
+  const { stream, requests, output, pending, credits } = setup(true);
+  stream.enqueue('Hello there.');
+  const done = stream.finish();
+  await tick();
+  requests[0].packet(wave(480, 1));
+  assert.equal(output.length, 1);
+  pending[0].resolve(true);
+  await tick();
+  assert.deepEqual(credits, []);
+  requests[0].packet(wave(480, 2));
+  assert.equal(output.length, 2);
+  requests[0].end();
+  pending[1].resolve(true);
+  await done;
+  assert.deepEqual(credits, ['Hello there.']);
 });
 
 test('a fast packet plays before completion and cancellation drops later audio', async () => {

@@ -70,6 +70,8 @@ class VoiceActivity {
       return;
     }
     this.durationMs += ms;
+    this.quietMs = voiced ? 0 : this.quietMs + ms;
+    this.options.quiet?.(this.quietMs);
     // Only withhold very quiet frames at the trailing edge. If sound resumes,
     // forward the intervening pause byte-for-byte, including quiet consonants.
     const paddingMs = Math.max(0, 300 - this.trailingSilenceMs);
@@ -83,9 +85,8 @@ class VoiceActivity {
       }
     }
     if (keep < pcm.length) this.frames.push(pcm.subarray(keep));
-    this.quietMs = voiced ? 0 : this.quietMs + ms;
     const silence = typeof this.options.silenceMs === 'function' ? this.options.silenceMs() : this.options.silenceMs;
-    if (this.quietMs >= (silence ?? 750) || this.durationMs >= Math.min(55_000, 7 * 1024 * 1024 / (2 * this.rate) * 1000)) {
+    if (this.quietMs >= (silence ?? 1000) || this.durationMs >= Math.min(55_000, 7 * 1024 * 1024 / (2 * this.rate) * 1000)) {
       this.frames.length = this.retainedFrames;
       const audio = new Uint8Array(this.frames.reduce((size, buffer) => size + buffer.length, 0));
       let offset = 0;

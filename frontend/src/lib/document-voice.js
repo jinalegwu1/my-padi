@@ -81,10 +81,10 @@ export function createDocumentVoice() {
     },
     pause() { if (current) publish?.({action:'pause', id:current.id}); },
     resume() { if (current) publish?.({action:'resume', id:current.id}); },
-    stream({owner, languageCode, voiceRate, streaming, echo = false}, signal, onStart, delivered) {
+    stream({owner, languageCode, voiceRate, streaming, live = false, echo = live}, signal, onStart, delivered) {
       let session;
       return createPhrasePlayback({
-        signal, clean:spokenText, onStart, delivered, makePlayer: stop => queue(stop, echo),
+        signal, live, clean:spokenText, onStart, delivered, makePlayer: stop => queue(stop, echo),
         async prepare(words, stop, packet) {
           const account = await (session ??= readSession());
           if (stop.aborted) return;

@@ -7,6 +7,7 @@
     <meta name="theme-color" content="#123c32">
     <title>Chat with PADI</title>
     <link rel="stylesheet" href="/padi-chat/style.css">
+    <link rel="stylesheet" href="/padi-chat/voice-screen.css">
     <script type="module" src="/padi-chat/chat.js"></script>
   </head>
   <body>
@@ -39,7 +40,7 @@
           <div class="header-actions">
             <button id="enable-voice-audio" class="pill" type="button" hidden>Enable sound</button>
             <button id="auto-speak" class="icon-only" aria-label="Speak replies automatically" aria-pressed="false" hidden><i aria-hidden="true" class="icon volume"></i></button>
-            <button id="end-voice" class="icon-only" aria-label="End chat" title="End chat" hidden><i aria-hidden="true" class="icon down"></i></button>
+            <button id="end-voice" class="pill" type="button" aria-label="End chat" hidden><i aria-hidden="true" class="icon close"></i><span>End chat</span></button>
             <button id="switch-mode" class="pill" hidden><i aria-hidden="true" class="icon mic"></i><span>Voice</span></button>
           </div>
         </header>
@@ -67,19 +68,24 @@
             <small id="keyboard-help">Enter to send <span>·</span> Shift + Enter for a new line</small>
           </div>
         </section>
-        <section id="voice-view" class="voice-view" aria-label="Voice conversation" hidden>
+        <section id="voice-view" class="voice-view" aria-label="Voice conversation" data-phase="idle" hidden>
           <div class="call">
-            <button id="portrait" aria-label="Tap to chat"><span class="face"><img class="photo" alt=""><img class="blink" alt=""><img class="mouth" alt=""></span></button>
-            <h2 id="voice-name"></h2><p id="voice-status" role="status"></p><p class="voice-buffer" role="status">Preparing audio…</p>
+            <button id="portrait" type="button" aria-label="Tap to chat" aria-describedby="voice-status"><span class="face"><img class="photo" alt=""><img class="blink" alt=""><img class="mouth" alt=""></span></button>
+            <h2 id="voice-name"></h2>
+            <p id="voice-status" role="status"></p>
+            <p class="voice-buffer" role="status">Preparing audio…</p>
             <div id="voice-options" hidden>
-              <button id="voice-captions" class="pill"></button>
-              <button id="voice-retry"></button>
+              <button id="voice-captions" type="button" class="pill"></button>
+              <button id="voice-retry" type="button"></button>
             </div>
-            <button id="pause-call" class="pill" hidden>Pause chat</button>
+            <div class="call-controls">
+              <button id="pause-call" type="button" class="primary"><i class="icon mic" aria-hidden="true"></i><span>Start listening</span></button>
+              <button id="toggle-captions" type="button" class="pill" aria-controls="words" aria-expanded="false"></button>
+            </div>
+            <label id="fast-voice-option" hidden><input id="fast-voice" type="checkbox"> Fast English voice</label>
           </div>
-          <section id="captions" hidden>
-            <button id="toggle-captions" class="pill" aria-controls="words"></button>
-            <div id="words"><h3 id="user-caption-label"></h3><div id="user-caption" data-testid="voice-user-caption"></div><h3 id="padi-caption-label">PADI</h3><div id="padi-caption" data-testid="voice-reply-caption"></div></div>
+          <section id="captions" aria-label="Live captions" tabindex="0" hidden>
+            <div id="words" hidden><h3 id="user-caption-label"></h3><div id="user-caption" data-testid="voice-user-caption"></div><h3 id="padi-caption-label">PADI</h3><div id="padi-caption" data-testid="voice-reply-caption"></div></div>
           </section>
         </section>
         <section id="record-view" class="record-view" aria-label="Voice to text" hidden>

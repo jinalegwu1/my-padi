@@ -1,8 +1,8 @@
 import { c as createPcmBuffer } from './modules/chunk-DOJQV6DN.js';
 
-// Go sends complete 24 kHz mono WAV packets. A fast renderer can play packets
-// as they arrive. A slow renderer needs a whole phrase to avoid gaps inside words.
-export function createPhrasePlayback({ signal, makePlayer, prepare, clean, onStart, delivered }) {
+// Live conversations schedule each validated WAV packet on the speaker clock.
+// Read-aloud can buffer a phrase when the renderer is slower than playback.
+export function createPhrasePlayback({ signal, makePlayer, prepare, clean, onStart, delivered, live = false }) {
   const controller = new AbortController();
   const stop = () => controller.abort();
   signal.addEventListener('abort', stop, { once: true });
@@ -23,7 +23,7 @@ export function createPhrasePlayback({ signal, makePlayer, prepare, clean, onSta
     const buffer = createPcmBuffer();
     let lastPlayed;
     let audioMs = 0;
-    let streaming = false;
+    let streaming = live;
     const started = performance.now();
 
     function release() {
@@ -40,6 +40,10 @@ export function createPhrasePlayback({ signal, makePlayer, prepare, clean, onSta
       await prepare(words, controller.signal, packet => {
         if (controller.signal.aborted) return;
         buffer.append(packet);
+        if (streaming) {
+          release();
+          return;
+        }
         const padding = packet.endsWith('==') ? 2 : packet.endsWith('=') ? 1 : 0;
         audioMs += (packet.length / 4 * 3 - padding - 44) / 48;
         const elapsed = performance.now() - started;

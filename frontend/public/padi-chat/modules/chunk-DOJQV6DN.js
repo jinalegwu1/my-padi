@@ -1,1 +1,54 @@
-function m(t,s=650){let r=t.trim().match(/[\s\S]*?[.!?](?=\s|$)|[\s\S]+$/g)?.map(n=>n.trim()).filter(Boolean)??[],c=[],l=n=>{let e=[],o=n;for(;o.length>s;){let h=o.lastIndexOf(" ",s),a=h>0?h:s,f=o.slice(0,a).trim();f&&e.push(f),o=o.slice(a).trim()}return o&&e.push(o),e};if(t.length>220&&r.length>1)for(let n of l(r.shift()))c.push(n);let i="";for(let n of r)for(let e of l(n)){if(i&&i.length+e.length+1>s&&(c.push(i),i=""),e.length>s){c.push(e);continue}i=[i,e].filter(Boolean).join(" ")}return i&&c.push(i),c}function p(t){let s=[],r=0,c=/[.!?](?=\s|$)/g;for(let l of t.matchAll(c)){let i=l.index+1,n=t.slice(r,i).trim();if(n&&!/\b(?:Mr|Mrs|Ms|Dr|Prof|St|e\.g|i\.e|vs|etc)\.$/i.test(n))for(s.push(n),r=i;/\s/.test(t[r]??"")&&r<t.length;)r++}return{sentences:s,remainder:t.slice(r)}}function E(t,s=!0){let r=s?80:115,c=p(t);if(s){let l=/^(.{12,85}?[,;:—])\s/u.exec(t);if(l&&(!c.sentences.length||l[1].length<c.sentences[0].length))return{sentences:[l[1].trim()],remainder:t.slice(l[0].length)}}if(t.length>r&&(!c.sentences.length||c.sentences[0].length>r)){let l=t.lastIndexOf(" ",r);if(l>=(s?24:40))return{sentences:[t.slice(0,l).trim()],remainder:t.slice(l).trimStart()}}return c}function A(t){let s="",r="",c=!0,l=!1;function i(e){let o=r?r+" "+e:e;if(!/\s/.test(o)&&o.length<=12){r=o;return}r="",c=!1,t(o)}function n(e){if(e)for(l=!0,s+=e;s.trim();){let{sentences:o,remainder:h}=E(s,c);if(!o.length)break;o.forEach(i),s=h}}return{append:n,finish(e){l||n(e);let o=[r,s.trim()].filter(Boolean).join(" ");o&&t(o),r=s=""}}}function d(t){if(t.toBase64)return t.toBase64();let s=[];for(let r=0;r<t.length;r+=32768)s.push(String.fromCharCode(...t.subarray(r,r+32768)));return btoa(s.join(""))}function R(){let t=0,s=0,r,c=[],l=[];return{append(i){if(i.length>4*Math.ceil((33554432-t+44)/3))throw new Error("This spoken reply is too long to buffer on this device.");let n=Uint8Array.fromBase64?Uint8Array.fromBase64(i):Uint8Array.from(atob(i),h=>h.charCodeAt(0)),e=new DataView(n.buffer,n.byteOffset,n.byteLength),o=(h,a)=>[...a].every((f,u)=>n[h+u]===f.charCodeAt(0));if(n.length<46||(n.length-44)%2||!o(0,"RIFF")||e.getUint32(4,!0)!==n.length-8||!o(8,"WAVEfmt ")||e.getUint32(16,!0)!==16||e.getUint16(20,!0)!==1||e.getUint16(22,!0)!==1||e.getUint32(24,!0)!==24e3||e.getUint32(28,!0)!==24e3*2||e.getUint16(32,!0)!==2||e.getUint16(34,!0)!==16||!o(36,"data")||e.getUint32(40,!0)!==n.length-44)throw new Error("The voice server returned an incomplete audio clip.");if(t+n.length-44>33554432)throw new Error("This spoken reply is too long to buffer on this device.");r??(r=n.slice(0,44)),c.push(n.subarray(44)),t+=n.length-44},mark(i){l.push({seconds:t/(2*24e3),done:i})},progress(i){for(;s<l.length&&l[s].seconds<=i;)l[s++].done()},*clips(i=33554432){let n=0,e=0;for(let o=0;o<t;o+=i){let h=Math.min(i,t-o),a=new Uint8Array(44+h),f=new DataView(a.buffer);a.set(r),f.setUint32(4,a.length-8,!0),f.setUint32(40,h,!0);let u=44;for(;u<a.length;){let g=Math.min(c[n].length-e,a.length-u);a.set(c[n].subarray(e,e+g),u),u+=g,e+=g,e===c[n].length&&(n++,e=0)}yield{audio:d(a),start:o/(24e3*2)}}},clear(){c.length=0,l.length=0,t=s=0,r=void 0}}}export{m as a,A as b,R as c};
+function m(t,s=650){let r=t.trim().match(/[\s\S]*?[.!?](?=\s|$)|[\s\S]+$/g)?.map(n=>n.trim()).filter(Boolean)??[],c=[],l=n=>{let e=[],o=n;for(;o.length>s;){let h=o.lastIndexOf(" ",s),a=h>0?h:s,f=o.slice(0,a).trim();f&&e.push(f),o=o.slice(a).trim()}return o&&e.push(o),e};if(t.length>220&&r.length>1)for(let n of l(r.shift()))c.push(n);let i="";for(let n of r)for(let e of l(n)){if(i&&i.length+e.length+1>s&&(c.push(i),i=""),e.length>s){c.push(e);continue}i=[i,e].filter(Boolean).join(" ")}return i&&c.push(i),c}function p(t){let s=[],r=0,c=/[.!?](?=\s|$)/g;for(let l of t.matchAll(c)){let i=l.index+1,n=t.slice(r,i).trim();if(n&&!/\b(?:Mr|Mrs|Ms|Dr|Prof|St|e\.g|i\.e|vs|etc)\.$/i.test(n))for(s.push(n),r=i;/\s/.test(t[r]??"")&&r<t.length;)r++}return{sentences:s,remainder:t.slice(r)}}
+function readySpeech(text, first, live) {
+  const limit = first ? (live ? 24 : 80) : 115;
+  const complete = p(text);
+  const sentence = complete.sentences[0];
+  if (first) {
+    const clause = (live ? /^(.{2,24}?[,;:—–])\s/u : /^(.{12,85}?[,;:—])\s/u).exec(text);
+    if (clause && (!sentence || clause[1].length < sentence.length)) {
+      return { sentences: [clause[1].trim()], remainder: text.slice(clause[0].length) };
+    }
+  }
+  if (text.length > limit && (!sentence || sentence.length > limit)) {
+    const cut = text.lastIndexOf(' ', limit);
+    const minimum = first ? (live ? 8 : 24) : 40;
+    if (cut >= minimum) return { sentences: [text.slice(0, cut).trim()], remainder: text.slice(cut).trimStart() };
+  }
+  return complete;
+}
+
+function collectSentences(enqueue, { live = false } = {}) {
+  let pending = '';
+  let shortWord = '';
+  let first = true;
+  let received = false;
+
+  function append(delta) {
+    if (!delta) return;
+    received = true;
+    pending += delta;
+    while (pending.trim()) {
+      const { sentences, remainder } = readySpeech(pending, first, live);
+      if (!sentences.length) break;
+      for (const sentence of sentences) {
+        const phrase = shortWord ? shortWord + ' ' + sentence : sentence;
+        if (!(first && live) && !/\s/.test(phrase) && phrase.length <= 12) {
+          shortWord = phrase;
+          continue;
+        }
+        shortWord = '';
+        first = false;
+        enqueue(phrase);
+      }
+      pending = remainder;
+    }
+  }
+
+  return { append, finish(reply) {
+    if (!received) append(reply);
+    const tail = [shortWord, pending.trim()].filter(Boolean).join(' ');
+    if (tail) enqueue(tail);
+    pending = shortWord = '';
+  } };
+}
+function d(t){if(t.toBase64)return t.toBase64();let s=[];for(let r=0;r<t.length;r+=32768)s.push(String.fromCharCode(...t.subarray(r,r+32768)));return btoa(s.join(""))}function R(){let t=0,s=0,r,c=[],l=[];return{append(i){if(i.length>4*Math.ceil((33554432-t+44)/3))throw new Error("This spoken reply is too long to buffer on this device.");let n=Uint8Array.fromBase64?Uint8Array.fromBase64(i):Uint8Array.from(atob(i),h=>h.charCodeAt(0)),e=new DataView(n.buffer,n.byteOffset,n.byteLength),o=(h,a)=>[...a].every((f,u)=>n[h+u]===f.charCodeAt(0));if(n.length<46||(n.length-44)%2||!o(0,"RIFF")||e.getUint32(4,!0)!==n.length-8||!o(8,"WAVEfmt ")||e.getUint32(16,!0)!==16||e.getUint16(20,!0)!==1||e.getUint16(22,!0)!==1||e.getUint32(24,!0)!==24e3||e.getUint32(28,!0)!==24e3*2||e.getUint16(32,!0)!==2||e.getUint16(34,!0)!==16||!o(36,"data")||e.getUint32(40,!0)!==n.length-44)throw new Error("The voice server returned an incomplete audio clip.");if(t+n.length-44>33554432)throw new Error("This spoken reply is too long to buffer on this device.");r??(r=n.slice(0,44)),c.push(n.subarray(44)),t+=n.length-44},mark(i){l.push({seconds:t/(2*24e3),done:i})},progress(i){for(;s<l.length&&l[s].seconds<=i;)l[s++].done()},*clips(i=33554432){let n=0,e=0;for(let o=0;o<t;o+=i){let h=Math.min(i,t-o),a=new Uint8Array(44+h),f=new DataView(a.buffer);a.set(r),f.setUint32(4,a.length-8,!0),f.setUint32(40,h,!0);let u=44;for(;u<a.length;){let g=Math.min(c[n].length-e,a.length-u);a.set(c[n].subarray(e,e+g),u),u+=g,e+=g,e===c[n].length&&(n++,e=0)}yield{audio:d(a),start:o/(24e3*2)}}},clear(){c.length=0,l.length=0,t=s=0,r=void 0}}}export{m as a,collectSentences as b,R as c};

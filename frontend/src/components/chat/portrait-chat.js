@@ -42,9 +42,9 @@ export function PortraitChat({fallback}) {
   const recorder = useRef(null), turn = useRef(null), audio = useRef(null), greeting = useRef('');
   const [output] = useState(createDocumentVoice);
   const [documentReady, setDocumentReady] = useState(false);
-  function createOutput(signal, start, delivered, echo = false) {
+  function createOutput(signal, start, delivered, live = false) {
     return output.stream({owner:account?.user.id, languageCode:preferences.languageCode, voiceRate:preferences.voiceRate,
-      streaming:voice.configuration?.streaming_speech_languages?.includes(preferences.languageCode), echo}, signal, start, delivered);
+      streaming:voice.configuration?.streaming_speech_languages?.includes(preferences.languageCode), live}, signal, start, delivered);
   }
   const voice = useVoiceSession((signal, start, delivered) => createOutput(signal, start, delivered, true));
   const stopAudio = useCallback(() => {

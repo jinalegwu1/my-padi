@@ -92,7 +92,7 @@ to Gemini. Ordinary introductions/previews keep their separate public cache.
 Silence ends each listening turn without closing the conversation. The microphone
 continues monitoring during playback. Device AEC and a playback PCM reference
 reject speaker echo; genuine user speech cancels current and queued audio.
-The user turn closes after 1.4 seconds of silence, preserving brief pauses.
+The user turn closes after one second of continuous silence.
 Exiting or switching to text closes capture and
 playback; tapping PADI again greets and resumes the same shared conversation.
 Ordinary voice turns use short replies and the fast model route; long spoken

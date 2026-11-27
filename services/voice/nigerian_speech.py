@@ -131,6 +131,10 @@ class NigerianSpeech:
                     # The convolutional vocoder needs neighbouring frames at
                     # each seam. Decode the context and play each sample once.
                     left, right = max(0, offset - 16), min(frames, end + 16)
+                    # At the utterance edge this window already contains the
+                    # entire tail. Emit those samples in the current packet.
+                    if right == frames:
+                        end = frames
                     with self.lock:
                         audio = decoder(spectrogram[:, :, left:right]).reshape(-1).cpu().numpy()
                     first, last = (offset - left) * hop, (end - left) * hop

@@ -50,7 +50,10 @@ test('live captions revise in place, preserve hesitation and send the final word
   assert.deepEqual(commits,[]);
   f.voice(); partial('I want to visit a'); partial('I want to visit Abuja');
   assert.equal(f.snapshot.userText,'I want to visit Abuja');
-  for (let i=0;i<11;i++) f.frame(frame());
+  for (let i=0;i<19;i++) f.frame(frame());
+  await tick();
+  assert.deepEqual(commits, []);
+  f.frame(frame());
   await tick();
   assert.deepEqual(commits,['I want to visit Abuja.']);
   assert.equal(f.snapshot.userText,'I want to visit Abuja.');
@@ -332,8 +335,8 @@ test('a 700 ms pause and continuation produce one complete user turn',async()=>{
   const f=fixture({transcribe:async(_token,wav)=>{uploaded=wav;return 'Please help me plan dinner tomorrow.';}});
   await f.session.start();f.voice();for(let i=0;i<14;i++)f.frame(frame());await tick();
   assert.equal(uploaded,undefined);
-  f.voice();for(let i=0;i<26;i++)f.frame(frame());await tick();assert.equal(uploaded,undefined);
-  for(let i=0;i<2;i++)f.frame(frame());await tick();
+  f.voice();for(let i=0;i<19;i++)f.frame(frame());await tick();assert.equal(uploaded,undefined);
+  f.frame(frame());await tick();
   assert.equal(uploaded.length, 44 + 1.8 * 32000); // 400 + 700 + 400 + 300 ms
   assert.deepEqual(f.calls.filter(value=>Array.isArray(value)),[['chat','Please help me plan dinner tomorrow.']]);
   await f.session.cancel();

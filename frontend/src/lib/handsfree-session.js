@@ -60,12 +60,6 @@ class HandsfreeSession {
     }, {
       onsetMs: 120,
       audio: pcm => this.input?.write(pcm),
-      silenceMs: () => {
-        if (!this.recognition) return 1400;
-        // A short quiet period after "I want to…" or "make we…" is often a hesitation.
-        if (!this.partial || /\b(i|and|but|because|so|to|the|my|if|when|we|wey|say|um|uh|erm)$/i.test(this.partial.trim())) return 1200;
-        return 550;
-      }
     });
   }
   change(update) {

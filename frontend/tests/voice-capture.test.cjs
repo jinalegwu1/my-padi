@@ -132,7 +132,7 @@ test('a microphone that cannot attach at 16 kHz uses its native engine without r
   assert.ok(f.contexts.every(context => context.closed === 1));
 });
 
-test('the existing detector still requires 180 ms of speech and 750 ms of silence', async () => {
+test('the detector opens after sustained speech and ends after one second of silence', async () => {
   let starts = 0, ended;
   const activity = new VoiceActivity(() => { starts++; }, utterance => { ended = utterance; });
   const f = captureHarness({ engineRate:16000,onFrame: frame => activity.feed(frame) });
@@ -143,7 +143,7 @@ test('the existing detector still requires 180 ms of speech and 750 ms of silenc
     assert.equal(starts, 0);
     f.feed(tone(16000, 0.05));
     assert.equal(starts, 1);
-    f.feed(new Float32Array(16000 * 0.7));
+    f.feed(new Float32Array(16000 * 0.95));
     assert.equal(ended, undefined);
     f.feed(new Float32Array(16000 * 0.05));
     assert.ok(ended);
