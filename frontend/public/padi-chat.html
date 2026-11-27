@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en-NG">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#123c32">
+    <title>Chat with PADI</title>
+    <link rel="stylesheet" href="/padi-chat/style.css">
+    <script type="module" src="/padi-chat/chat.js"></script>
+  </head>
+  <body>
+    <noscript>Enable JavaScript to chat with PADI.</noscript>
+    <div class="app">
+      <div id="backdrop" hidden></div>
+      <aside id="sidebar" aria-label="PADI menu" inert>
+        <div class="brand"><span class="knot" aria-hidden="true"></span><span>PADI</span>
+          <button id="close-menu" class="icon-only" aria-label="Close menu"><i aria-hidden="true" class="icon close"></i></button>
+        </div>
+        <button class="new-chat" id="new-chat" aria-label="New chat. Start a fresh conversation"><i aria-hidden="true" class="icon compose"></i>New chat</button>
+        <section class="history-area"><h2>Chat history</h2><div id="history"></div><p id="history-empty">Your conversations will appear here.</p></section>
+        <nav aria-label="More from PADI">
+          <button id="open-record"><i aria-hidden="true" class="icon mic"></i>Voice to text</button>
+          <a href="/settings"><i aria-hidden="true" class="icon settings"></i>Settings</a>
+          <a href="/memory"><i aria-hidden="true" class="icon memory"></i>Memory</a>
+          <a href="/reminders"><i aria-hidden="true" class="icon alarm"></i>Reminders</a>
+          <a href="/device-actions"><i aria-hidden="true" class="icon apps"></i>Device actions</a>
+          <a href="/weather"><i aria-hidden="true" class="icon weather"></i>Weather</a>
+        </nav>
+        <div class="account"><span id="account-name"></span><button id="sign-out" aria-label="Sign out"><i aria-hidden="true" class="icon logout"></i>Sign out</button></div>
+      </aside>
+      <main>
+        <header>
+          <div class="header-left">
+            <button id="menu" class="icon-only" aria-label="Open PADI menu" aria-controls="sidebar" aria-expanded="false" hidden><i aria-hidden="true" class="icon menu"></i></button>
+            <span class="header-knot knot" aria-hidden="true"></span>
+            <div><div class="wordmark">PADI</div><h1 id="screen-title">Text chat</h1></div>
+          </div>
+          <div class="header-actions">
+            <button id="auto-speak" class="icon-only" aria-label="Speak replies automatically" aria-pressed="false" hidden><i aria-hidden="true" class="icon volume"></i></button>
+            <button id="end-voice" class="icon-only" aria-label="End chat" title="End chat" hidden><i aria-hidden="true" class="icon down"></i></button>
+            <button id="switch-mode" class="pill" hidden><i aria-hidden="true" class="icon mic"></i><span>Voice</span></button>
+          </div>
+        </header>
+        <section id="location-panel" class="location-panel" hidden>
+          <button id="location-toggle" aria-expanded="false" aria-controls="location-details"><i aria-hidden="true" class="icon location"></i><span></span><i aria-hidden="true" class="icon down"></i></button>
+          <div id="location-details" hidden><p></p><button id="allow-location" class="pill"></button> <button id="later-location"></button></div>
+          <div id="weather-notice" role="status"></div>
+        </section>
+        <section id="gate" class="gate">
+          <div class="gate-card">
+            <span class="gate-knot knot" aria-hidden="true"></span>
+            <h2 id="gate-title">Opening PADI…</h2><p id="gate-message"></p>
+            <button id="gate-action" class="primary" hidden>Continue with phone</button>
+          </div>
+        </section>
+        <section id="text-view" class="text-view" aria-label="Text conversation" hidden>
+          <div id="thread-scroll" tabindex="0" aria-label="Conversation messages"><div id="messages" role="log" aria-live="off"></div></div>
+          <div id="announcement" role="status" class="sr-only"></div>
+          <div class="composer-area">
+            <form id="composer">
+              <textarea rows="1" enterkeyhint="send" maxlength="2000" placeholder="Message PADI…" aria-label="Message PADI…" aria-describedby="keyboard-help"></textarea>
+              <button id="cancel-send" type="button" class="send" aria-label="Stop response" title="Stop response" hidden><i aria-hidden="true" class="icon stop"></i></button>
+              <button type="submit" class="send" aria-label="Send message" disabled><i aria-hidden="true" class="icon up"></i></button>
+            </form>
+            <small id="keyboard-help">Enter to send <span>·</span> Shift + Enter for a new line</small>
+          </div>
+        </section>
+        <section id="voice-view" class="voice-view" aria-label="Voice conversation" hidden>
+          <div class="call">
+            <button id="portrait" aria-label="Tap to chat"><span class="face"><img class="photo" alt=""><img class="blink" alt=""><img class="mouth" alt=""></span></button>
+            <h2 id="voice-name"></h2><p id="voice-status" role="status"></p>
+            <div id="voice-options" hidden>
+              <button id="voice-captions" class="pill"></button>
+              <button id="voice-retry"></button>
+            </div>
+            <button id="pause-call" class="pill" hidden>Pause chat</button>
+          </div>
+          <section id="captions" hidden>
+            <button id="toggle-captions" class="pill" aria-controls="words"></button>
+            <div id="words"><h3 id="user-caption-label"></h3><div id="user-caption" data-testid="voice-user-caption"></div><h3 id="padi-caption-label">PADI</h3><div id="padi-caption" data-testid="voice-reply-caption"></div></div>
+          </section>
+        </section>
+        <section id="record-view" class="record-view" aria-label="Voice to text" hidden>
+          <h2>Voice to text</h2><p>Record a sentence, then stop to see the words. Maximum 60 seconds.</p>
+          <div id="record-languages" role="group" aria-label="Recognition language"></div>
+          <p id="record-status" role="status"></p>
+          <div class="record-actions"><button id="record-action" class="primary">Start recording</button><button id="record-cancel" hidden>Cancel recording</button><button id="record-call" class="pill">Voice conversation</button></div>
+          <div id="record-result" hidden><h3>Recognised text</h3><p data-testid="voice-transcript"></p><small></small></div>
+          <button id="details-toggle" class="pill" aria-label="Audio details" aria-controls="audio-details" aria-expanded="false" hidden>Show audio details</button>
+          <div id="audio-details" hidden></div>
+        </section>
+        <div id="error" role="alert" hidden></div>
+      </main>
+    </div>
+    <template id="message-template">
+      <article class="message"><div class="byline"><span class="author"></span><time></time></div><div class="bubble"></div><div class="visual"></div><div class="message-actions"></div></article>
+    </template>
+  </body>
+</html>
