@@ -162,8 +162,6 @@ try {
       if(backendEnv.PADI_PYTHON_VOICE_ENABLED==='true' || backendEnv.PADI_STT_ENABLED==='true') {
         const voicePort=port(backendEnv.PADI_PYTHON_VOICE_PORT||'8090','PADI_PYTHON_VOICE_PORT');
         if(voicePort===backendPort || voicePort===frontendPort) throw new Error('Python voice needs its own port.');
-        const python=backendEnv.PADI_VOICE_PYTHON || join(root,'services','voice','.venv',process.platform==='win32'?'Scripts':'bin',process.platform==='win32'?'python.exe':'python');
-        if(!existsSync(python)) throw new Error('Prepare services/voice/.venv and install services/voice/requirements.txt before starting Python voice.');
         const voiceEnv={PATH:process.env.PATH,PYTHONUNBUFFERED:'1',
           PADI_PYTHON_VOICE_ENGINE:backendEnv.PADI_PYTHON_VOICE_ENGINE||'local',
           PADI_PYTHON_VOICE_ENABLED:backendEnv.PADI_PYTHON_VOICE_ENABLED||'false',PADI_PYTHON_VOICE_PORT:String(voicePort),PADI_VOICE_SERVICE_TOKEN:backendEnv.PADI_VOICE_SERVICE_TOKEN,
@@ -180,8 +178,18 @@ try {
         for(const name of ['SystemRoot','WINDIR','SSL_CERT_FILE','SSL_CERT_DIR','HTTPS_PROXY','HTTP_PROXY','NO_PROXY']) {
           if(process.env[name]) voiceEnv[name]=process.env[name];
         }
-        if(await runningVoiceService(voicePort)) console.log('Using the Python voice service already running.');
-        else launch('Python voice',python,['app.py'],'services/voice',voiceEnv);
+        if (await runningVoiceService(voicePort)) {
+          console.log('Using the Python voice service already running.');
+        } else {
+          const python = backendEnv.PADI_VOICE_PYTHON || join(root, 'services', 'voice', '.venv',
+            process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+          if (!existsSync(python)) {
+            throw new Error(backendEnv.PADI_VOICE_PYTHON
+              ? 'The PADI_VOICE_PYTHON interpreter is missing. Update its path, or remove the override and run npm run setup:voice.'
+              : 'This checkout needs its Python voice environment. Run npm run setup:voice once from the project root, then run npm run dev.');
+          }
+          launch('Python voice', python, ['app.py'], 'services/voice', voiceEnv);
+        }
       }
       if (backendRunning) console.log('Using the My PADI backend already running on this port.');
       else launch('Go backend', 'go', ['run', './cmd/api'], 'backend', backendEnv);
